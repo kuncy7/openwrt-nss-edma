@@ -201,6 +201,31 @@ define Device/linksys_spnmx56
 endef
 TARGET_DEVICES += linksys_spnmx56
 
+define Device/tplink_archer-ax55-v1
+	$(call Device/FitImageLzma)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := TP-Link
+	DEVICE_MODEL := Archer AX55
+	DEVICE_VARIANT := v1
+	DEVICE_DTS := ipq5018-tplink-archer-ax55-v1
+	DEVICE_DTS_CONFIG := config@mp03.3
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	IMAGE_SIZE := 43008k
+	NAND_SIZE := 128m
+	# Stage 3a/3d: only the initramfs-uImage.itb artifact is used (TFTP boot
+	# from U-Boot). The factory/sysupgrade images are placeholders until the
+	# TP-Link dual-rootfs install path is done in stage 3e.
+	# Stage 3b/3c ethernet: WAN via internal GE PHY (gmac0), LAN via RTL8367S
+	# DSA over the 2.5G HSGMII trunk (gmac1). The trunk needs the rtl8365mb
+	# SGMII/HSGMII patch (rebase pending) + the rtl8367s-sgmii-firmware package.
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
+		kmod-dsa-realtek kmod-dsa-rtl8365mb \
+		ax55-testdefaults
+endef
+TARGET_DEVICES += tplink_archer-ax55-v1
+
 define Device/xiaomi_ipq50xx_ax_base
 	$(call Device/FitImage)
 	$(call Device/UbiFit)

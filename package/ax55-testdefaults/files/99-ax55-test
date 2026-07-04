@@ -1,0 +1,117 @@
+#!/bin/sh
+#
+# TP-Link Archer AX55 v1 - bring-up test defaults.
+#
+# Purpose: keep a freshly booted AX55 reachable during bring-up, over as many
+# independent paths as possible, since the RTL8367S LAN trunk (2.5G HSGMII)
+# is not yet verified working on real hardware:
+#   - LAN management IP -> 192.168.1.3         (via RTL8367S trunk - unverified)
+#   - WAN static IP     -> 192.168.2.3         (plain GE PHY, independent of
+#                                                the RTL8367S/HSGMII path)
+#   - every WiFi radio brought up as a WPA2 AP (SSID OpenWrt-AX55 / needs
+#                                                neither LAN nor WAN to work)
+#
+# This is a TEST helper, not for permanent installs.
+
+WIFI_SSID="OpenWrt-AX55"
+WIFI_KEY="ax55test"        # WPA2 PSK, >= 8 chars
+WIFI_COUNTRY="PL"
+LAN_IP="192.168.1.3"
+WAN_IP="192.168.2.3"
+
+# --- LAN management address -------------------------------------------------
+if ! uci -q get network.lan >/dev/null; then
+	uci -q batch <<-EOF
+		set network.lan=interface
+		set network.lan.proto='static'
+		set network.lan.netmask='255.255.255.0'
+	EOF
+fi
+uci -q batch <<-EOF
+	set network.lan.proto='static'
+	set network.lan.ipaddr='$LAN_IP'
+	set network.lan.netmask='255.255.255.0'
+	delete network.lan.ip6assign
+EOF
+
+# --- WAN test address (independent of the RTL8367S LAN trunk) --------------
+# WAN on this board is the internal GE PHY over plain SGMII - a much simpler,
+# already-mainline datapath than the RTL8367S 2.5G HSGMII trunk. Giving it a
+# static, reachable address (plus a DHCP server, plus a firewall hole) means
+# the board is still reachable over a cable in the WAN port even if the LAN
+# trunk/RTL8367S bring-up is not working yet.
+if ! uci -q get network.wan >/dev/null; then
+	uci -q set network.wan=interface
+fi
+uci -q batch <<-EOF
+	set network.wan.proto='static'
+	set network.wan.ipaddr='$WAN_IP'
+	set network.wan.netmask='255.255.255.0'
+	delete network.wan.ip6assign
+EOF
+
+uci -q batch <<-EOF
+	set dhcp.wan=dhcp
+	set dhcp.wan.interface='wan'
+	set dhcp.wan.start='100'
+	set dhcp.wan.limit='150'
+	set dhcp.wan.leasetime='12h'
+EOF
+
+# Open SSH (dropbear) and ping on the wan firewall zone for this test image -
+# the default template rejects unsolicited input there.
+uci -q batch <<-EOF
+	set firewall.ax55_test_ssh=rule
+	set firewall.ax55_test_ssh.name='ax55-test-allow-ssh-wan'
+	set firewall.ax55_test_ssh.src='wan'
+	set firewall.ax55_test_ssh.proto='tcp'
+	set firewall.ax55_test_ssh.dest_port='22'
+	set firewall.ax55_test_ssh.target='ACCEPT'
+	set firewall.ax55_test_ping=rule
+	set firewall.ax55_test_ping.name='ax55-test-allow-ping-wan'
+	set firewall.ax55_test_ping.src='wan'
+	set firewall.ax55_test_ping.proto='icmp'
+	set firewall.ax55_test_ping.icmp_type='echo-request'
+	set firewall.ax55_test_ping.target='ACCEPT'
+EOF
+
+uci -q commit network
+uci -q commit dhcp
+uci -q commit firewall
+
+# --- WiFi -------------------------------------------------------------------
+# Generate a wireless config from the detected PHYs if one is not present yet
+# (first boot / initramfs), then enable every radio as a WPA2 AP on lan.
+[ -f /etc/config/wireless ] || /sbin/wifi config
+
+. /lib/functions.sh
+config_load wireless
+
+enable_device() {
+	local dev="$1"
+	uci -q set wireless."$dev".disabled='0'
+	uci -q set wireless."$dev".country="$WIFI_COUNTRY"
+}
+
+setup_iface() {
+	local ifc="$1"
+	uci -q set wireless."$ifc".disabled='0'
+	uci -q set wireless."$ifc".mode='ap'
+	uci -q set wireless."$ifc".network='lan'
+	uci -q set wireless."$ifc".encryption='psk2'
+	uci -q set wireless."$ifc".key="$WIFI_KEY"
+	uci -q set wireless."$ifc".ssid="$WIFI_SSID"
+}
+
+config_foreach enable_device wifi-device
+config_foreach setup_iface wifi-iface
+
+uci -q commit wireless
+
+# Apply immediately so LAN/WAN addressing, firewall and the AP are all up
+# without waiting for a reboot.
+/etc/init.d/network reload >/dev/null 2>&1
+/etc/init.d/firewall reload >/dev/null 2>&1
+/sbin/wifi reload >/dev/null 2>&1 &
+
+exit 0

@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ax55-testdefaults
-PKG_VERSION:=2
+PKG_VERSION:=3
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=AX55 port
@@ -31,6 +31,8 @@ endef
 define Package/ax55-testdefaults/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/99-ax55-test $(1)/etc/uci-defaults/99-ax55-test
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/ieee80211
+	$(INSTALL_BIN) ./files/25-ax55-wifi $(1)/etc/hotplug.d/ieee80211/25-ax55-wifi
 endef
 
 $(eval $(call BuildPackage,ax55-testdefaults))

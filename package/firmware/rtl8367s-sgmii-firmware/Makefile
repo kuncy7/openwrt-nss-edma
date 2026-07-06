@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=rtl8367s-sgmii-firmware
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_LICENSE:=GPL-2.0
 PKG_LICENSE_FILES:=
@@ -16,9 +16,11 @@ endef
 
 define Package/rtl8367s-sgmii-firmware/description
   8051 microcontroller firmware for the RTL8367S SerDes, required to bring up
-  the SGMII/HSGMII extension port. Extracted from the GPL-2.0 mediatek vendor
-  driver (rtl8367c_asicdrv_port.c, Sgmii_Init array) already shipped in
-  OpenWrt's mediatek target.
+  the SGMII/HSGMII extension port. This is the 1223-byte Sgmii_Init array from
+  the GPL-2.0 Realtek rtl8367c vendor driver as used for the RTL8367S on the
+  TP-Link Archer AX55 (chip rev 0x00A0, option 1). NOTE: an earlier 1183-byte
+  variant from OpenWrt's mediatek target is a DIFFERENT 8051 program and brings
+  the trunk link up but does not pass traffic on this part.
 endef
 
 define Build/Compile

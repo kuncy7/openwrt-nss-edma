@@ -80,38 +80,14 @@ uci -q commit dhcp
 uci -q commit firewall
 
 # --- WiFi -------------------------------------------------------------------
-# Generate a wireless config from the detected PHYs if one is not present yet
-# (first boot / initramfs), then enable every radio as a WPA2 AP on lan.
-[ -f /etc/config/wireless ] || /sbin/wifi config
+# NOTE: the WiFi AP is NOT configured here. ath11k loads its firmware
+# asynchronously and only registers the radios ~14s into boot, well after
+# uci-defaults run (~10s), so doing it here would find no PHYs. It is handled
+# instead by /etc/hotplug.d/ieee80211/25-ax55-wifi, which fires exactly when
+# each radio registers (SSID OpenWrt-AX55 / key ax55test).
 
-. /lib/functions.sh
-config_load wireless
-
-enable_device() {
-	local dev="$1"
-	uci -q set wireless."$dev".disabled='0'
-	uci -q set wireless."$dev".country="$WIFI_COUNTRY"
-}
-
-setup_iface() {
-	local ifc="$1"
-	uci -q set wireless."$ifc".disabled='0'
-	uci -q set wireless."$ifc".mode='ap'
-	uci -q set wireless."$ifc".network='lan'
-	uci -q set wireless."$ifc".encryption='psk2'
-	uci -q set wireless."$ifc".key="$WIFI_KEY"
-	uci -q set wireless."$ifc".ssid="$WIFI_SSID"
-}
-
-config_foreach enable_device wifi-device
-config_foreach setup_iface wifi-iface
-
-uci -q commit wireless
-
-# Apply immediately so LAN/WAN addressing, firewall and the AP are all up
-# without waiting for a reboot.
+# Apply LAN/WAN addressing and firewall immediately (no reboot needed).
 /etc/init.d/network reload >/dev/null 2>&1
 /etc/init.d/firewall reload >/dev/null 2>&1
-/sbin/wifi reload >/dev/null 2>&1 &
 
 exit 0

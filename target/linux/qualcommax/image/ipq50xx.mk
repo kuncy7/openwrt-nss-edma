@@ -201,8 +201,11 @@ define Device/tplink_archer-ax55-v1
 	# DSA over the 2.5G HSGMII trunk (gmac1). The trunk needs the rtl8365mb
 	# SGMII/HSGMII patch (rebase pending) + the rtl8367s-sgmii-firmware package.
 	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
+		ipq-wifi-tplink_ax55v1 \
 		kmod-dsa-realtek kmod-dsa-rtl8365mb \
-		ax55-testdefaults
+		rtl8367s-sgmii-firmware \
+		ax55-testdefaults \
+		ethtool ip-full
 endef
 TARGET_DEVICES += tplink_archer-ax55-v1
 

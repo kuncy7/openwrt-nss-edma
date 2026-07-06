@@ -8,11 +8,9 @@ ipq50xx_setup_interfaces()
 	local board="$1"
 	case $board in
 	tplink,archer-ax55-v1)
-		# WAN = gmac0 (plain GE PHY, mainline DWMAC, no RTL8367S involved).
-		# LAN = gmac1 conduit -> RTL8367S DSA (lan1-4). eth0/eth1 assignment
-		# follows the same probe-order convention as cmcc,pz-l8 /
-		# xiaomi,redmi-ax5400 on this SoC family; verify against dmesg on
-		# first successful boot and adjust if the conduit is reversed.
+		# All five jacks are RTL8367S switch ports behind the gmac1
+		# DSA conduit: blue WAN jack = port0 ("wan"), LAN1-4 =
+		# ports1-4. The SoC's internal GE PHY is not bonded out.
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
 		ucidef_set_network_device_conduit "lan1" "eth1"
 		ucidef_set_network_device_conduit "lan2" "eth1"

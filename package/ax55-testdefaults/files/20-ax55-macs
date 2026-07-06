@@ -1,0 +1,19 @@
+#!/bin/sh
+# Set the factory MACs from tp_data/default-mac (= the label MAC, OUI
+# a8:6e:84 on the AX55). Convention: lan/label = base MAC, wan = base+1.
+# WiFi MACs are handled in the ieee80211 hotplug script (25-ax55-wifi).
+
+. /lib/functions.sh
+. /lib/functions/system.sh
+
+[ "$(board_name)" = "tplink,archer-ax55-v1" ] || exit 0
+
+mac="$(/lib/read-ax55-mac)" || exit 0
+[ -n "$mac" ] || exit 0
+
+uci -q batch <<-EOF
+	set network.@device[0].macaddr='$mac'
+	set network.wan.macaddr='$(macaddr_add "$mac" 1)'
+	commit network
+EOF
+exit 0

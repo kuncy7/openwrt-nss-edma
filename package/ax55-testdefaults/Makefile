@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ax55-testdefaults
-PKG_VERSION:=3
+PKG_VERSION:=5
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=AX55 port
@@ -17,12 +17,11 @@ define Package/ax55-testdefaults
 endef
 
 define Package/ax55-testdefaults/description
-  Test-only defaults for the TP-Link Archer AX55 v1 bring-up images: sets the
-  LAN management address to 192.168.1.3, brings every WiFi radio up as a WPA2
-  access point (SSID OpenWrt-AX55), and - since the RTL8367S LAN trunk is not
-  yet verified working - also enables a reachable dropbear/static address on
-  the WAN interface (plain GE PHY, independent of the RTL8367S/HSGMII path),
-  so the board stays reachable even if only WAN link comes up.
+  Defaults for the TP-Link Archer AX55 v1 images: factory MACs from the
+  tp_data UBI volume (label MAC on lan, +1 wan, +2/+3 radios), LAN management
+  address 192.168.1.3, every WiFi radio up as a WPA2 access point (SSID
+  OpenWrt-AX55) so a freshly flashed board is reachable without serial, WAN
+  as a normal DHCP client, and (dev builds) ssh/ping allowed from wan.
 endef
 
 define Build/Compile
@@ -31,8 +30,11 @@ endef
 define Package/ax55-testdefaults/install
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/99-ax55-test $(1)/etc/uci-defaults/99-ax55-test
+	$(INSTALL_BIN) ./files/20-ax55-macs $(1)/etc/uci-defaults/20-ax55-macs
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/ieee80211
 	$(INSTALL_BIN) ./files/25-ax55-wifi $(1)/etc/hotplug.d/ieee80211/25-ax55-wifi
+	$(INSTALL_DIR) $(1)/lib
+	$(INSTALL_BIN) ./files/read-ax55-mac $(1)/lib/read-ax55-mac
 endef
 
 $(eval $(call BuildPackage,ax55-testdefaults))

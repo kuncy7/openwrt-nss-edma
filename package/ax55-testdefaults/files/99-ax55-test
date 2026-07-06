@@ -17,7 +17,6 @@ WIFI_SSID="OpenWrt-AX55"
 WIFI_KEY="ax55test"        # WPA2 PSK, >= 8 chars
 WIFI_COUNTRY="PL"
 LAN_IP="192.168.1.3"
-WAN_IP="192.168.2.3"
 
 # --- LAN management address -------------------------------------------------
 if ! uci -q get network.lan >/dev/null; then
@@ -34,29 +33,9 @@ uci -q batch <<-EOF
 	delete network.lan.ip6assign
 EOF
 
-# --- WAN test address (independent of the RTL8367S LAN trunk) --------------
-# WAN on this board is the internal GE PHY over plain SGMII - a much simpler,
-# already-mainline datapath than the RTL8367S 2.5G HSGMII trunk. Giving it a
-# static, reachable address (plus a DHCP server, plus a firewall hole) means
-# the board is still reachable over a cable in the WAN port even if the LAN
-# trunk/RTL8367S bring-up is not working yet.
-if ! uci -q get network.wan >/dev/null; then
-	uci -q set network.wan=interface
-fi
-uci -q batch <<-EOF
-	set network.wan.proto='static'
-	set network.wan.ipaddr='$WAN_IP'
-	set network.wan.netmask='255.255.255.0'
-	delete network.wan.ip6assign
-EOF
-
-uci -q batch <<-EOF
-	set dhcp.wan=dhcp
-	set dhcp.wan.interface='wan'
-	set dhcp.wan.start='100'
-	set dhcp.wan.limit='150'
-	set dhcp.wan.leasetime='12h'
-EOF
+# --- WAN --------------------------------------------------------------------
+# The blue WAN jack is RTL8367S port 0 ("wan" DSA port). Normal router
+# behaviour: DHCP client (board.d default already sets this - nothing to do).
 
 # Open SSH (dropbear) and ping on the wan firewall zone for this test image -
 # the default template rejects unsolicited input there.

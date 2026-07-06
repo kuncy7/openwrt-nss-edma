@@ -1,0 +1,28 @@
+#!/bin/sh
+# Read the 6-byte factory MAC from the "default-mac" file inside the TP-Link
+# tp_data UBI volume. Prints aa:bb:cc:dd:ee:ff on stdout. Cached in /tmp so
+# the UBI attach/detach dance runs at most once per boot.
+
+CACHE=/tmp/.ax55-default-mac
+[ -s "$CACHE" ] && { cat "$CACHE"; exit 0; }
+
+. /lib/functions.sh
+
+idx=$(find_mtd_index tp_data)
+[ -n "$idx" ] || exit 1
+
+ubi=$(ubiattach -m "$idx" 2>/dev/null | sed -n 's/.*device number \([0-9]*\).*/\1/p')
+[ -n "$ubi" ] || exit 1
+
+mkdir -p /tmp/.tp_data
+mac=""
+if mount -t ubifs -o ro "/dev/ubi${ubi}_0" /tmp/.tp_data 2>/dev/null; then
+	[ -s /tmp/.tp_data/default-mac ] && \
+		mac=$(hexdump -v -n6 -e '5/1 "%02x:" 1/1 "%02x"' /tmp/.tp_data/default-mac)
+	umount /tmp/.tp_data
+fi
+ubidetach -m "$idx" 2>/dev/null
+
+[ -n "$mac" ] || exit 1
+echo "$mac" > "$CACHE"
+echo "$mac"

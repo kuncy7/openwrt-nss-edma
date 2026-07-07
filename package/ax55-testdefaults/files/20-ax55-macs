@@ -14,6 +14,17 @@ mac="$(/lib/read-ax55-mac)" || exit 0
 uci -q batch <<-EOF
 	set network.@device[0].macaddr='$mac'
 	set network.wan.macaddr='$(macaddr_add "$mac" 1)'
-	commit network
 EOF
+
+# LAN switch ports carry the label MAC too (stock behaviour); without this
+# they would inherit the DSA conduit's random MAC (cosmetic only - IP/ARP
+# always uses the br-lan MAC set above).
+for port in lan1 lan2 lan3 lan4; do
+	uci -q batch <<-EOF
+		set network.dev_$port=device
+		set network.dev_$port.name='$port'
+		set network.dev_$port.macaddr='$mac'
+	EOF
+done
+uci -q commit network
 exit 0

@@ -214,18 +214,13 @@ define Device/tplink_archer-ax55-v1
 	PAGESIZE := 2048
 	IMAGE_SIZE := 43008k
 	NAND_SIZE := 128m
-	# Stage 3a/3d: only the initramfs-uImage.itb artifact is used (TFTP boot
-	# from U-Boot). The factory/sysupgrade images are placeholders until the
-	# TP-Link dual-rootfs install path is done in stage 3e.
-	# Stage 3b/3c ethernet: WAN via internal GE PHY (gmac0), LAN via RTL8367S
-	# DSA over the 2.5G HSGMII trunk (gmac1). The trunk needs the rtl8365mb
-	# SGMII/HSGMII patch (rebase pending) + the rtl8367s-sgmii-firmware package.
 	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		ipq-wifi-tplink_ax55v1 \
 		kmod-dsa-realtek kmod-dsa-rtl8365mb \
 		rtl8367s-sgmii-firmware \
+		kmod-usb-ledtrig-usbport \
 		ax55-testdefaults \
-		ethtool ip-full
+		ethtool
 endef
 TARGET_DEVICES += tplink_archer-ax55-v1
 

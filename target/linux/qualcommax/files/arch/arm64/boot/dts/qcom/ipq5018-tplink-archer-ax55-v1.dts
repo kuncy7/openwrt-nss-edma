@@ -44,10 +44,12 @@
 			debounce-interval = <60>;
 		};
 
-		button-wps {
-			label = "wps";
+		/* the case labels this "WPS/Wi-Fi"; stock treats it as a
+		 * wifi toggle (KEY_WLAN) - use rfkill, the OpenWrt idiom */
+		button-wifi {
+			label = "wifi";
 			gpios = <&tlmm 31 GPIO_ACTIVE_LOW>;
-			linux,code = <KEY_WPS_BUTTON>;
+			linux,code = <KEY_RFKILL>;
 			debounce-interval = <60>;
 		};
 	};
@@ -58,10 +60,9 @@
 		pinctrl-names = "default";
 
 		/*
-		 * LED GPIOs were derived for stage 3a and still need to be
-		 * confirmed against the real board. NOTE: GPIO39 is the
-		 * RTL8367S reset (OEM reset_gpio), NOT a 5GHz-WLAN LED - the
-		 * 5GHz LED node was removed here and must be re-identified.
+		 * LED GPIOs confirmed against the stock device tree. GPIO39 is
+		 * the 5 GHz WLAN LED (the OEM "reset_gpio 39" in the switch
+		 * node is bogus - the real RTL8367S reset is GPIO33).
 		 */
 		led_power: led-power {
 			color = <LED_COLOR_ID_GREEN>;
@@ -93,11 +94,33 @@
 			gpios = <&tlmm 13 GPIO_ACTIVE_HIGH>;
 		};
 
+		led-wlan5g {
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_WLAN_5GHZ;
+			gpios = <&tlmm 39 GPIO_ACTIVE_HIGH>;
+		};
+
 		led-usb {
 			color = <LED_COLOR_ID_GREEN>;
 			function = LED_FUNCTION_USB;
 			gpios = <&tlmm 38 GPIO_ACTIVE_HIGH>;
+			trigger-sources = <&usb_port1>;
+			linux,default-trigger = "usbport";
 		};
+	};
+
+	/* vendor "usb_enabled" GPIO - switches the USB port's VBUS rail */
+	reg_usb_vbus: regulator-usb-vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "usb_vbus";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpios = <&tlmm 27 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		/* nothing consumes this supply (the qcom dwc3 glue ignores
+		 * vbus-supply), so keep the rail permanently on */
+		regulator-always-on;
+		regulator-boot-on;
 	};
 };
 
@@ -403,6 +426,44 @@
 				};
 			};
 		};
+	};
+};
+
+&usbphy0 {
+	status = "okay";
+};
+
+&usb {
+	status = "okay";
+
+	vbus-supply = <&reg_usb_vbus>;
+
+	/*
+	 * The USB pads are behind a TCSR-controlled phy mux (stock DTB:
+	 * qcom,phy-mux-regs = <syscon@1945000 0x2540>). The same register
+	 * inside the mainline tcsr node (0x1937000) is at offset 0x10540.
+	 * TP-Link's U-Boot never selects the USB position - patch 0921
+	 * writes 1 here at probe.
+	 */
+	qcom,phy-mux-regs = <&tcsr 0x10540>;
+
+	/*
+	 * TP-Link's U-Boot leaves the mock UTMI RCG at 120 MHz; the stock
+	 * DTB assigns the UTMI-spec 60 MHz. Without it the HS side never
+	 * detects a connect.
+	 */
+	assigned-clocks = <&gcc GCC_USB0_MOCK_UTMI_CLK>;
+	assigned-clock-rates = <60000000>;
+};
+
+&usb_dwc {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	dr_mode = "host";
+
+	usb_port1: port@1 {
+		reg = <1>;
+		#trigger-source-cells = <0>;
 	};
 };
 

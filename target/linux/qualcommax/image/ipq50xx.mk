@@ -217,7 +217,6 @@ define Device/tplink_archer-ax55-v1
 	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		ipq-wifi-tplink_ax55v1 \
 		kmod-dsa-realtek kmod-dsa-rtl8365mb \
-		rtl8367s-sgmii-firmware \
 		kmod-usb-ledtrig-usbport \
 		ax55-testdefaults \
 		ethtool

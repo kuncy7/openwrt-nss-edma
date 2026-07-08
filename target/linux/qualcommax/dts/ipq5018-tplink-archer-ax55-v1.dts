@@ -288,8 +288,8 @@
  *   The SoC's internal GE PHY (mdio0:7/gmac0) is NOT bonded out -> disabled.
  *
  *   RTL8367S: MDIO addr 29 on mdio1, reset GPIO 33 (the OEM DTS's "GPIO39"
- *   is wrong/unused). Requires the rtl8365mb SGMII/HSGMII patch (0918) +
- *   rtl8367s-sgmii-firmware. Stock runs the trunk at 1G SGMII; 2.5G HSGMII
+ *   is wrong/unused). Requires the rtl8365mb SGMII/HSGMII patch (0918);
+ *   no 8051 SerDes firmware needed. Stock runs the trunk at 1G SGMII; 2.5G HSGMII
  *   verified working with this driver.
  * ===========================================================================
  */

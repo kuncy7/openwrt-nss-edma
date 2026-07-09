@@ -77,7 +77,7 @@ babysitter loop for the one case where it matters.
  
  /* External interface mode configuration registers 0~1 */
  #define RTL8365MB_DIGITAL_INTERFACE_SELECT_REG0		0x1305 /* EXT0,EXT1 */
-@@ -740,6 +772,14 @@
+@@ -740,6 +772,16 @@
  	struct rtl8365mb_cpu cpu;
  	struct mutex mib_lock;
  	struct rtl8365mb_port ports[RTL8365MB_MAX_NUM_PORTS];
@@ -88,11 +88,13 @@ babysitter loop for the one case where it matters.
 +	int sds_bad_polls;
 +	u64 sds_last_crc;
 +	u64 sds_last_rx;
++	u64 sds_last_conduit_tx;
++	u64 sds_last_seen;
 +	phy_interface_t sds_interface;
  };
  
  static int rtl8365mb_phy_poll_busy(struct realtek_priv *priv)
-@@ -1043,6 +1083,7 @@
+@@ -1043,6 +1085,7 @@
  }
  
  static int rtl8365mb_ext_config_forcemode(struct realtek_priv *priv, int port,
@@ -100,7 +102,7 @@ babysitter loop for the one case where it matters.
  					  bool link, int speed, int duplex,
  					  bool tx_pause, bool rx_pause)
  {
-@@ -1065,7 +1106,7 @@
+@@ -1065,7 +1108,7 @@
  		r_rx_pause = rx_pause ? 1 : 0;
  		r_tx_pause = tx_pause ? 1 : 0;
  
@@ -109,7 +111,7 @@ babysitter loop for the one case where it matters.
  			r_speed = RTL8365MB_PORT_SPEED_1000M;
  		} else if (speed == SPEED_100) {
  			r_speed = RTL8365MB_PORT_SPEED_100M;
-@@ -1110,9 +1151,390 @@
+@@ -1110,9 +1153,416 @@
  	if (ret)
  		return ret;
  
@@ -442,13 +444,16 @@ babysitter loop for the one case where it matters.
 +{
 +	struct rtl8365mb *mb = priv->chip_data;
 +	struct rtnl_link_stats64 *stats = &mb->ports[port].stats;
-+	u64 crc, pkts;
-+	bool locked, garbage;
++	struct rtnl_link_stats64 conduit_stats;
++	const struct net_device *conduit;
++	u64 crc, pkts, seen, conduit_tx, tx_delta, seen_delta;
++	bool locked, garbage, lossy = false;
 +	int ret;
 +
 +	spin_lock(&mb->ports[port].stats_lock);
 +	crc = stats->rx_crc_errors;
 +	pkts = stats->rx_packets;
++	seen = stats->rx_packets + stats->rx_errors + stats->rx_dropped;
 +	spin_unlock(&mb->ports[port].stats_lock);
 +
 +	/* All new ingress frames on the trunk were FCS garbage */
@@ -456,11 +461,33 @@ babysitter loop for the one case where it matters.
 +	mb->sds_last_crc = crc;
 +	mb->sds_last_rx = pkts;
 +
++	/*
++	 * The SerDes can also degrade to silently swallowing most frames:
++	 * no FCS errors, no fragments, the frames just never arrive (seen
++	 * on hardware as ~1 in 40 getting through while the SDS status
++	 * still reports lock). Passive port counters can't see that, so
++	 * compare against the other end of the trunk: everything the DSA
++	 * conduit transmits must show up on the CPU port as *something*
++	 * (a good frame or a counted error).
++	 */
++	conduit = dsa_to_port(&priv->ds, port)->conduit;
++	if (conduit) {
++		dev_get_stats((struct net_device *)conduit, &conduit_stats);
++		conduit_tx = conduit_stats.tx_packets;
++		tx_delta = conduit_tx - mb->sds_last_conduit_tx;
++		seen_delta = seen - mb->sds_last_seen;
++		if (mb->sds_last_conduit_tx && tx_delta >= 16 &&
++		    seen_delta * 4 < tx_delta)
++			lossy = true;
++		mb->sds_last_conduit_tx = conduit_tx;
++		mb->sds_last_seen = seen;
++	}
++
 +	ret = rtl8365mb_ext_sgmii_rx_locked(priv, &locked);
 +	if (ret)
 +		return;
 +
-+	if (locked && !garbage) {
++	if (locked && !garbage && !lossy) {
 +		if (mb->sds_pulses || mb->sds_bad_polls)
 +			dev_info(priv->dev,
 +				 "port %d SerDes healthy after %d reset pulse(s)\n",
@@ -470,10 +497,11 @@ babysitter loop for the one case where it matters.
 +		return;
 +	}
 +
-+	if (garbage && ++mb->sds_bad_polls >= 3) {
++	if ((garbage || lossy) && ++mb->sds_bad_polls >= 3) {
 +		dev_warn(priv->dev,
-+			 "port %d SerDes delivers FCS garbage despite %s - re-running SerDes config\n",
-+			 port, locked ? "reporting lock" : "reset pulses");
++			 "port %d SerDes %s despite %s - re-running SerDes config\n",
++			 port, garbage ? "delivers FCS garbage" : "silently drops frames",
++			 locked ? "reporting lock" : "reset pulses");
 +		ret = rtl8365mb_ext_config_sgmii(priv, port,
 +						 mb->sds_interface);
 +		if (ret)
@@ -500,7 +528,7 @@ babysitter loop for the one case where it matters.
  static void rtl8365mb_phylink_get_caps(struct dsa_switch *ds, int port,
  				       struct phylink_config *config)
  {
-@@ -1141,6 +1563,15 @@
+@@ -1141,6 +1591,15 @@
  
  	if (extint->supported_interfaces & RTL8365MB_PHY_INTERFACE_MODE_RGMII)
  		phy_interface_set_rgmii(config->supported_interfaces);
@@ -516,7 +544,7 @@ babysitter loop for the one case where it matters.
  }
  
  static void rtl8365mb_phylink_mac_config(struct phylink_config *config,
-@@ -1168,6 +1599,15 @@
+@@ -1168,6 +1627,15 @@
  		return;
  	}
  
@@ -532,7 +560,7 @@ babysitter loop for the one case where it matters.
  	/* TODO: Implement MII and RMII modes, which the RTL8365MB-VC also
  	 * supports
  	 */
-@@ -1188,8 +1628,11 @@
+@@ -1188,8 +1656,11 @@
  	p = &mb->ports[port];
  	cancel_delayed_work_sync(&p->mib_work);
  
@@ -546,7 +574,7 @@ babysitter loop for the one case where it matters.
  						     false, false);
  		if (ret)
  			dev_err(priv->dev,
-@@ -1218,8 +1661,11 @@
+@@ -1218,8 +1689,11 @@
  	p = &mb->ports[port];
  	schedule_delayed_work(&p->mib_work, 0);
  
@@ -560,7 +588,7 @@ babysitter loop for the one case where it matters.
  						     duplex, tx_pause,
  						     rx_pause);
  		if (ret)
-@@ -1967,9 +2413,13 @@
+@@ -1967,9 +2441,13 @@
  						struct rtl8365mb_port,
  						mib_work);
  	struct realtek_priv *priv = p->priv;

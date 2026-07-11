@@ -196,6 +196,7 @@ define Device/tplink_archer-ax55-v1
 	NAND_SIZE := 128m
 	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		ipq-wifi-tplink_ax55v1 \
+		-kmod-qca-nss-dp \
 		kmod-dsa-realtek kmod-dsa-rtl8365mb \
 		kmod-nft-offload \
 		kmod-usb-ledtrig-usbport \

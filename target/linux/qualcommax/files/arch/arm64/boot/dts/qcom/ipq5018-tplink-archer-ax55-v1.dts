@@ -3,7 +3,7 @@
 /dts-v1/;
 
 #include "ipq5018.dtsi"
-#include "ipq5018-ess.dtsi"
+#include "ipq5018-dwmac.dtsi"
 #include "ipq5018-qcn6122.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>

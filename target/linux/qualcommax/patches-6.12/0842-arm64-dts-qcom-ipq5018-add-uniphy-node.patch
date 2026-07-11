@@ -26,8 +26,8 @@
 +				      "port5_rx",
 +				      "port5_tx",
 +				      "ref";
-+			clock-output-names = "uniphy0_gcc_rx_clk",
-+					     "uniphy0_gcc_tx_clk",
++			clock-output-names = "uniphy_gcc_rx",
++					     "uniphy_gcc_tx",
 +					     "uniphy0_ref_clk";
 +			resets = <&gcc GCC_UNIPHY_SOFT_RESET>;
 +			reset-names = "soft";

@@ -16,6 +16,15 @@ uci -q batch <<-EOF
 	set network.wan.macaddr='$(macaddr_add "$mac" 1)'
 EOF
 
+# The DSA conduit (gmac1) has no MAC source in the DTS - tp_data is a
+# UBIFS file, not an nvmem cell - so the kernel randomizes it each boot.
+# Pin it to the label MAC (stock: eth0 = label, same as LAN).
+uci -q batch <<-EOF
+	set network.dev_eth0=device
+	set network.dev_eth0.name='eth0'
+	set network.dev_eth0.macaddr='$mac'
+EOF
+
 # LAN switch ports carry the label MAC too (stock behaviour); without this
 # they would inherit the DSA conduit's random MAC (cosmetic only - IP/ARP
 # always uses the br-lan MAC set above).

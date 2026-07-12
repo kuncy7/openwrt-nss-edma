@@ -22,7 +22,7 @@ Signed-off-by: OpenWrt <noreply@openwrt.org>
  #include "core.h"
  
  /* USB QSCRATCH Hardware registers */
-@@ -730,6 +732,37 @@
+@@ -730,6 +732,37 @@ static int dwc3_qcom_of_register_core(st
  	return ret;
  }
  
@@ -60,7 +60,7 @@ Signed-off-by: OpenWrt <noreply@openwrt.org>
  static int dwc3_qcom_probe(struct platform_device *pdev)
  {
  	struct device_node	*np = pdev->dev.of_node;
-@@ -793,6 +826,10 @@
+@@ -793,6 +826,10 @@ static int dwc3_qcom_probe(struct platfo
  	if (ignore_pipe_clk)
  		dwc3_qcom_select_utmi_clk(qcom);
  

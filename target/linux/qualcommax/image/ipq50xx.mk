@@ -199,9 +199,7 @@ define Device/tplink_archer-ax55-v1
 		-kmod-qca-nss-dp \
 		kmod-dsa-realtek kmod-dsa-rtl8365mb \
 		kmod-nft-offload \
-		kmod-usb-ledtrig-usbport \
-		ax55-testdefaults \
-		ethtool
+		kmod-usb-ledtrig-usbport
 endef
 TARGET_DEVICES += tplink_archer-ax55-v1
 

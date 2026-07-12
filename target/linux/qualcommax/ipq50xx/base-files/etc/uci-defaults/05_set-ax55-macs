@@ -1,0 +1,34 @@
+#!/bin/sh
+# The Archer AX55 v1 factory MAC lives in the tp_data UBIFS volume, which is
+# not mountable early enough for board.d/preinit - assign the wired MACs here
+# (first full boot), where the volume is available.
+
+. /lib/functions.sh
+. /lib/functions/system.sh
+. /lib/functions/tplink-ax55.sh
+
+[ "$(board_name)" = "tplink,archer-ax55-v1" ] || exit 0
+
+mac=$(tplink_ax55_label_mac)
+[ -n "$mac" ] || exit 0
+
+uci -q batch <<-EOF
+	set network.@device[0].macaddr='$mac'
+	set network.wan.macaddr='$(macaddr_add "$mac" 1)'
+	set network.dev_eth0=device
+	set network.dev_eth0.name='eth0'
+	set network.dev_eth0.macaddr='$mac'
+EOF
+# the DSA user ports otherwise come up with random MACs; give them the
+# label MAC too (they are bridged, so this is cosmetic - br-lan/IP use the
+# @device MAC above)
+for port in lan1 lan2 lan3 lan4; do
+	uci -q batch <<-EOF
+		set network.dev_$port=device
+		set network.dev_$port.name='$port'
+		set network.dev_$port.macaddr='$mac'
+	EOF
+done
+uci -q commit network
+
+exit 0

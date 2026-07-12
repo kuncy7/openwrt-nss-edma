@@ -10,10 +10,10 @@ firmware fabrycznego*).
 > odpowiedzialność. Powrót do firmware fabrycznego jest zawsze możliwy przez
 > web-recovery (opisany na końcu) i nie wymaga lutowania.
 
-Instalacja nie wymaga konsoli szeregowej. Cała sztuczka polega na tym, że **stary (2022–2024)
-firmware TP-Linka jest w formacie MD5, nie RSA** — więc
-można wgrać zmodyfikowany obraz stocka z włączonym telnetem przez zwykłą stronę
-aktualizacji, dostać roota, i z niego wpisać OpenWrt na flash.
+Instalacja nie wymaga konsoli szeregowej. Cała sztuczka polega na tym,
+że **stary (2022–2024) firmware TP-Linka jest w formacie MD5, nie RSA** 
+— więc można wgrać zmodyfikowany obraz stocka z włączonym telnetem
+przez zwykłą stronę aktualizacji, dostać roota, i z niego wpisać OpenWrt na flash.
 
 ---
 

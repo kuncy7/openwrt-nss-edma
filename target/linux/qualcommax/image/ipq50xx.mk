@@ -219,6 +219,10 @@ define Device/tplink_archer-ax55-v1
 		kmod-dsa-realtek kmod-dsa-rtl8365mb \
 		kmod-nft-offload \
 		kmod-usb-ledtrig-usbport
+ifneq ($(CONFIG_TARGET_ROOTFS_INITRAMFS),)
+	ARTIFACTS := initramfs-factory.ubi
+	ARTIFACT/initramfs-factory.ubi := append-image-stage initramfs-uImage.itb | ubinize-kernel
+endif
 endef
 TARGET_DEVICES += tplink_archer-ax55-v1
 

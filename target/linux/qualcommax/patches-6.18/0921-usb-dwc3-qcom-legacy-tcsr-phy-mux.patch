@@ -12,7 +12,6 @@ property/behaviour as an optional DT hook.
 
 Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 ---
---- a/drivers/usb/dwc3/dwc3-qcom.c
 --- a/drivers/usb/dwc3/dwc3-qcom-legacy.c
 +++ b/drivers/usb/dwc3/dwc3-qcom-legacy.c
 @@ -22,6 +22,8 @@
@@ -24,9 +23,7 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
  #include "core.h"
  
  /* USB QSCRATCH Hardware registers */
-@@ -728,8 +730,39 @@
- 	}
- 
+@@ -730,6 +732,37 @@ static int dwc3_qcom_of_register_core(st
  	return ret;
  }
  
@@ -64,8 +61,7 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
  static int dwc3_qcom_probe(struct platform_device *pdev)
  {
  	struct device_node	*np = pdev->dev.of_node;
-@@ -792,6 +825,10 @@
- 				"qcom,select-utmi-as-pipe-clk");
+@@ -793,6 +826,10 @@ static int dwc3_qcom_probe(struct platfo
  	if (ignore_pipe_clk)
  		dwc3_qcom_select_utmi_clk(qcom);
  

@@ -24,8 +24,7 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/phy/qualcomm/Kconfig
 +++ b/drivers/phy/qualcomm/Kconfig
-@@ -144,6 +144,15 @@ config PHY_QCOM_M31_USB
- 	  management required after resetting the hardware and power
+@@ -145,6 +145,15 @@ config PHY_QCOM_M31_USB
  	  management. This driver is required even for peripheral only or
  	  host only mode configurations.
  
@@ -40,6 +39,7 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +
  config PHY_QCOM_UNIPHY_PCIE_28LP
  	bool "PCIE UNIPHY 28LP PHY driver"
+ 	depends on ARCH_QCOM
 --- a/drivers/phy/qualcomm/Makefile
 +++ b/drivers/phy/qualcomm/Makefile
 @@ -4,6 +4,7 @@ obj-$(CONFIG_PHY_QCOM_APQ8064_SATA)	+= p

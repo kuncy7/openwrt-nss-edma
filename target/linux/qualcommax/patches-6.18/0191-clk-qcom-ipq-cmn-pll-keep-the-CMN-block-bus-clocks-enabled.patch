@@ -21,7 +21,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/clk/qcom/ipq-cmn-pll.c
 +++ b/drivers/clk/qcom/ipq-cmn-pll.c
-@@ -439,11 +439,19 @@
+@@ -439,11 +439,19 @@ static int ipq_cmn_pll_clk_probe(struct
  
  	/* Register CMN PLL clock and fixed rate output clocks. */
  	ret = ipq_cmn_pll_register_clks(pdev);

@@ -17,7 +17,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/net/dsa/realtek/rtl8365mb_main.c
 +++ b/drivers/net/dsa/realtek/rtl8365mb_main.c
-@@ -3082,6 +3082,7 @@
+@@ -2976,6 +2976,7 @@ static int rtl8365mb_switch_init(struct
  static int rtl8365mb_reset_chip(struct realtek_priv *priv)
  {
  	u32 val;
@@ -25,7 +25,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  	priv->write_reg_noack(priv, RTL8365MB_CHIP_RESET_REG,
  			      FIELD_PREP(RTL8365MB_CHIP_RESET_HW_MASK, 1));
-@@ -3090,9 +3091,23 @@
+@@ -2984,9 +2985,23 @@ static int rtl8365mb_reset_chip(struct r
  	 * for 100 ms before accessing any registers to prevent ACK timeouts.
  	 */
  	msleep(100);

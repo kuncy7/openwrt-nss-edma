@@ -5,8 +5,9 @@ Subject: [PATCH] phy: qcom: add IPQ5018 USB SuperSpeed uni PHY driver
 
 Port of the QSDK phy-qca-uniphy.c driver (qca,ipq5018-uni-ssphy):
 enable the clocks, pulse the PHY POR reset (GCC_USB0_PHY_BCR), wait
-for the fuse autoload, then program five SSCG (spread spectrum)
-registers with fixed values.
+for the fuse autoload, then program the SSCG (spread spectrum)
+registers, the CDR (clock and data recovery) block and the PCS
+control register with fixed values.
 
 Crucially, the phy register file at 0x5d000 responds ONLY when the
 usb0 aux and lfps clocks run as well - with either gated, even a read
@@ -24,8 +25,7 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/phy/qualcomm/Kconfig
 +++ b/drivers/phy/qualcomm/Kconfig
-@@ -144,6 +144,15 @@ config PHY_QCOM_M31_USB
- 	  management required after resetting the hardware and power
+@@ -145,6 +145,15 @@ config PHY_QCOM_M31_USB
  	  management. This driver is required even for peripheral only or
  	  host only mode configurations.
  
@@ -40,6 +40,7 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +
  config PHY_QCOM_UNIPHY_PCIE_28LP
  	bool "PCIE UNIPHY 28LP PHY driver"
+ 	depends on ARCH_QCOM
 --- a/drivers/phy/qualcomm/Makefile
 +++ b/drivers/phy/qualcomm/Makefile
 @@ -4,6 +4,7 @@ obj-$(CONFIG_PHY_QCOM_APQ8064_SATA)	+= p
@@ -52,14 +53,15 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
  obj-$(CONFIG_PHY_QCOM_PCIE2)		+= phy-qcom-pcie2.o
 --- /dev/null
 +++ b/drivers/phy/qualcomm/phy-qcom-ipq5018-usb-ss.c
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,168 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Qualcomm IPQ5018 USB SuperSpeed "uni" PHY driver
 + *
-+ * Minimal port of the QSDK phy-qca-uniphy.c (qca,ipq5018-uni-ssphy
-+ * branch): pulse the PHY POR reset, enable the clocks, wait for the
-+ * fuse autoload, then program the SSCG (spread spectrum) registers.
++ * Port of the QSDK phy-qca-uniphy.c (qca,ipq5018-uni-ssphy branch):
++ * pulse the PHY POR reset, enable the clocks, wait for the fuse
++ * autoload, then run the uniphy init sequence (spread spectrum, clock
++ * and data recovery, PCS).
 + */
 +
 +#include <linux/clk.h>
@@ -71,11 +73,16 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +#include <linux/platform_device.h>
 +#include <linux/reset.h>
 +
++#define CDR_CTRL_REG_1		0x80
++#define CDR_CTRL_REG_2		0x84
++#define CDR_CTRL_REG_4		0x8c
++#define CDR_CTRL_REG_5		0x90
 +#define SSCG_CTRL_REG_1		0x9c
 +#define SSCG_CTRL_REG_2		0xa0
 +#define SSCG_CTRL_REG_3		0xa4
 +#define SSCG_CTRL_REG_4		0xa8
 +#define SSCG_CTRL_REG_5		0xac
++#define PCS_INTERNAL_CONTROL_2	0x2d8
 +
 +/* time (us) the PHY takes to autoload its fuse calibration after POR */
 +#define PHY_AUTOLOAD_DELAY_US	35
@@ -122,6 +129,22 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +	ssphy_write(phy, SSCG_CTRL_REG_3, 0xd360);
 +	ssphy_write(phy, SSCG_CTRL_REG_1, 0x1);
 +	ssphy_write(phy, SSCG_CTRL_REG_2, 0xeb);
++
++	/*
++	 * The clock-and-data-recovery block and the PCS control register
++	 * belong to the same uniphy init sequence. Mainline programs these
++	 * exact offsets and values for the PCIe instance of this SoC's
++	 * uniphy (phy-qcom-uniphy-pcie-28lp.c, ipq5018_regs[]) - where the
++	 * five SSCG values above are identical - but the QSDK port this
++	 * driver came from stopped after the SSCG block. Without the CDR
++	 * setup the receiver never locks onto the incoming serial stream,
++	 * so SuperSpeed link training never leaves Rx.Detect.
++	 */
++	ssphy_write(phy, CDR_CTRL_REG_4, 0x3f9);
++	ssphy_write(phy, CDR_CTRL_REG_5, 0x1c9);
++	ssphy_write(phy, CDR_CTRL_REG_2, 0x419);
++	ssphy_write(phy, CDR_CTRL_REG_1, 0x200);
++	ssphy_write(phy, PCS_INTERNAL_CONTROL_2, 0xf101);
 +
 +	return 0;
 +}

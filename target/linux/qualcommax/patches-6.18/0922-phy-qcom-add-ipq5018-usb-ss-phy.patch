@@ -53,7 +53,7 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
  obj-$(CONFIG_PHY_QCOM_PCIE2)		+= phy-qcom-pcie2.o
 --- /dev/null
 +++ b/drivers/phy/qualcomm/phy-qcom-ipq5018-usb-ss.c
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,186 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Qualcomm IPQ5018 USB SuperSpeed "uni" PHY driver
@@ -83,6 +83,11 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +#define SSCG_CTRL_REG_4		0xa8
 +#define SSCG_CTRL_REG_5		0xac
 +#define PCS_INTERNAL_CONTROL_2	0x2d8
++
++/* receiver-side setup, shared with the IPQ5332 combo phy */
++#define COMBO_PHY_CFG_MISC1		0x214
++#define COMBO_PHY_CFG_RX_AFE_2		0x7c4
++#define COMBO_PHY_CFG_RX_DLF_DEMUX_2	0x7e8
 +
 +/* time (us) the PHY takes to autoload its fuse calibration after POR */
 +#define PHY_AUTOLOAD_DELAY_US	35
@@ -145,6 +150,19 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +	ssphy_write(phy, CDR_CTRL_REG_2, 0x419);
 +	ssphy_write(phy, CDR_CTRL_REG_1, 0x200);
 +	ssphy_write(phy, PCS_INTERNAL_CONTROL_2, 0xf101);
++
++	/*
++	 * Receiver setup. The QSDK tables for this SoC only ever covered
++	 * the transmit-side SSCG block, which is why SuperSpeed link
++	 * training never got past Rx.Detect here: the analog front end and
++	 * the DLF demux of the receiver were left at their reset defaults.
++	 * The IPQ5332 combo phy - the same phy family, and the only known
++	 * working SuperSpeed configuration for it - programs exactly these
++	 * three registers, so use its values.
++	 */
++	ssphy_write(phy, COMBO_PHY_CFG_RX_AFE_2, 0x1076);
++	ssphy_write(phy, COMBO_PHY_CFG_RX_DLF_DEMUX_2, 0x3142);
++	ssphy_write(phy, COMBO_PHY_CFG_MISC1, 0x3);
 +
 +	return 0;
 +}

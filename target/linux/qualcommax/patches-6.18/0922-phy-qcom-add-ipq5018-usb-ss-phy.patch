@@ -53,7 +53,7 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
  obj-$(CONFIG_PHY_QCOM_PCIE2)		+= phy-qcom-pcie2.o
 --- /dev/null
 +++ b/drivers/phy/qualcomm/phy-qcom-ipq5018-usb-ss.c
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,201 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Qualcomm IPQ5018 USB SuperSpeed "uni" PHY driver
@@ -89,8 +89,19 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +#define COMBO_PHY_CFG_RX_AFE_2		0x7c4
 +#define COMBO_PHY_CFG_RX_DLF_DEMUX_2	0x7e8
 +
-+/* time (us) the PHY takes to autoload its fuse calibration after POR */
-+#define PHY_AUTOLOAD_DELAY_US	35
++/*
++ * Delays around the POR reset, taken from the mainline driver for the PCIe
++ * instance of this uniphy (phy-qcom-uniphy-pcie-28lp.c). The 5 ms after the
++ * deassert is the one that matters: this port used to write its init values
++ * 35 us after the deassert, while the PHY was still autoloading its fuse
++ * calibration, so everything written was promptly overwritten.
++ */
++#define RST_ASSERT_DELAY_MIN_US		100
++#define RST_ASSERT_DELAY_MAX_US		150
++#define PHY_SETTLE_DELAY_MIN_US		5000
++#define PHY_SETTLE_DELAY_MAX_US		5100
++#define CLK_EN_DELAY_MIN_US		30
++#define CLK_EN_DELAY_MAX_US		50
 +
 +#define NUM_CLKS	4
 +
@@ -111,6 +122,12 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +	struct ipq5018_usb_ss_phy *phy = phy_get_drvdata(_phy);
 +	int ret;
 +
++	reset_control_assert(phy->por_rst);
++	usleep_range(RST_ASSERT_DELAY_MIN_US, RST_ASSERT_DELAY_MAX_US);
++	reset_control_deassert(phy->por_rst);
++
++	usleep_range(PHY_SETTLE_DELAY_MIN_US, PHY_SETTLE_DELAY_MAX_US);
++
 +	/*
 +	 * All four clocks must run before the register file responds -
 +	 * with aux/lfps gated, even a read of the SSCG registers hangs
@@ -123,11 +140,7 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +	if (ret)
 +		return ret;
 +
-+	reset_control_assert(phy->por_rst);
-+	usleep_range(100, 200);
-+	reset_control_deassert(phy->por_rst);
-+
-+	udelay(PHY_AUTOLOAD_DELAY_US);
++	usleep_range(CLK_EN_DELAY_MIN_US, CLK_EN_DELAY_MAX_US);
 +
 +	ssphy_write(phy, SSCG_CTRL_REG_4, 0x1cb9);
 +	ssphy_write(phy, SSCG_CTRL_REG_5, 0x023a);
@@ -163,6 +176,8 @@ Signed-off-by: Stanisław Pal <kuncy7@gmail.com>
 +	ssphy_write(phy, COMBO_PHY_CFG_RX_AFE_2, 0x1076);
 +	ssphy_write(phy, COMBO_PHY_CFG_RX_DLF_DEMUX_2, 0x3142);
 +	ssphy_write(phy, COMBO_PHY_CFG_MISC1, 0x3);
++
++	dev_info(&_phy->dev, "initialised: sscg+cdr+pcs+rx, 5 ms post-reset settle\n");
 +
 +	return 0;
 +}

@@ -40,10 +40,10 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/spi/spi-qpic-snand.c
 +++ b/drivers/spi/spi-qpic-snand.c
-@@ -1380,6 +1380,22 @@ static int qcom_spi_send_cmdaddr(struct
- 	snandc->regs->addr0 = cpu_to_le32(op->addr.val);
- 	snandc->regs->addr1 = cpu_to_le32(0);
-
+@@ -1389,6 +1389,22 @@ static int qcom_spi_send_cmdaddr(struct
+ 	snandc->regs->addr0 = cpu_to_le32(s_op.addr1_reg);
+ 	snandc->regs->addr1 = cpu_to_le32(s_op.addr2_reg);
+ 
 +	/*
 +	 * The feature value has to reach NAND_FLASH_FEATURES before the
 +	 * command is executed, otherwise the controller programs the chip
@@ -62,8 +62,8 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +
  	qcom_write_reg_dma(snandc, &snandc->regs->cmd, NAND_FLASH_CMD, 3, NAND_BAM_NEXT_SGL);
  	qcom_write_reg_dma(snandc, &snandc->regs->exec, NAND_EXEC_CMD, 1, NAND_BAM_NEXT_SGL);
-
-@@ -1417,10 +1433,8 @@ static int qcom_spi_io_op(struct qcom_na
+ 
+@@ -1426,10 +1442,8 @@ static int qcom_spi_io_op(struct qcom_na
  		copy_ftr = true;
  		break;
  	case SPINAND_SET_FEATURE:

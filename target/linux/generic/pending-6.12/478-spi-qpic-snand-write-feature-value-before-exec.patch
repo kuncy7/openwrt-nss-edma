@@ -1,4 +1,5 @@
 From: Stanislaw Pal <kuncy7@gmail.com>
+Date: Mon, 27 Jul 2026 12:00:00 +0200
 Subject: [PATCH] spi: spi-qpic-snand: write the feature value before executing
  SET_FEATURE
 

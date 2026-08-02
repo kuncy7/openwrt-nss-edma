@@ -1,4 +1,5 @@
 From: Stanislaw Pal <kuncy7@gmail.com>
+Date: Sat, 01 Aug 2026 09:00:00 +0200
 Subject: [PATCH] clk: qcom: ipq-cmn-pll: keep the CMN block bus clocks enabled
 
 The probe function takes a runtime PM reference to enable the GCC AHB &

@@ -423,32 +423,10 @@
 	status = "okay";
 };
 
-&soc {
-	/*
-	 * SuperSpeed "uni" PHY (no node in the mainline dtsi - mainline has
-	 * no driver; ours is patch 0922, ported from the QSDK). Layout as in
-	 * the stock DTB ssuniphy@5d000, por_rst = GCC_USB0_PHY_BCR - but on
-	 * top of the vendor's pipe+cfg_ahb the driver also needs aux+lfps:
-	 * with either gated, the 0x5d000 register file hangs the bus (the
-	 * vendor controller node enables them before its phy init).
-	 */
-	ssphy: phy@5d000 {
-		compatible = "qcom,ipq5018-usb-ssphy";
-		reg = <0x0005d000 0x800>;
-
-		clocks = <&gcc GCC_USB0_PIPE_CLK>,
-			 <&gcc GCC_USB0_PHY_CFG_AHB_CLK>,
-			 <&gcc GCC_USB0_AUX_CLK>,
-			 <&gcc GCC_USB0_LFPS_CLK>;
-		clock-names = "pipe",
-			      "cfg_ahb",
-			      "aux",
-			      "lfps";
-
-		resets = <&gcc GCC_USB0_PHY_BCR>;
-
-		#phy-cells = <0>;
-	};
+/* SuperSpeed uni PHY - the mux register and the 60 MHz mock UTMI rate
+ * the board needs both come from the dtsi now. */
+&usbphy1 {
+	status = "okay";
 };
 
 &usb {
@@ -456,41 +434,9 @@
 
 	vbus-supply = <&reg_usb_vbus>;
 
-	/*
-	 * The USB pads are behind a TCSR-controlled phy mux (stock DTB:
-	 * qcom,phy-mux-regs = <syscon@1945000 0x2540>). The same register
-	 * inside the mainline tcsr node (0x1937000) is at offset 0x10540.
-	 * TP-Link's U-Boot never selects the USB position - patch 0921
-	 * writes 1 here at probe.
-	 */
-	qcom,phy-mux-regs = <&tcsr 0x10540>;
-
-	/*
-	 * TP-Link's U-Boot leaves the mock UTMI RCG at 120 MHz; the stock
-	 * DTB assigns the UTMI-spec 60 MHz. Without it the HS side never
-	 * detects a connect.
-	 */
-	assigned-clocks = <&gcc GCC_USB0_MOCK_UTMI_CLK>;
-	assigned-clock-rates = <60000000>;
-
-	/*
-	 * The dtsi is written for HS-only operation (no SS phy driver in
-	 * mainline): it substitutes the UTMI clock for the controller's
-	 * PIPE interface. With the real SS phy up this must go away - the
-	 * combination of a live SS phy and the UTMI substitution hangs the
-	 * controller (verified live: the system dies within minutes even
-	 * with no SS device plugged).
-	 */
-	/delete-property/ qcom,select-utmi-as-pipe-clk;
-};
-
-&usb_dwc {
 	#address-cells = <1>;
 	#size-cells = <0>;
 	dr_mode = "host";
-
-	phys = <&usbphy0>, <&ssphy>;
-	phy-names = "usb2-phy", "usb3-phy";
 
 	usb_port1: port@1 {
 		reg = <1>;

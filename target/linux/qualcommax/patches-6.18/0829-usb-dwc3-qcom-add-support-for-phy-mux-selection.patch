@@ -1,0 +1,97 @@
+--- a/drivers/usb/dwc3/dwc3-qcom.c
++++ b/drivers/usb/dwc3/dwc3-qcom.c
+@@ -12,9 +12,11 @@
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/interconnect.h>
++#include <linux/mfd/syscon.h>
+ #include <linux/platform_device.h>
+ #include <linux/phy/phy.h>
+ #include <linux/usb/of.h>
++#include <linux/regmap.h>
+ #include <linux/reset.h>
+ #include <linux/iopoll.h>
+ #include <linux/usb/hcd.h>
+@@ -42,6 +44,8 @@
+ #define SDM845_QSCRATCH_SIZE			0x400
+ #define SDM845_DWC3_CORE_SIZE			0xcd00
+ 
++#define TCSR_USB_MUX_SEL			BIT(0)
++
+ /* Interconnect path bandwidths in MBps */
+ #define USB_MEMORY_AVG_HS_BW MBps_to_icc(240)
+ #define USB_MEMORY_PEAK_HS_BW MBps_to_icc(700)
+@@ -85,6 +89,9 @@ struct dwc3_qcom {
+ 	struct icc_path		*icc_path_apps;
+ 
+ 	enum usb_role		current_role;
++
++	struct regmap		*tcsr;
++	unsigned int		mux_offset;
+ };
+ 
+ #define to_dwc3_qcom(d) container_of((d), struct dwc3_qcom, dwc)
+@@ -558,6 +565,15 @@ static int dwc3_qcom_setup_irq(struct dw
+ 	return 0;
+ }
+ 
++static int dwc3_qcom_usb_mux_setup(struct dwc3_qcom *qcom, bool enable)
++{
++	if (!qcom->tcsr)
++		return 0;
++
++	return regmap_update_bits(qcom->tcsr, qcom->mux_offset, TCSR_USB_MUX_SEL,
++				  enable ? TCSR_USB_MUX_SEL : 0);
++}
++
+ static void dwc3_qcom_set_role_notifier(struct dwc3 *dwc, enum usb_role next_role)
+ {
+ 	struct dwc3_qcom *qcom = to_dwc3_qcom(dwc);
+@@ -624,6 +640,20 @@ static int dwc3_qcom_probe(struct platfo
+ 
+ 	qcom->dev = &pdev->dev;
+ 
++	/*
++	 * USB PHY mux selection is mandatory for IPQ5018 & IPQ5332 only,
++	 * continue if property is not found.
++	 */
++	qcom->tcsr = syscon_regmap_lookup_by_phandle_args(dev->of_node,
++							  "qcom,phy-usb-mux-sel",
++							  1, &qcom->mux_offset);
++	if (IS_ERR(qcom->tcsr)) {
++		ret = PTR_ERR(qcom->tcsr);
++		if (ret != -ENOENT)
++			return dev_err_probe(dev, ret, "failed to get regmap\n");
++		qcom->tcsr = NULL;
++	}
++
+ 	qcom->resets = devm_reset_control_array_get_optional_exclusive(dev);
+ 	if (IS_ERR(qcom->resets)) {
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(qcom->resets),
+@@ -635,6 +665,18 @@ static int dwc3_qcom_probe(struct platfo
+ 		return dev_err_probe(dev, ret, "failed to get clocks\n");
+ 	qcom->num_clocks = ret;
+ 
++	/*
++	 * Select the USB position of the phy mux before anything comes out
++	 * of reset. Selecting it later leaves the SuperSpeed pads muxed away
++	 * while the controller resets, and the SS link doesn't train and is
++	 * stuck in Rx.Detect (USB2 is unaffected as it isn't muxed).
++	 */
++	ret = dwc3_qcom_usb_mux_setup(qcom, true);
++	if (ret) {
++		dev_err(dev, "failed to write USB mux to TCSR, err=%d\n", ret);
++		return ret;
++	}
++
+ 	ret = reset_control_assert(qcom->resets);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
+@@ -740,6 +782,7 @@ static void dwc3_qcom_remove(struct plat
+ 	dwc3_core_remove(&qcom->dwc);
+ 	clk_bulk_disable_unprepare(qcom->num_clocks, qcom->clks);
+ 	dwc3_qcom_interconnect_exit(qcom);
++	dwc3_qcom_usb_mux_setup(qcom, false);
+ 
+ 	pm_runtime_put_noidle(qcom->dev);
+ }

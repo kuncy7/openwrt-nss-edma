@@ -1,0 +1,18 @@
+--- a/Documentation/devicetree/bindings/usb/qcom,snps-dwc3.yaml
++++ b/Documentation/devicetree/bindings/usb/qcom,snps-dwc3.yaml
+@@ -392,7 +392,6 @@ allOf:
+         compatible:
+           contains:
+             enum:
+-              - qcom,ipq5018-dwc3
+               - qcom,ipq6018-dwc3
+               - qcom,ipq8074-dwc3
+               - qcom,msm8953-dwc3
+@@ -439,6 +438,7 @@ allOf:
+         compatible:
+           contains:
+             enum:
++              - qcom,ipq5018-dwc3
+               - qcom,ipq5332-dwc3
+     then:
+       properties:

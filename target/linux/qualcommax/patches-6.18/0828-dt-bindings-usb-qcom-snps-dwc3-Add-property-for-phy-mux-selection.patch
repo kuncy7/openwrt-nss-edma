@@ -1,0 +1,28 @@
+--- a/Documentation/devicetree/bindings/usb/qcom,snps-dwc3.yaml
++++ b/Documentation/devicetree/bindings/usb/qcom,snps-dwc3.yaml
+@@ -140,6 +140,16 @@ properties:
+     minItems: 3
+     maxItems: 19
+ 
++  qcom,phy-usb-mux-sel:
++    description: |
++      Mux selection for USB PHY. On some SoCs, the USB3 and PCIe PHY pads are
++      muxed and the selection is done via a register in TCSR syscon.
++    $ref: /schemas/types.yaml#/definitions/phandle-array
++    items:
++      - items:
++          - description: phandle of TCSR syscon
++          - description: offset of PHY mux selection register
++
+   qcom,select-utmi-as-pipe-clk:
+     description:
+       If present, disable USB3 pipe_clk requirement.
+@@ -469,6 +479,8 @@ allOf:
+             - const: pwr_event
+             - const: dp_hs_phy_irq
+             - const: dm_hs_phy_irq
++      required:
++        - qcom,phy-usb-mux-sel
+ 
+   - if:
+       properties:

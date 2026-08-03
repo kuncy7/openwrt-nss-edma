@@ -1,0 +1,28 @@
+--- a/Documentation/devicetree/bindings/usb/qcom,snps-dwc3.yaml
++++ b/Documentation/devicetree/bindings/usb/qcom,snps-dwc3.yaml
+@@ -290,6 +290,25 @@ allOf:
+         compatible:
+           contains:
+             enum:
++              - qcom,ipq5018-dwc3
++    then:
++      properties:
++        clocks:
++          maxItems: 6
++        clock-names:
++          items:
++            - const: core
++            - const: iface
++            - const: sleep
++            - const: mock_utmi
++            - const: aux
++            - const: lfps
++
++  - if:
++      properties:
++        compatible:
++          contains:
++            enum:
+               - qcom,sc8280xp-dwc3
+               - qcom,sc8280xp-dwc3-mp
+               - qcom,x1e80100-dwc3

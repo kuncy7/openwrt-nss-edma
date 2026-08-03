@@ -278,9 +278,7 @@
 	status = "okay";
 
 	vbus-supply = <&regulator_fixed_5p0>;
-};
 
-&usb_dwc {
 	#address-cells = <1>;
 	#size-cells = <0>;
 	dr_mode = "host";

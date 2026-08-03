@@ -1,0 +1,25 @@
+From: Praveenkumar I <quic_ipkumar@quicinc.com>
+Date: Fri, 29 Sep 2023 14:12:06 +0530
+Subject: [PATCH] arm64: dts: qcom: ipq5332: Add Super-Speed UNIPHY in USB node
+
+Add UNIPHY node in USB to support Super-speed. As the SS PHY has
+pipe clock, removed "qcom,select-utmi-as-pipe-clk" flag.
+
+Signed-off-by: Praveenkumar I <quic_ipkumar@quicinc.com>
+---
+--- a/arch/arm64/boot/dts/qcom/ipq5018.dtsi
++++ b/arch/arm64/boot/dts/qcom/ipq5018.dtsi
+@@ -640,10 +640,10 @@
+ 
+ 			resets = <&gcc GCC_USB0_BCR>;
+ 
+-			phys = <&usbphy0>;
+-			phy-names = "usb2-phy";
++			qcom,phy-usb-mux-sel = <&tcsr 0x10540>;
+ 
+-			qcom,select-utmi-as-pipe-clk;
++			phys = <&usbphy0>, <&usbphy1>;
++			phy-names = "usb2-phy", "usb3-phy";
+ 
+ 			tx-fifo-resize;
+ 			snps,is-utmi-l1-suspend;

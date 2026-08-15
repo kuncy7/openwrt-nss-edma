@@ -380,7 +380,8 @@ define KernelPackage/ath11k/config
                select PACKAGE_kmod-qca-nss-drv
                select NSS_DRV_WIFIOFFLOAD_ENABLE
                select NSS_DRV_WIFI_EXT_VDEV_ENABLE
-               select ATH11K_MEM_PROFILE_512M if (TARGET_qualcommax_ipq807x_DEVICE_edimax_cax1800 || \
+               select ATH11K_MEM_PROFILE_512M if (TARGET_qualcommax_ipq807x_DEVICE_cmcc_rm2-6 || \
+               	 TARGET_qualcommax_ipq807x_DEVICE_edimax_cax1800 || \
                	 TARGET_qualcommax_ipq807x_DEVICE_compex_wpq873 || \
                	 TARGET_qualcommax_ipq807x_DEVICE_linksys_mx4200v1 || \
                	 TARGET_qualcommax_ipq807x_DEVICE_redmi_ax6 || \

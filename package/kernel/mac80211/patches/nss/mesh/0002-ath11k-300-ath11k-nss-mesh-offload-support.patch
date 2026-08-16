@@ -20,6 +20,8 @@ Change-Id: Ib6950344286ba18fab43586262c62dcd09557614
 Co-developed-by: Karthikeyan Kathirvel <kathirve@codeaurora.org>
 Signed-off-by: Karthikeyan Kathirvel <kathirve@codeaurora.org>
 Signed-off-by: Vasanthakumar Thiagarajan <vthiagar@codeaurora.org>
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
 ---
  drivers/net/wireless/ath/ath11k/Makefile    |    2 +-
  drivers/net/wireless/ath/ath11k/debug_nss.c |  343 +++++++
@@ -3124,7 +3126,7 @@ index 5e80248..4cb4388 100644
 +
 +		/* Start the initial timer in 2 secs */
 +		mod_timer(&arvif->nss.mpp_expiry_timer,
-+				jiffies + msecs_to_jiffies(2 * HZ));
++				jiffies + msecs_to_jiffies(2 * MSEC_PER_SEC));
 +		break;
 +#endif
  	default:
@@ -3282,7 +3284,7 @@ index 5f4b48d..d52b456 100644
  	ATH11K_NSS_OPMODE_MONITOR,
  };
  
-+#define ATH11K_MPP_EXPIRY_TIMER_INTERVAL_MS	60 * HZ
++#define ATH11K_MPP_EXPIRY_TIMER_INTERVAL_MS	60 * MSEC_PER_SEC
 +
  struct peer_stats {
  	u64 last_rx;

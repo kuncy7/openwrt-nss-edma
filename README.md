@@ -1,5 +1,13 @@
 # OpenWrt with Qualcomm NSS hardware offload on the upstream EDMA driver
 
+> **This branch is an archive.** Work moved to
+> [`ipq50xx-rebase`](https://github.com/kuncy7/openwrt-nss-edma/tree/ipq50xx-rebase)
+> on 2026-09-07, when the series was rebased onto Julius's current
+> `nss-edma-rework`. Build from that branch, with the matching
+> [`ipq50xx-rebase`](https://github.com/kuncy7/nss-packages/tree/ipq50xx-rebase)
+> branch of the feed. Nothing here gets fixed any more - notably, this
+> branch autoloads `ath11k` at boot and races the NSS core.
+
 OpenWrt for **IPQ807x** (Qualcomm IPQ8074 / IPQ8071A) that runs **NSS network
 offload** — the two UBI32 packet-processing cores in the SoC — on top of OpenWrt
 main's **upstream `qca_edma` / `qca_ppe` ethernet and DSA drivers** from

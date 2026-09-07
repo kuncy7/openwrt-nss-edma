@@ -1,5 +1,13 @@
 # NSS offload on IPQ5018 with the upstream ethernet stack (branch `ipq50xx-nss`)
 
+> **This branch is an archive.** Work moved to
+> [`ipq50xx-rebase`](https://github.com/kuncy7/openwrt-nss-edma/tree/ipq50xx-rebase)
+> on 2026-09-07, when the series was rebased onto Julius's current
+> `nss-edma-rework`. Build from that branch, with the matching
+> [`ipq50xx-rebase`](https://github.com/kuncy7/nss-packages/tree/ipq50xx-rebase)
+> branch of the feed. Nothing here gets fixed any more - notably, this
+> branch autoloads `ath11k` at boot and races the NSS core.
+
 This branch runs the **NSS packet-processing core of the IPQ5018** on kernel
 **6.18** with OpenWrt main's **upstream `stmmac` / `dwmac-ipq5018` ethernet
 driver** - no `qca-nss-dp`, no `qca-ssdk`. It is the IPQ50xx counterpart of the

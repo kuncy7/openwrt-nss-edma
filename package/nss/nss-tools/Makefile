@@ -57,8 +57,8 @@ define Package/nss-tools-dwmac/description
  from nss.general.vtu) and netifd runs the lan/wan VLANs on the eth0
  trunk. The 'nss' service arms the wired firmware plane before netifd and
  /usr/sbin/nss-dwmac-up layers ECM acceleration on top once the topology
- exists. Wi-Fi runs on the host path by default (the MP firmware's wifili
- data path is broken; see nss.general.wifi_offload). Disable with
+ exists. Wi-Fi runs on the NSS path by default (ath11k built with NSS
+ support; nss.general.wifi_offload=0 keeps it on the host). Disable with
  "uci set nss.general.enabled='0'" to stay on the host stack with the
  same topology.
 endef

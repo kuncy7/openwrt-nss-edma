@@ -177,8 +177,8 @@ A plain reboot is stock OpenWrt on the host stack. The `nss` service
    map from `nss.general.vtu`. From here the CPU port carries plain 802.1Q.
 2. Loads `qca-dwmac-nss` and `qca-nss-drv`. Both are inert at this point:
    `qca-nss-drv`'s probe defers until a port is armed.
-3. Loads ath11k on the host path (`nss_offload=0` unless
-   `nss.general.wifi_offload=1`).
+3. With `nss.general.wifi_offload=0`, loads ath11k on the host path. With the
+   default `1` it leaves ath11k to `nss-dwmac-up`, which loads it after the arm.
 4. Starts `/usr/sbin/nss-dwmac-up` alongside netifd. That script waits until
    `eth0` is up, the `lan` interface is up *in netifd's own view*, and the
    bridge has set the promiscuous flag on the trunk; then it arms the firmware
@@ -220,7 +220,7 @@ migrates an existing DSA-style network config once (`br-lan` ports →
 | Option | Default | Meaning |
 |---|---|---|
 | `enabled` | `1` | `0` = stay on the host stack (same topology, no firmware) |
-| `wifi_offload` | `0` | `1` = load ath11k with `nss_offload=1`. Validated on the GL-B3000; the default stays `0` until other boards report back. |
+| `wifi_offload` | `1` | load ath11k with `nss_offload=1`, after the arm. Needs ath11k built with NSS support (the service warns if it is not). `0` = Wi-Fi on the host path. |
 | `fw_mask` | `0x2` | bitmask of GMACs to hand to the firmware; bit N = GMAC N, and every bit needs a netdev (`trunk` / `extra_ports`). `0x3` arms both; two GMACs have run on the Linksys SPNMX56 and MX6200 and the Xunison D50 (see *Porting*). |
 | `vtu` | *(B3000 wiring on the B3000, empty elsewhere)* | VTU program for `qca8337-nss`; empty = VTU off, the switch stays one untagged LAN. Only needed when WAN shares the trunk (see *Porting*) |
 | `trunk` | `eth0` | the switch trunk netdev. `eth1` on a board whose GMAC0 has a netdev of its own - a WAN PHY (Xunison D50, Zyxel SCR50AXE) or a second link into the switch (Redmi AX5400, CMCC PZ-L8); `lan` on the MX6200, which has no switch. |
@@ -366,9 +366,10 @@ offload.
 ### Wi-Fi
 
 Both radios run the firmware's data path, with ath11k on the host doing
-management only. Set `nss.general.wifi_offload=1`; the service then loads
-ath11k after the arm, because `ath11k_nss_setup()` checks the NSS core state at
-module load and never retries.
+management only. It is on by default (`nss.general.wifi_offload=1`, `0` keeps
+the radios on the host); the service loads ath11k after the arm, because
+`ath11k_nss_setup()` checks the NSS core state at module load and never
+retries.
 
 What used to make this impossible was **not** a firmware bug, contrary to what
 this file said for weeks. It was `gcc_ubi0_core_clk`: the bootloader leaves the

@@ -70,9 +70,8 @@ WIFI_LOADED_HERE=0
 # 6032 flushed, 90 % of packets excepted to the host, CPU pegged. Sizing the
 # pools took the same board to 2.8 M hash hits and 338 rules.
 #
-# Until now this was called only from the Wi-Fi offload path, so every board
-# that leaves nss.general.wifi_offload at 0 - which is every board except the
-# GL-B3000 - ran the firmware on default pools.
+# It used to be called only from the Wi-Fi offload path, so every board with
+# nss.general.wifi_offload at 0 ran the firmware on default pools.
 nss_core_ready() { [ -r /sys/kernel/debug/qca-nss-drv/stats/n2h ]; }
 
 PBUF_TUNED=0

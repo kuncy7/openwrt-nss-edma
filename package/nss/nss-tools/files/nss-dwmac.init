@@ -21,13 +21,10 @@
 # firmware data plane with ECM acceleration, or the plain stmmac host path.
 # A failed firmware arm degrades to the host path with the same topology.
 #
-# Wi-Fi loads on the HOST path by default (nss.general.wifi_offload='0'):
-# the wifili data path of the MP firmware line dies on the first RX
-# exception from an authorized peer (measured: the core traps at
-# 0x40004918 and the whole fw->host direction stops), so Wi-Fi offload
-# stays off until that firmware bug is fixed. Wired NSS acceleration is
-# unaffected: with Wi-Fi on the host path the wifili node is never
-# registered and the firmware never touches the broken path.
+# Wi-Fi offload is on by default (nss.general.wifi_offload='1', set on
+# first boot by nss-dwmac.defaults): ath11k is left to nss-dwmac-up and
+# loads after the arm. '0' keeps Wi-Fi on the host path; wired NSS
+# acceleration is the same either way.
 
 START=19
 USE_PROCD=1

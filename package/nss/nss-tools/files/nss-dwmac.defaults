@@ -17,7 +17,8 @@
 # and wan untagged in 2. If the CPU link enters the switch through one of
 # the switch's own PHYs instead of an SGMII MAC port, use cpu_port=255
 # ("no forced port") and list that PHY in wake_phys too - it has to
-# autonegotiate like a front port.
+# autonegotiate like a front port. switch_dev names the switch's own MDIO
+# device when it does not sit at the usual address 17 (90000.mdio-1:11).
 #
 # Two GMACs: trunk_if is the GMAC index of the trunk (default 1; 0 where the
 # switch hangs off GMAC0), extra_ports lists any other GMAC in use as
@@ -94,9 +95,9 @@ nss_dwmac_board_defaults() {
 		vtu=''
 		;;
 	linksys,mx6200)
-		# UNTESTED. No switch: GMAC0 is the LAN PHY (netdev 'lan'),
-		# GMAC1 a GPY115C on SGMII (netdev 'wan'). Two plain ports, both
-		# handed to the firmware; br-lan sits on 'lan'.
+		# Confirmed on LS3434's board 2026-09-10. No switch: GMAC0 is the
+		# LAN PHY (netdev 'lan'), GMAC1 a GPY115C on SGMII (netdev 'wan').
+		# Two plain ports, both handed to the firmware; br-lan sits on 'lan'.
 		fw_mask='0x3'
 		trunk='lan'
 		trunk_if='0'
@@ -116,6 +117,72 @@ nss_dwmac_board_defaults() {
 		trunk_if='1'
 		switch_args='cpu_port=6 ports=0x5e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
 		vtu='1:6t,2u,3u,4u;2:6t,1u'
+		;;
+	cmcc,pz-l8)
+		# UNTESTED. The AX5400's two CPU ports, with the SGMII one on port
+		# 0: port 0 -> GMAC1 (SGMII), port 5 -> GMAC0 (PHY-to-PHY). Trunk
+		# = eth1 = phys_if 1, 4 = wan, 1-3 = lan3/lan2/lan1; port 5 is left
+		# out of the fabric.
+		fw_mask='0x2'
+		trunk='eth1'
+		trunk_if='1'
+		switch_args='cpu_port=0 ports=0x1f wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
+		vtu='1:0t,1u,2u,3u;2:0t,4u'
+		;;
+	cmcc,mr3000d-ci)
+		# UNTESTED. Port 6 = CPU (SGMII, GMAC1), 4 = wan, 1-3 =
+		# lan3/lan2/lan1. GMAC0 is wired to the switch's PHY 4 as well, but
+		# the DTS gives it no port, so it stays out of the fabric - it still
+		# takes eth0, which makes the trunk eth1.
+		fw_mask='0x2'
+		trunk='eth1'
+		trunk_if='1'
+		switch_args='cpu_port=6 ports=0x5e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
+		vtu='1:6t,1u,2u,3u;2:6t,4u'
+		;;
+	zyxel,scr50axe|\
+	iodata,wn-dax3000gr|\
+	elecom,wrc-x3000gs2|\
+	elecom,wrc-x3000gst2)
+		# UNTESTED. The D50's layout with the CPU on port 6: GMAC0 is the
+		# SoC's GE PHY as 'wan', GMAC1 the switch trunk on SGMII (eth1),
+		# 1-4 = lan1-4. No VTU: the switch carries LAN only, and both GMACs
+		# go to the firmware as on the D50. The I-O DATA and Elecom boards
+		# put the switch at MDIO address 0x18.
+		fw_mask='0x3'
+		trunk='eth1'
+		trunk_if='1'
+		extra_ports='0:wan'
+		wan_on_trunk=0
+		[ "$1" = "zyxel,scr50axe" ] || switch_dev='90000.mdio-1:18'
+		switch_args='cpu_port=6 ports=0x5e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
+		vtu=''
+		;;
+	xiaomi,ax6000)
+		# UNTESTED. The SPNMX56's layout: the switch hangs off GMAC0
+		# through the switch's own PHY 3 (port 4 = CPU, PHY-to-PHY gmii),
+		# 1-3 = lan1-3 (PHY 0-2). WAN is a QCA8081 2.5G PHY on GMAC1,
+		# netdev 'wan' = phys_if 1. No VTU: the switch carries LAN only.
+		fw_mask='0x3'
+		trunk='eth0'
+		trunk_if='0'
+		extra_ports='1:wan'
+		wan_on_trunk=0
+		switch_args='cpu_port=255 ports=0x1e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
+		vtu=''
+		;;
+	yuncore,ax830|\
+	yuncore,ax850)
+		# UNTESTED. The MX6200's layout: no switch, GMAC0 = 'lan' (GE
+		# PHY), GMAC1 = 'wan' on a QCA8081 2.5G PHY.
+		fw_mask='0x3'
+		trunk='lan'
+		trunk_if='0'
+		extra_ports='1:wan'
+		wan_on_trunk=0
+		fabric='none'
+		switch_args=''
+		vtu=''
 		;;
 	*)
 		return 1
@@ -177,9 +244,10 @@ fi
 
 [ -z "$(uci -q get nss.general.vtu)" ] && [ -n "$vtu" ] && uci set nss.general.vtu="$vtu"
 [ -z "$(uci -q get nss.general.switch_args)" ] && [ -n "$switch_args" ] && uci set nss.general.switch_args="$switch_args"
-# The trunk netdev: GMAC1's name. eth0 wherever GMAC0 is unused (every board
-# in the table above); eth1 on a board whose GMAC0 is the WAN PHY (Xunison
-# D50) - those set nss.general.trunk by hand until they get a table entry.
+[ -z "$(uci -q get nss.general.switch_dev)" ] && [ -n "$switch_dev" ] && uci set nss.general.switch_dev="$switch_dev"
+# The trunk netdev: eth0 where GMAC0 is disabled or is the trunk itself; eth1
+# where GMAC0 takes a netdev of its own (a WAN PHY, or a second link into the
+# switch); the PHY's name on a board with no switch.
 [ -z "$(uci -q get nss.general.trunk)" ] && [ -n "$trunk" ] && uci set nss.general.trunk="$trunk"
 [ -z "$(uci -q get nss.general.trunk_if)" ] && [ -n "$trunk_if" ] && uci set nss.general.trunk_if="$trunk_if"
 [ -z "$(uci -q get nss.general.extra_ports)" ] && [ -n "$extra_ports" ] && uci set nss.general.extra_ports="$extra_ports"

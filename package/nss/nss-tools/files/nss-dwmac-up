@@ -55,6 +55,7 @@ fi
 # init script). WIFI_DEFERRED is set when the service left it to us.
 WIFI_OFFLOAD="$(uci -q get nss.general.wifi_offload)"
 [ "$WIFI_OFFLOAD" = "1" ] || WIFI_OFFLOAD=0
+WIFI_LOADED_HERE=0
 
 # Size the firmware's packet-buffer pools. This has to happen after the arm,
 # because the sysctl handler DMA-maps through the core's struct device: the
@@ -122,6 +123,7 @@ wifi_load_now() {
     pbuf_tune
   fi
   modprobe ath11k_ahb 2>/dev/null || true
+  WIFI_LOADED_HERE=1
   # A PCIe radio (QCN9074/9024 on a board that has one) takes nss.enabled from
   # the module parameter at probe time too, so it has to be loaded here as
   # well - not at boot. Absent on boards without one; ignore the failure.
@@ -129,10 +131,57 @@ wifi_load_now() {
   echo "ath11k loaded on the $( [ "$offload" = 1 ] && echo NSS || echo host ) path"
 }
 
+# The radios load here, after netifd has already read /etc/config/wireless.
+# The phy hotplug that runs as they appear can still rewrite that file -
+# 05-wifi-migrate moves a radio's path when a DTS renames its wifi node -
+# and nothing tells netifd: 10-wifi-detect only asks it to retry with the
+# config it already holds. On a stock image ath11k loads before netifd
+# starts, so the migration is in place before netifd reads the file.
+# Measured on a GL-B3000 whose QCN6122 moved from b00a040 to b00b040: uci
+# had the new path, netifd kept the old one, and the 5 GHz radio stayed
+# down ("wifi-scripts: Bug: PHY is undefined for device") until a reboot.
+# So wait until the radios are up or the two views disagree, and reload
+# netifd only in the second case - a normal boot reloads nothing.
+radio_sections() {
+  uci -q show wireless | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'
+}
+
+wifi_netifd_stale() {
+  local r p
+  for r in $(radio_sections); do
+    p="$(uci -q get "wireless.$r.path")"
+    [ -n "$p" ] || continue
+    [ "$(ubus call network.wireless status 2>/dev/null | jsonfilter -e "@.$r.config.path")" = "$p" ] || return 0
+  done
+  return 1
+}
+
+wifi_radios_up() {
+  local r
+  for r in $(radio_sections); do
+    [ "$(uci -q get "wireless.$r.disabled")" = 1 ] && continue
+    [ "$(ubus call network.wireless status 2>/dev/null | jsonfilter -e "@.$r.up")" = true ] || return 1
+  done
+  return 0
+}
+
+wifi_settled() { wifi_netifd_stale || wifi_radios_up; }
+
+wifi_sync_netifd() {
+  [ "$WIFI_LOADED_HERE" = 1 ] || return 0
+  poll_until 20 wifi_settled || return 0
+  if wifi_netifd_stale; then
+    echo "wireless config changed while the radios loaded - reloading netifd"
+    ubus call network reload 2>/dev/null || true
+  fi
+  return 0
+}
+
 fw_started() { grep -q started $GLUE_STATUS 2>/dev/null; }
 poll_until 15 fw_started || {
   echo "firmware takeover failed - staying on the host data path (same topology)"
   wifi_load_now 0
+  wifi_sync_netifd
   exit 1
 }
 
@@ -209,3 +258,6 @@ for e in $(uci -q get nss.general.extra_ports); do
   [ -d "$p" ] || continue
   echo "nss-dwmac diag: ${e#*:} (phys_if ${e%%:*}) rx=$(cat "$p/statistics/rx_packets")/$(cat "$p/statistics/rx_bytes")B tx=$(cat "$p/statistics/tx_packets")"
 done
+
+# Last, so nothing above waits on it (see wifi_sync_netifd).
+wifi_sync_netifd

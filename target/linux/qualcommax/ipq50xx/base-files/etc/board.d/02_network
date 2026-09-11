@@ -12,6 +12,7 @@ ipq50xx_setup_interfaces()
 	iodata,wn-dax3000gr|\
 	linksys,mr5500|\
 	tplink,archer-ax55-v1|\
+	tplink,ex511-v2|\
 	zyxel,scr50axe)
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
 		;;

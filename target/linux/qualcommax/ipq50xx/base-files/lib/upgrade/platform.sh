@@ -127,6 +127,111 @@ linksys_bootconfig_pre_upgrade() {
 	fi
 }
 
+#
+# TP-Link EX511 v2 A/B slot handling.
+#
+# The active slot is selected by the QCA bootconfig table in 0:BOOTCONFIG /
+# 0:BOOTCONFIG1, not by a U-Boot environment variable: this U-Boot exposes no
+# boot_part, and 0:APPSBLENV ships erased, so its environment must be neither
+# trusted nor written. OpenWrt's shared bootconfig.sh parses this board's table
+# unmodified (magic OK, numparts 8, rootfs at index 5, 0:HLOS at index 4).
+#
+# Nothing lives past the 336-byte table in either partition -- both are 0xFF to
+# the end -- so reading 336 bytes, editing and writing back loses nothing.
+#
+tplink_ex511_set_primaryboot() {
+	local partname="$1"
+	local value="$2"
+	local mtdidx tempfile
+
+	mtdidx=$(find_mtd_index "$partname")
+	[ -n "$mtdidx" ] || {
+		echo "cannot find mtd index for $partname"
+		return 1
+	}
+
+	# Deliberately not derived from $partname: tr is not among the binaries
+	# stage2 copies into the sysupgrade ramfs, so a name built with it would
+	# come out empty once this runs from a flashed system rather than from
+	# initramfs. The two calls are sequential, so one scratch file is enough.
+	tempfile="/tmp/bootconfig_write.bin"
+	dd if=/dev/mtd"$mtdidx" of="$tempfile" bs=1 count=336 2>/dev/null || {
+		echo "failed to read $partname"
+		return 1
+	}
+
+	# Keep 0:HLOS in step with rootfs. The kernel actually lives inside the
+	# rootfs UBI on this board, but stock carries both entries and the
+	# in-tree ipq50xx caller (linksys,mx6200) flips both, so match that.
+	set_bootconfig_primaryboot "$tempfile" "0:HLOS" "$value" || return 1
+	set_bootconfig_primaryboot "$tempfile" "rootfs" "$value" || return 1
+
+	mtd write "$tempfile" /dev/mtd"$mtdidx" || {
+		echo "failed to write $partname"
+		return 1
+	}
+}
+
+tplink_ex511_pre_upgrade() {
+	local mtdidx tempfile cur
+
+	# Always install into slot 0, and make sure the table points there.
+	#
+	# The A/B machinery itself works: U-Boot does honour this table. With
+	# primaryboot flipped to 1 it loaded the kernel out of rootfs_1 --
+	# confirmed on hardware by the UBI image sequence number in its own log
+	# matching the one ubiformat had just written to that partition.
+	#
+	# What does not work is the kernel side. U-Boot passes
+	# "ubi.mtd=rootfs" on the command line, naming the active slot in its
+	# own swapped view of the flash, while this board's DTS declares
+	# fixed-partitions and so always resolves "rootfs" to the first slot.
+	# Booting slot 1 therefore starts our kernel with stock's UBI attached
+	# and hangs before init:
+	#
+	#   ubi0: attached mtd13 (name "rootfs", size 36 MiB)
+	#   Waiting for root device /dev/ubiblock0_1...
+	#
+	# Slot 1 only becomes usable once the kernel can learn the active slot
+	# at runtime. Until then pin installs to slot 0. Flipping a board that
+	# an earlier attempt left pointing at slot 1 is part of the job, so the
+	# table is corrected rather than merely inspected.
+	CI_UBIPART="rootfs"
+
+	mtdidx=$(find_mtd_index "0:BOOTCONFIG")
+	[ -n "$mtdidx" ] || {
+		echo "cannot find 0:BOOTCONFIG -- refusing to upgrade"
+		return 1
+	}
+
+	tempfile=/tmp/bootconfig_read.bin
+	dd if=/dev/mtd"$mtdidx" of="$tempfile" bs=1 count=336 2>/dev/null || {
+		echo "failed to read 0:BOOTCONFIG -- refusing to upgrade"
+		return 1
+	}
+
+	validate_bootconfig_magic "$tempfile" || {
+		echo "0:BOOTCONFIG holds no valid table -- refusing to upgrade"
+		return 1
+	}
+
+	cur=$(get_bootconfig_primaryboot "$tempfile" "rootfs")
+	case "$cur" in
+	0)
+		echo "upgrading into rootfs; boot table already selects it"
+		;;
+	1)
+		echo "upgrading into rootfs; moving the boot table back to it"
+		tplink_ex511_set_primaryboot "0:BOOTCONFIG" 0 || return 1
+		tplink_ex511_set_primaryboot "0:BOOTCONFIG1" 0 || return 1
+		;;
+	*)
+		echo "unexpected primaryboot value '$cur' -- refusing to upgrade"
+		return 1
+		;;
+	esac
+}
+
 linksys_mx_pre_upgrade() {
 	local setenv_script="/tmp/fw_env_upgrade"
 
@@ -318,6 +423,21 @@ platform_do_upgrade() {
 		remove_oem_ubi_volume ubi_rootfs
 		remove_oem_ubi_volume bt_fw
 		remove_oem_ubi_volume wifi_fw
+		nand_do_upgrade "$1"
+		;;
+	tplink,ex511-v2)
+		# Selects the inactive slot and sets CI_UBIPART to it. The UBI
+		# container is the "rootfs"/"rootfs_1" partition, never the
+		# default "ubi": without CI_UBIPART set, both
+		# remove_oem_ubi_volume and nand_do_upgrade look up an mtd
+		# partition that does not exist here, so the volume removals
+		# silently no-op and the upgrade fails.
+		tplink_ex511_pre_upgrade "$1" || return 1
+		# Stock UBI holds kernel + bt_fw + ubi_rootfs. Clearing them is
+		# a no-op on the erased slot and required on the stock one.
+		remove_oem_ubi_volume bt_fw
+		remove_oem_ubi_volume ubi_rootfs
+		remove_oem_ubi_volume kernel
 		nand_do_upgrade "$1"
 		;;
 	*)

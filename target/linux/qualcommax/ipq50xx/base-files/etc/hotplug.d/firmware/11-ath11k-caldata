@@ -4,6 +4,13 @@
 
 . /lib/functions/caldata.sh
 
+# tplink,ex511-v2: 0:ART ships fully erased (verified 100% 0xFF). Stock reads
+# ART, fails to LZMA-decompress it, and falls back to a zero-filled dummy
+# (see /lib/read_caldata_to_fs.sh in the stock rootfs), so the radios run on
+# board-data defaults. ath11k hard-fails if the cal file is simply absent, so
+# provide the same zero-filled dummy stock ends up with. Do NOT synthesise one
+# from the board data blob -- that loads but breaks scanning.
+
 board=$(board_name)
 
 case "$FIRMWARE" in
@@ -81,6 +88,9 @@ case "$FIRMWARE" in
 	xiaomi,redmi-ax5400)
 		caldata_extract "0:art" 0x1000 0x20000
 		;;
+	tplink,ex511-v2)
+		dd if=/dev/zero of=/lib/firmware/$FIRMWARE bs=4096 count=32 2>/dev/null
+		;;
 	yuncore,ax830|\
 	yuncore,ax850)
 		caldata_extract "0:ART" 0x1000 0x20000
@@ -146,6 +156,9 @@ case "$FIRMWARE" in
 		label_mac=$(get_mac_binary /tmp/factory_data/default-mac 0)
 		ath11k_patch_mac $(macaddr_add $label_mac 2) 0
 		ath11k_set_macflag
+		;;
+	tplink,ex511-v2)
+		dd if=/dev/zero of=/lib/firmware/$FIRMWARE bs=4096 count=32 2>/dev/null
 		;;
 	yuncore,ax830)
 		caldata_extract "0:ART" 0x4c000 0x20000

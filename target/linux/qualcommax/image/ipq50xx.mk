@@ -342,6 +342,26 @@ define Device/tplink_re700x
 		ipq-wifi-tplink_re700x kmod-phy-realtek
 endef
 TARGET_DEVICES += tplink_re700x
+define Device/tplink_ex511-v2
+	$(call Device/FitImageLzma)
+	DEVICE_VENDOR := TP-Link
+	DEVICE_MODEL := EX511
+	DEVICE_VARIANT := v2
+	# DEVICE_DTS is not derivable here: the default drops everything
+	# before the last '_', giving ipq5018-ex511-v2.
+	DEVICE_DTS := ipq5018-tplink-ex511-v2
+	DEVICE_DTS_CONFIG := config@mp03.3
+	SOC := ipq5018
+	KERNEL_IN_UBI := 1
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	IMAGE_SIZE := 37248k
+	NAND_SIZE := 128m
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
+		ipq-wifi-tplink_ex511-v2 \
+		kmod-dsa-rtl8365mb
+endef
+TARGET_DEVICES += tplink_ex511-v2
 
 define Device/xiaomi_ipq50xx_ax_base
 	$(call Device/FitImage)

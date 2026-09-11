@@ -1,0 +1,744 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+/dts-v1/;
+
+#include "ipq5018.dtsi"
+#include "ipq5018-ess.dtsi"
+
+/*
+ * Include QCN6122 DTSI for the 5GHz radio protection domain definitions.
+ * Physical chip is QCN6102 (confirmed by visual PCB inspection, marking:
+ * "QUALCOM QCN 6102 001 JE437HXZ"). Stock firmware uses QCN6122 paths
+ * throughout (firmware dirs, ini files) suggesting the firmware blob is
+ * shared/compatible between QCN6102 and QCN6122. DTSI retained accordingly.
+ */
+#include "ipq5018-qcn6122.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+/*
+ * TP-Link EX511 v2 — Board Topology
+ *
+ *  +-----------------------------+        +-----------------------------+
+ *  |          IPQ5018            |        |          RTL8367S           |
+ *  |                             |        |                             |
+ *  |  +---------+                |        |  +-------+                 |
+ *  |  |  2.4GHz |  ath11k        |        |  | PORT0 |----------  WAN  |
+ *  |  |  WiFi   |  c000000.wifi  |        |  +-------+                 |
+ *  |  +---------+                |        |  +-------+                 |
+ *  |                             |        |  | PORT1 |----------  LAN1 |
+ *  |  +------+   +------------+  |        |  +-------+                 |
+ *  |  | gmac1|---| SGMII  1G  |--+--------+--| PORT6 |                 |
+ *  |  | MAC  |   | 0x39d00000 |  |        |  | CPU   |  +-------+     |
+ *  |  +------+   +------------+  |        |  +-------+  | PORT2 |---  LAN2
+ *  |                             |        |             +-------+     |
+ *  |  MDIO1: GPIO 36 (MDC)       |        |             +-------+     |
+ *  |          GPIO 37 (MDIO)     |        |             | PORT3 |---  LAN3
+ *  |                             |        |             +-------+     |
+ *  +-----------------------------+        |             | PORT4 |---  LAN4
+ *                                         |             +-------+     |
+ *  +-----------------------------+        +-----------------------------+
+ *  |          QCN6102            |
+ *  |                             |
+ *  |  +---------+                |
+ *  |  |  5GHz   |  ath11k        |
+ *  |  |  WiFi   |  b00a040.wifi  |
+ *  |  +---------+                |
+ *  |  AHB / PCIe                 |
+ *  +-----------------------------+
+ *
+ *  NAND : 128 MiB SPI NAND via QPIC
+ *  UART : GPIO 20 (RX) / GPIO 21 (TX) @ 115200n8
+ *  USB  : USB 3.0, DWC3/QCOM controller
+ */
+
+/ {
+	model = "TP-Link EX511 v2";
+	compatible = "tplink,ex511-v2", "qcom,ipq5018";
+
+	aliases {
+		serial0 = &blsp1_uart1;
+		label-mac-device = <&gmac1>;
+
+		/*
+		 * Deliberately NO ethernet0 alias. Stock U-Boot 2016.01 runs
+		 * fdt_fixup_ethernet(), which walks /aliases for ethernet%d and
+		 * injects mac-address + local-mac-address into the aliased node
+		 * from its ethaddr environment variable. 0:APPSBLENV is 100%
+		 * erased, so U-Boot falls back to its compiled-in default and
+		 * hands Linux ethaddr=00:11:22:33:44:55 (visible in printenv, and
+		 * matching "eth0 MAC Address from ART is not valid" in the stock
+		 * boot log).
+		 *
+		 * of_get_mac_address() checks mac-address, then
+		 * local-mac-address, then address, and only then the nvmem
+		 * "mac-address" cell -- so an injected property silently beats
+		 * the hw_mac_addr cell on misc_data_ro and every interface comes
+		 * up as 00:11:22:33:44:55.
+		 *
+		 * Without the alias U-Boot has no node to fix up, gmac1 carries
+		 * no MAC property, and the nvmem cell is used. None of the other
+		 * 16 in-tree ipq5018 boards declare ethernet0 either.
+		 */
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		/*
+		 * U-Boot overwrites /chosen/bootargs from its own environment, so
+		 * an explicit bootargs here is discarded -- verified on hardware,
+		 * the cmdline arrived as bare "console=ttyMSM0,115200n8". Use
+		 * bootargs-append, which OpenWrt appends to whatever U-Boot passes
+		 * (920-device_tree_cmdline.patch), as every other ipq50xx board does.
+		 *
+		 * coherent_pool=2M is required: without it the atomic DMA pool is
+		 * exhausted loading the Q6 firmware segments and ath11k fails -12.
+		 */
+		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=2M";
+	};
+
+	/*
+	 * GPIO sources: reverse engineered from tp_gpio.ko .data section
+	 * strings, extracted from stock NAND squashfs.
+	 * Reset button GPIO 25 additionally confirmed by stock MP03.3 DTB:
+	 * gengeric_gpio { reset { gpio = <0x19>; } } (0x19 = 25).
+	 */
+	keys {
+		compatible = "gpio-keys";
+
+		reset {
+			label = "reset";
+			gpios = <&tlmm 25 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
+
+		wps {
+			label = "wps";
+			gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_WPS_BUTTON>;
+		};
+
+		/* WiFi button GPIO 31 -- from tp_gpio.ko, active polarity unconfirmed */
+		wifi {
+			label = "wifi";
+			gpios = <&tlmm 31 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RFKILL>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		power {
+			function = LED_FUNCTION_POWER;
+			color = <LED_COLOR_ID_WHITE>;
+			gpios = <&tlmm 18 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+
+		/* Dual internet LEDs -- purpose/colour distinction TBD */
+		internet1 {
+			label = "white:internet1";
+			gpios = <&tlmm 11 GPIO_ACTIVE_HIGH>;
+		};
+
+		internet2 {
+			label = "white:internet2";
+			gpios = <&tlmm 22 GPIO_ACTIVE_HIGH>;
+		};
+
+		lan {
+			function = LED_FUNCTION_LAN;
+			color = <LED_COLOR_ID_WHITE>;
+			gpios = <&tlmm 10 GPIO_ACTIVE_HIGH>;
+		};
+
+		wlan2g {
+			label = "white:wlan2g";
+			gpios = <&tlmm 13 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "phy0tpt";
+		};
+
+		/*
+		 * No wlan5g LED here. fl1ck3r's tp_gpio.ko reading assigned GPIO 39
+		 * to it, but that value is unverified and GPIO 39 is currently
+		 * unexplained: it is not the RTL8367S reset (that is GPIO 33, proven
+		 * on hardware -- see the &mdio1 comment). The remaining LED GPIOs
+		 * (10, 11, 13, 18, 22) come from the same unverified source.
+		 */
+	};
+
+};
+
+&sleep_clk {
+	clock-frequency = <32000>;
+};
+
+&xo_board_clk {
+	clock-div = <4>;
+	clock-mult = <1>;
+};
+
+&crypto { status = "okay"; };
+&cryptobam { status = "okay"; };
+&prng { status = "okay"; };
+&qfprom { status = "okay"; };
+&qpic_bam { status = "okay"; };
+
+&tlmm {
+	qpic_pins: qpic-pins {
+		data {
+			pins = "gpio4", "gpio5", "gpio6", "gpio7";
+			function = "qspi_data";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+		cs {
+			pins = "gpio8";
+			function = "qspi_cs";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+		clk {
+			pins = "gpio9";
+			function = "qspi_clk";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+
+	mdio1_pins: mdio-state {
+		mdc-pins {
+			pins = "gpio36";
+			function = "mdc";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+
+		mdio-pins {
+			pins = "gpio37";
+			function = "mdio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+
+	/*
+	 * GPIO 20/21 are in the blsp0_uart0 pinmux group per
+	 * pinctrl-ipq5018.c, despite the serial node being blsp1_uart1 --
+	 * Qualcomm's group naming does not track the node labels. The
+	 * earlier "blsp_uart" was rejected: "invalid function blsp_uart in
+	 * map table".
+	 */
+	serial_0_pins: serial0-pins {
+		rx {
+			pins = "gpio20";
+			function = "blsp0_uart0";
+			bias-pull-up;
+		};
+		tx {
+			pins = "gpio21";
+			function = "blsp0_uart0";
+			bias-pull-up;
+		};
+	};
+};
+
+&blsp1_uart1 {
+	status = "okay";
+	pinctrl-0 = <&serial_0_pins>;
+	pinctrl-names = "default";
+	clocks = <&gcc GCC_BLSP1_UART1_APPS_CLK>,
+	         <&gcc GCC_BLSP1_AHB_CLK>;
+	clock-names = "core", "iface";
+};
+
+&uniphy0 {
+	status = "okay";
+
+	assigned-clocks = <&uniphy0 UNIPHY_CLK_REF>;
+	assigned-clock-rates = <UNIPHY_REFCLK_25MHZ>;
+};
+
+/*
+ * mdio0 must be enabled even though nothing on this board hangs off it.
+ * Its second reg is eth_ldo_rdy: mdio-ipq4019.c sets BIT(0) there to tell
+ * the CMN PLL the ethernet LDO is ready. mdio1 has no such register, so
+ * with mdio0 disabled every MDIO transaction times out (-ETIMEDOUT on the
+ * whole bus, observed on hardware). Every in-tree ipq5018 board enables it.
+ */
+
+/*
+ * RTL8367S-VB on mdio1, MDIO address 29 (0x1d).
+ *
+ * Address, transport and reset line were all recovered from the vendor
+ * driver and then confirmed by reading the live chip over mdio-tools:
+ *
+ *   BUS=90000.mdio-1 ADDR=29 CHIP_ID=0x6642 CHIP_VER=0x0010
+ *
+ * The RTL8367S driver is built into qca-ssdk.ko (there is no separate
+ * rtl8367s.ko). Its rtl8367c_smi_read/write are a register-for-register
+ * match for Linux's realtek-mdio.c -- unlock CTRL0(31)=0x000e, address
+ * ADDRESS(23)=reg, op CTRL1(21)=read/write, data via 24/25 -- and they
+ * hardcode PHY address 29 in the argument qca_mdio_write() bounds-checks
+ * at <= 31. Every other rtl8365mb board in tree also uses reg = <29>.
+ *
+ * Reset is GPIO 33, not 39. ssdk_rtl8367s_reset_gpio_get() looks for a
+ * node named "rtl8367s_gpio" that exists in none of the 20 stock DTBs,
+ * returns 0, and rtl8367s_hw_init() falls through to a hardcoded 33 which
+ * it drives low 200 ms / high 200 ms -- so "reset by gpio33" in the stock
+ * log is what actually ran. The stock DTB says the same independently:
+ * mdio@90000 { phy-reset-gpio = <&tlmm 33 0>; }. Verified on hardware:
+ * writing a marker to 0x13c2 and pulsing GPIO 33 clears it.
+ *
+ * GPIO 39 came from ess-switch1@1 { reset_gpio = <0x27>; }, which is
+ * byte-identical across sdtb_02/06/18 -- three unrelated QCA reference
+ * boards, alongside a stale compatible = "qcom,ess-switch-qca83xx" on a
+ * board with no QCA8337. It is reference boilerplate, not EX511 data.
+ *
+ * Note an empty `mdio 90000.mdio-1` scan is expected even when the switch
+ * is healthy: it does not answer standard PHY-ID reads, and the per-port
+ * PHYs sit behind the switch's own nested mdio bus, not on the SoC bus.
+ */
+&mdio1 {
+	status = "okay";
+	pinctrl-0 = <&mdio1_pins>;
+	pinctrl-names = "default";
+
+	switch@1d {
+		compatible = "realtek,rtl8365mb";
+		reg = <29>;
+
+		reset-gpios = <&tlmm 33 GPIO_ACTIVE_LOW>;
+
+		mdio {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			ex511_phy0: ethernet-phy@0 {
+				reg = <0>;
+			};
+
+			ex511_phy1: ethernet-phy@1 {
+				reg = <1>;
+			};
+
+			ex511_phy2: ethernet-phy@2 {
+				reg = <2>;
+			};
+
+			ex511_phy3: ethernet-phy@3 {
+				reg = <3>;
+			};
+
+			ex511_phy4: ethernet-phy@4 {
+				reg = <4>;
+			};
+		};
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/*
+			 * Socket mapping verified on hardware: one cable moved
+			 * from RJ45 to RJ45, with every port brought up first,
+			 * lit the labels below in declared order and all five
+			 * negotiated 1 Gbps -- which also confirms the nested
+			 * mdio node and the phy-handles drive all five PHYs.
+			 *
+			 * Repeating it: netifd only brings up wan at boot and
+			 * carrier reads EINVAL on an admin-down netdev, so
+			 * reading carrier for every netdev at once prints
+			 * blanks that look like "no link" but really mean
+			 * "interface down". Bring all five up first.
+			 */
+			port@0 {
+				reg = <0>;
+				label = "wan";
+				phy-handle = <&ex511_phy0>;
+			};
+
+			port@1 {
+				reg = <1>;
+				label = "lan1";
+				phy-handle = <&ex511_phy1>;
+			};
+
+			port@2 {
+				reg = <2>;
+				label = "lan2";
+				phy-handle = <&ex511_phy2>;
+			};
+
+			port@3 {
+				reg = <3>;
+				label = "lan3";
+				phy-handle = <&ex511_phy3>;
+			};
+
+			port@4 {
+				reg = <4>;
+				label = "lan4";
+				phy-handle = <&ex511_phy4>;
+			};
+
+			port@6 {
+				reg = <6>;
+				ethernet = <&gmac1>;
+				phy-mode = "sgmii";
+
+				fixed-link {
+					speed = <1000>;
+					full-duplex;
+				};
+			};
+		};
+	};
+};
+
+&mdio0 {
+	status = "okay";
+};
+
+/*
+ * gmac0 -> IPQ5018 internal GE PHY. Unused on this board: all five RJ45
+ * sockets hang off the RTL8367S.
+ */
+&gmac0 {
+	status = "disabled";
+};
+
+/*
+ * gmac1 @ 0x39d00000 -> SGMII to the RTL8367S CPU port (port 6).
+ * Base address confirmed against the stock DTB's gmac2_cfg node.
+ *
+ * Driven by the upstream stmmac IPQ5018 DWMAC driver together with the
+ * qca-uniphy PCS. The out-of-tree "qcom,nss-dp" binding this board was
+ * originally written against no longer exists in the tree.
+ *
+ * SGMII/1G on both ends, matching every in-tree ipq5018 board with an
+ * external switch (pz-l8, gl-b3000).
+ *
+ * HSGMII (2500base-x/2500 on both ends) was tried first, since U-Boot
+ * prints "Set RTL8367S SGMII 2.5Gbps" and stock selects it (echo 2 >
+ * /proc/rtl8367s/mii_type). Both ends reported "Link is Up - 2.5Gbps/Full",
+ * but NOT ONE FRAME crossed the CPU link in either direction: with a cable
+ * in lan1, the switch's own port-1 MIB counters climbed with ambient LAN
+ * broadcast while eth0 rx_packets stayed at exactly 0, and eth0 tx_packets
+ * incremented while port 1 egressed nothing. A fixed-link "up" is asserted
+ * by configuration, not measured, so it proves nothing on its own.
+ *
+ * Suspected cause: the SerDes tuning parameters in the rtl8365mb HSGMII
+ * support are lifted from the vendor driver for RTL8367S (0x6367/0x00A0)
+ * parts and gated on a chip option register; this board is an RTL8367S-VB
+ * (0x6642/0x0010), which that code has never seen. 1 Gbps is ample for an
+ * AP -- revisit 2.5G as an optimisation, not a bring-up setting.
+ */
+&gmac1 {
+	status = "okay";
+
+	phy-mode = "sgmii";
+
+	nvmem-cells = <&hw_mac_addr 0>;
+	nvmem-cell-names = "mac-address";
+
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
+};
+
+/*
+ * 2.4GHz radio: IPQ5018 integrated (AHB), ath11k path c000000.wifi.
+ * Board data generated with ath11k-bdencoder from stock bdwlan.bin.
+ * Cal data: ART partition all 0xFF on this unit (ISP-erased).
+ * Firmware falls back to internal defaults -- radio functional.
+ * fw-memory-mode=2, as stock uses, NOT the 1 the other in-tree ipq5018
+ * boards use -- see the note on &wifi1 below. Those boards have more DRAM
+ * than this one.
+ * Status: working. phy0 registers, the Q6 boots
+ * (fw_version 0x270206d0) and AP mode comes up. The earlier "scan
+ * broken" note referred to a fake cal file that was a copy of
+ * bdwlan.bin; that is long gone -- 11-ath11k-caldata now writes the same
+ * zero-filled dummy stock ends up with.
+ */
+&wifi {
+	status = "okay";
+	qcom,rproc = <&q6_wcss_pd1>;
+	qcom,ath11k-calibration-variant = "TP-Link-EX511-v2";
+	qcom,ath11k-fw-memory-mode = <2>;
+	qcom,bdf-addr = <0x4c400000>;
+
+	/*
+	 * ath11k reads a MAC via device_get_mac_address(), which falls back
+	 * to nvmem_get_mac_address(), so the same misc_data_ro cell that
+	 * feeds gmac1 can feed the radio.
+	 *
+	 * The usual qualcommax route -- ath11k_patch_mac() into caldata
+	 * extracted from 0:ART -- cannot work here: 0:ART is erased, our cal
+	 * file is a zero-filled dummy, and the firmware ignores a MAC patched
+	 * into it. The radio came up as 00:03:7f:12:65:65, a board-data
+	 * default that would be identical on every EX511.
+	 *
+	 * This works because ath11k's ab->pdevs_macaddr_valid is false on this
+	 * board, so the DT/nvmem address is used rather than a firmware-supplied
+	 * one. Verified on hardware: phy0 comes up as 30:68:93:3f:b3:60. Were
+	 * that flag ever true, the firmware MAC would win and the fallback is
+	 * macaddr on the wifi-iface in /etc/config/wireless.
+	 */
+	nvmem-cells = <&hw_mac_addr 0>;
+	nvmem-cell-names = "mac-address";
+};
+
+/*
+ * The QCN6102 sits on user PD 2 here, and the Q6 firmware has to be told so:
+ * without boot-args it expects the radio on UPD ID 3 instead, wlan1 never
+ * finishes initialising, and ~40 s later the user-PD watchdog takes the root
+ * PD down with it:
+ *
+ *   qcom-q6-mpd cd00000.remoteproc: fatal error received: err_smem_ver.2.1:
+ *   dog_virtual_user.c:242 USER-PD DOG detects stalled initialization
+ *   Thread name : TIMER_CLIENT_2  Process ID : 0x00000002  Process name :wlan1
+ *
+ * That is the "~59 s firmware crash" this board was held back over, and it was
+ * never target-wide: yuncore,ax830 puts its radio on pd3, the firmware's own
+ * default, so it never needed the property.
+ *
+ * The values are byte for byte what the stock DTB carries
+ * (boot-args = <0x01 0x04 0x02 0x0f 0x00 0x00>) and what linksys,mx2000 and
+ * cmcc,mr3000d-ci -- the two in-tree boards with this same QCN6102 on pd2 --
+ * already use.
+ */
+&q6v5_wcss {
+	boot-args = <
+			/*       type:	*/	0x1	/* PCIE0	*/
+			/*     length:	*/	4
+			/*     UPD ID:	*/	2
+			/* reset GPIO:	*/	15
+			/*   reserved:	*/	0 0>;
+};
+
+/*
+ * 5GHz radio: physical chip QCN6102 (confirmed visual: "QUALCOM QCN 6102
+ * 001 JE437HXZ"). Stock firmware treats it as a QCN6122 throughout.
+ * AHB path b00a040.wifi, protection domain q6_wcss_pd2. Settings below are
+ * the ones the other in-tree QCN6122 boards use.
+ *
+ * Both radios run at fw-memory-mode 2, which is what stock uses and what this
+ * board needs. Mode 1 is fine on the other in-tree ipq5018 boards, which carry
+ * more DRAM; here, with 256 MiB and both radios up, ath11k's firmware DMA
+ * allocations left barely 16 MiB free and the board died writing a 12 MiB file
+ * to tmpfs:
+ *
+ *   Out of memory: Killed process 1589 (dropbear)
+ *   Out of memory and no killable processes...
+ *   Kernel panic - not syncing: System is deadlocked on memory
+ *
+ * With one radio there was 62 MiB free, so the second costs ~46 MiB at mode 1.
+ * Mode 2 is the knob stock reaches for on exactly this hardware.
+ *
+ * The MAC needs a word too. misc_data_ro holds exactly one address and &wifi
+ * takes it at index 0, so this radio needs a different one. Stock's own boot
+ * log on this unit assigns 2.4GHz 30:68:93:3f:b3:60 and 5GHz ...b3:62, so use
+ * index 2 and leave base+1 alone as stock does.
+ */
+&wifi1 {
+	status = "okay";
+
+	qcom,rproc = <&q6_wcss_pd2>;
+	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
+	qcom,ath11k-calibration-variant = "TP-Link-EX511-v2";
+	qcom,ath11k-fw-memory-mode = <2>;
+	qcom,bdf-addr = <0x4d100000>;
+	qcom,m3-dump-addr = <0x4df00000>;
+
+	nvmem-cells = <&hw_mac_addr 2>;
+	nvmem-cell-names = "mac-address";
+};
+
+&blsp1_spi1 {
+	status = "disabled";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+&qpic_nand {
+	status = "okay";
+	pinctrl-0 = <&qpic_pins>;
+	pinctrl-names = "default";
+
+	nand@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		nand-ecc-engine = <&qpic_nand>;
+		nand-bus-width = <8>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "0:SBL1";
+				reg = <0x0 0x80000>;
+				read-only;
+			};
+
+			partition@80000 {
+				label = "0:MIBIB";
+				reg = <0x80000 0x80000>;
+				read-only;
+			};
+
+			/*
+			 * Writable on purpose, unlike every other bootloader
+			 * partition here. These two hold the QCA bootconfig
+			 * table that selects the active rootfs slot, and
+			 * sysupgrade has to flip primaryboot in both to install
+			 * into the inactive slot. Marked read-only they cannot
+			 * be opened for writing at all, and the upgrade aborts:
+			 *
+			 *   running from rootfs, upgrading into rootfs_1
+			 *   Could not open mtd device: /dev/mtd2
+			 *   Can't open device for writing!
+			 *   failed to write 0:BOOTCONFIG
+			 *
+			 * linksys,mx6200, whose A/B code this board reuses,
+			 * does not hit this because it takes its partitions
+			 * from qcom,smem-part, which sets no read-only flags.
+			 * Only 336 bytes at the start are ever touched; nothing
+			 * else lives in either partition.
+			 */
+			partition@100000 {
+				label = "0:BOOTCONFIG";
+				reg = <0x100000 0x40000>;
+			};
+
+			partition@140000 {
+				label = "0:BOOTCONFIG1";
+				reg = <0x140000 0x40000>;
+			};
+
+			partition@180000 {
+				label = "0:QSEE";
+				reg = <0x180000 0x100000>;
+				read-only;
+			};
+
+			partition@280000 {
+				label = "0:DEVCFG";
+				reg = <0x280000 0x40000>;
+				read-only;
+			};
+
+			partition@2c0000 {
+				label = "0:CDT";
+				reg = <0x2c0000 0x40000>;
+				read-only;
+			};
+
+			partition@300000 {
+				label = "0:APPSBLENV";
+				reg = <0x300000 0x80000>;
+			};
+
+			partition@380000 {
+				label = "0:APPSBL";
+				reg = <0x380000 0x140000>;
+				read-only;
+			};
+
+			partition@4c0000 {
+				/*
+				 * ART partition: all 0xFF on this unit.
+				 * Unit is ISP-branded; ART was erased before
+				 * delivery. Stock firmware falls back to
+				 * bdwlan.bin in squashfs for board data.
+				 */
+				label = "0:ART";
+				reg = <0x4c0000 0x100000>;
+				read-only;
+			};
+
+			partition@5c0000 {
+				label = "0:TRAINING";
+				reg = <0x5c0000 0x80000>;
+				read-only;
+			};
+
+			partition@640000 {
+				label = "misc_data_ro";
+				reg = <0x640000 0x600000>;
+				read-only;
+
+				/*
+				 * The unit's only MAC address, 6 raw bytes at
+				 * misc_data_ro + 0x113830 (absolute 0x753830 in
+				 * the NAND dump). It is the sole MAC on the whole
+				 * flash -- 0:ART is 100% erased, and a scan of all
+				 * 128 MiB for the 30:68:93 OUI finds exactly one
+				 * genuine record.
+				 *
+				 * CAVEAT, understand this before trusting it: this
+				 * partition is a UBI container holding a UBIFS
+				 * volume named "misc_ro" (stock does
+				 * `mount -t ubifs -r ubi1:misc_ro`), so the address
+				 * below is a raw offset into a filesystem, not a
+				 * stable hardware location. It is valid only while
+				 * UBI's PEB mapping and the UBIFS node layout stay
+				 * put. In practice they do -- the volume is mounted
+				 * read-only and never rewritten -- but a UBI scrub
+				 * after a bit-flip could relocate it. The MAC
+				 * currently lives in PEB 8 (vol 0, LEB 20) at LEB
+				 * offset 0x12830.
+				 *
+				 * If this ever reads back garbage, the robust
+				 * alternative is to attach the UBI device and read
+				 * the file out of the mounted UBIFS, as stock does.
+				 */
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					hw_mac_addr: hw_mac_addr@113830 {
+						#nvmem-cell-cells = <1>;
+						compatible = "mac-base";
+						reg = <0x113830 0x6>;
+					};
+				};
+			};
+
+			partition@c40000 {
+				label = "misc_data_rw";
+				reg = <0xc40000 0x600000>;
+			};
+
+			partition@1240000 {
+				label = "rootfs";
+				reg = <0x1240000 0x2460000>;
+			};
+
+			partition@36a0000 {
+				label = "rootfs_1";
+				reg = <0x36a0000 0x2460000>;
+			};
+			partition@5b00000 {
+				label = "misc_data_rwbak";
+				reg = <0x5b00000 0x600000>;
+				read-only;
+			};
+
+			partition@6100000 {
+				label = "misc_data_isp";
+				reg = <0x6100000 0x600000>;
+				read-only;
+			};
+		};
+	};
+};

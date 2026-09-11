@@ -85,7 +85,11 @@ MODULE_PARM_DESC(ports, "Bitmask of switch ports to enable, CPU port included (d
 #define G8_PORT_STATUS(i)	(0x07c + (i) * 4)
 #define G8_PORT_HDR_CTRL(i)	(0x9c + (i) * 4)
 #define G8_PORT_LOOKUP(i)	(0x660 + (i) * 0xc)
+#define   G8_LOOKUP_LEARN	BIT(20)
 #define G8_GLOBAL_FW_CTRL1	0x624
+#define G8_ATU_FUNC		0x60c
+#define   G8_ATU_BUSY		BIT(31)
+#define   G8_ATU_CMD_FLUSH	1
 
 /* VLAN table and per-port VLAN registers (names as in qca8k.h) */
 #define G8_PORT_VLAN_CTRL0(i)	(0x420 + (i) * 8)
@@ -198,12 +202,22 @@ static void fixup_switch(void)
 			g8_write(bus, G8_PORT_STATUS(p),
 				 BIT(2) | BIT(3) | BIT(9));
 
-		/* lookup: member = all other enabled ports, state FORWARD(4) */
+		/*
+		 * lookup: member = all other enabled ports, state FORWARD(4),
+		 * address learning on. The learning bit is whatever the DSA
+		 * teardown left: qca8k clears it on its CPU ports (DSA does
+		 * the learning for them) and DSA clears it on every port that
+		 * leaves a bridge. Nothing adds host addresses once qca8k is
+		 * gone, so a port without it never updates the ARL - the
+		 * GL-B3000 and the Redmi AX5400 both came up with lan1 and the
+		 * CPU port not learning.
+		 */
 		lkp = g8_read(bus, G8_PORT_LOOKUP(p));
 		lkp &= ~GENMASK(6, 0);
 		lkp &= ~GENMASK(18, 16);
 		lkp |= (ports & ~BIT(p));
 		lkp |= FIELD_PREP(GENMASK(18, 16), 0x4);
+		lkp |= G8_LOOKUP_LEARN;
 		g8_write(bus, G8_PORT_LOOKUP(p), lkp);
 		pr_info("qca8337-nss: port%d status=0x%08x lookup=0x%08x hdr=0x%08x\n",
 			p, g8_read(bus, G8_PORT_STATUS(p)),
@@ -222,6 +236,16 @@ static void fixup_switch(void)
 
 	if (*vlans)
 		fixup_vlans(bus);
+
+	/*
+	 * Start from an empty ARL: the entries in it were learned, or added
+	 * as host addresses, under DSA's port and VLAN layout.
+	 */
+	g8_write(bus, G8_ATU_FUNC, G8_ATU_BUSY | G8_ATU_CMD_FLUSH);
+	for (p = 0; p < 20 && (g8_read(bus, G8_ATU_FUNC) & G8_ATU_BUSY); p++)
+		usleep_range(100, 200);
+	pr_info("qca8337-nss: ARL %s\n",
+		(g8_read(bus, G8_ATU_FUNC) & G8_ATU_BUSY) ? "flush timed out" : "flushed");
 
 	put_device(d);
 }

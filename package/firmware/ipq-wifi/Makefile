@@ -16,6 +16,14 @@ include $(INCLUDE_DIR)/package.mk
 define Build/Compile
 endef
 
+# Board data for devices not yet carried by the qca-wireless repo is kept
+# locally in ./files. Extend the default prepare rather than replacing it,
+# so the upstream checkout that every other board relies on still lands.
+define Build/Prepare
+	$(call Build/Prepare/Default,)
+	$(if $(wildcard ./files/*),$(CP) ./files/* $(PKG_BUILD_DIR)/)
+endef
+
 # Use ath10k-bdencoder from https://github.com/qca/qca-swiss-army-knife.git
 # to generate the board-* files here.
 #
@@ -107,6 +115,7 @@ ALLWIFIBOARDS:= \
 	tplink_eap625-outdoor-hd-v1 \
 	tplink_eap650-outdoor-v1 \
 	tplink_eap660hd-v1 \
+	tplink_ex511-v2 \
 	tplink_re700x \
 	tplink_tl-wa1201-v2 \
 	ubnt_utr \
@@ -313,6 +322,7 @@ $(eval $(call generate-ipq-wifi-package,tplink_eap623-outdoor-hd-v1,TP-Link EAP6
 $(eval $(call generate-ipq-wifi-package,tplink_eap625-outdoor-hd-v1,TP-Link EAP625-Outdoor HD v1))
 $(eval $(call generate-ipq-wifi-package,tplink_eap650-outdoor-v1,TP-Link EAP650-Outdoor v1))
 $(eval $(call generate-ipq-wifi-package,tplink_eap660hd-v1,TP-Link EAP660 HD v1))
+$(eval $(call generate-ipq-wifi-package,tplink_ex511-v2,TP-Link EX511 v2))
 $(eval $(call generate-ipq-wifi-package,tplink_re700x,TP-Link RE700X))
 $(eval $(call generate-ipq-wifi-package,tplink_tl-wa1201-v2,TP-Link TL-WA1201 V2))
 $(eval $(call generate-ipq-wifi-package,ubnt_utr,Ubiquiti UniFi Travel Router))

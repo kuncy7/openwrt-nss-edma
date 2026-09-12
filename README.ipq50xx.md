@@ -215,6 +215,20 @@ migrates an existing DSA-style network config once (`br-lan` ports →
 `eth0.1`, `wan`/`wan6` device → `eth0.2`) and leaves a marker
 (`nss.general.topology='vlan-trunk'`) so it never runs again.
 
+**`nss.general.topology='dsa'`** (C-3PO) keeps `qca8k` bound and the ports
+as they are on a stock image - `lan1`/`lan2`/`wan`, `br-lan` on the lan ports,
+`wan` (or `wan.35` for a PPPoE ISP) as the WAN device. The service switches
+the conduit's tag protocol to `qca-8021q` before netifd runs (the switch
+then talks to the CPU in plain 802.1Q, which the firmware parses), and after
+the arm `qca-dsa-nss` gives every port, bridge and 802.1Q upper of a port a
+firmware VLAN interface so ECM can write rules for them. To try it on a board
+that migrated to the trunk: set the topology, put the network config back on
+the DSA ports, reboot. Measured on the GL-B3000 against the trunk topology:
+the same plane (5 GHz → NAT → WAN 597/570/631 up, 650/642/629 down Mbit/s
+at 1-6 % CPU), and PPPoE over `wan.35` accelerated (see below). Not yet:
+VLAN-aware bridges (refused by the tagger) and any switch other than the
+QCA8337.
+
 ### `uci` knobs (`/etc/config/nss`, section `general`)
 
 | Option | Default | Meaning |
@@ -256,7 +270,10 @@ GMAC, and the netdev is the switch trunk. The firmware parses 802.1Q natively
 (dynamic interface type 17) but cannot parse the two-byte Atheros header that
 DSA's `tag_qca` puts where the ethertype should be; and DSA user ports never
 get an NSS interface number, so ECM would not try to accelerate them anyway.
-On IPQ5018, **DSA user ports and ECM acceleration are mutually exclusive.**
+On IPQ5018, **DSA user ports and ECM acceleration are mutually exclusive** -
+with the Atheros header. They are not with the `qca-8021q` tagger, which puts
+the source port in a VLAN tag instead; that is the `dsa` topology above, and
+this section describes the trunk topology that remains the default.
 
 If you are seeing `eth_rx_unknown_l3_protocol` counting most of your frames,
 with `iface_count=0` and `accelerated_count=0`, on a QCA8337 board: this is
@@ -348,7 +365,7 @@ Legend as in the [IPQ807x README](README.md): ✅ offloaded & validated ·
 | IPv6 routing | 🟨 | built (`NSS_DRV_IPV6_ENABLE`), not measured |
 | 802.1Q VLAN | ✅ | the trunk itself; `qca-nss-vlan` |
 | L2 between LAN ports | ✅ | in the switch fabric (same VLAN), never reaches the SoC |
-| PPPoE | 🟨 | Builds and links now: kernel patch `0961` gained the lockless `__ppp_hold_channels()` / `__ppp_is_multilink()` that ECM's deadlock fix needs, and `kmod-qca-nss-drv-pppoe` is selected - without that manager ECM tracks PPPoE flows but silently never accelerates them (found by AugustoAmaral, who measured ~950 Mbit/s at 84-95 % idle on an AX6000 once it was in). Not measured here - no PPPoE uplink on this bench. |
+| PPPoE | ✅ | Kernel patch `0961` gained the lockless `__ppp_hold_channels()` / `__ppp_is_multilink()` that ECM's deadlock fix needs, `kmod-qca-nss-drv-pppoe` is selected, and `nss-dwmac-up` **loads it** after the arm - without the manager in memory ECM tracks the PPPoE flows, marks every rule invalid and the WAN silently stays on the host path (measured: 0 rules, 22k exceptions in 20 s; the same silent failure AugustoAmaral hit before the package was selected at all, ~950 Mbit/s at 84-95 % idle on an AX6000 once it was in). Measured here on the `dsa` topology with the ISP's VLAN on the WAN port (`wan.35`, PPPoE server on the bench): rules created, 120k-157k firmware hits per 15-20 s, 0-65 exceptions, 2 % CPU, at the 100 Mbit/s ceiling of the bench client. On the trunk topology LS3434 runs it as `eth0.35` with `vtu='...;35:6t,2t'` (#154, #156): 890-950 down / 310 up at 1-5 % CPU. |
 | Wi-Fi (wifili) | ✅ | both radios; 734/447 Mbit/s over 5 GHz through the router, host ~90 % idle. Needs the core-clock fix - see below |
 | SQM / NSS qdiscs | ⬜ | not carried for ipq50xx |
 | Multicast snooping (`qca-mcs`) | ⬜ | not carried for ipq50xx |

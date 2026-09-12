@@ -286,9 +286,12 @@ parameters. The service does this for you.
 The board side is small. The parts, in order of effort:
 
 1. **DTS**: add `#include "ipq5018-nss.dtsi"` to the board file. That is the
-   entire diff between the B3000 DTS and a plain board. Boards already in the
-   tree (Linksys MX2000 / MR5500 / MX5500, Xiaomi AX6000, …) need only this
-   line to get the NSS node and the reserved memory.
+   entire diff between the B3000 DTS and a plain board, and without it there
+   is no `nss@40000000` node, so `qca-nss-drv` never probes and nothing in
+   this branch works - quietly (reported by @Pe3ucTop on an AX6000). **Every
+   IPQ5018 board DTS in this branch already carries the line**; a board you
+   add yourself needs it. It costs no memory: the 16 MB `nss_region`
+   reservation sits in `ipq5018.dtsi` for every board either way.
 2. **Which GMAC feeds what.** phys_if N is GMAC N. On the B3000 the switch is
    on GMAC1 (`fw_mask=0x2`, `trunk=eth0`, `trunk_if=1`) and GMAC0 is unused.
    The glue takes a map of netdevs per phys_if (`ifmap=1:eth0,0:wan`, or the

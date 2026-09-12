@@ -246,6 +246,34 @@ poll_until 15 ecm_ready &&
   echo 1 > /sys/kernel/debug/ecm/ecm_classifier_default/accel_delay_pkts ||
   echo "WARN: ECM did not come up (no ecm_classifier_default in debugfs)"
 
+# The PPPoE manager only learns sessions that are created after it loads,
+# and netifd has had the session up since long before this point (measured
+# on a GL-B3000: pppd connects at 23 s, the modprobe above runs at ~27 s).
+# Loading the manager is therefore not enough on its own - the firmware
+# ends up with no PPPoE node, ECM finds no interface number for pppoe-wan,
+# and every WAN flow stays on the host path with nothing in the logs:
+# 0 rules, 120k exceptions and 48 % CPU over 15 s, against 129k firmware
+# hits, 1 exception and 3 % once the session is made again (measured, same
+# image and client). So make it again with the manager resident, which is
+# what the 'ifup wan' in nss-up does on ipq807x. Only for a PPPoE WAN: no
+# other WAN type has anything to re-register.
+if [ -n "$(ls -d /sys/class/net/pppoe-* 2>/dev/null)" ]; then
+	. /lib/functions/network.sh
+	network_find_wan wan_iface
+	[ -n "$wan_iface" ] || wan_iface=wan
+	ifup "$wan_iface"
+	wan_has_addr() {
+		_d="$(ifstatus "$wan_iface" 2>/dev/null | jsonfilter -e '@.l3_device' 2>/dev/null)"
+		[ -n "$_d" ] || return 1
+		ip -4 addr show dev "$_d" 2>/dev/null | grep -q "inet "
+	}
+	if poll_until 30 wan_has_addr; then
+		echo "PPPoE: $wan_iface re-created with the NSS manager resident"
+	else
+		echo "WARN: $wan_iface has no address 30s after the PPPoE re-up - WAN flows will stay on the host path"
+	fi
+fi
+
 # Drop any connections tracked before ECM loaded so they re-classify
 # through the accelerated path.
 echo 1 > /sys/kernel/debug/ecm/ecm_db/defunct_all 2>/dev/null

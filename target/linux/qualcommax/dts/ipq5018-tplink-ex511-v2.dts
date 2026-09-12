@@ -453,17 +453,34 @@
 
 /*
  * 2.4GHz radio: IPQ5018 integrated (AHB), ath11k path c000000.wifi.
- * Board data generated with ath11k-bdencoder from stock bdwlan.bin.
+ *
+ * Board data: ath11k-bdencoder over stock /etc/board_data_files/2g/
+ * bdwlan_BR20.b2g. Get the source file right -- this was wrong once and
+ * cost a working receiver. Stock does NOT use /etc/IPQ5018/WIFI_FW/
+ * bdwlan.bin; that tree is the Qualcomm QSDK reference data. The stock DTB
+ * (AP-MP03.3) sets qcom,board_id=<0x24> here, and /etc/IPQ5018/WIFI_FW/
+ * bdwlan.b24 is a symlink to /tmp/board_data_files/2g/bdwlan.b2g, which
+ * /lib/wifi_backup/copy_bdf_from_fs fills at boot from
+ *
+ *     /etc/board_data_files/2g/bdwlan_${country}${fem_mask_2g}.b2g
+ *
+ * i.e. keyed by region *and* front-end module. This unit reads
+ * "Country=BR;FEM_MASK_2G=20;FEM_MASK_5G=10;" (NAND offset 0x721030), so
+ * BR20. Shipping the QSDK bdwlan.bin instead put wrong PA/LNA gain tables
+ * on the radio: it beaconed normally but RX was dead -- 11 ms of receive
+ * time in 2.5 h, and a full-band scan returning one BSS at -93 dBm.
+ * bdwlan.b2g is byte-identical to bdwlan_BR20.b2g, so this blob is the
+ * vendor default and is not BR-specific.
+ *
  * Cal data: ART partition all 0xFF on this unit (ISP-erased).
- * Firmware falls back to internal defaults -- radio functional.
+ * 11-ath11k-caldata writes the same zero-filled dummy stock ends up with;
+ * the firmware falls back to internal defaults. Note the 5 GHz radio runs
+ * on an identically zero-filled dummy and is fine, so blank cal is not by
+ * itself a fault -- the board data is what matters.
+ *
  * fw-memory-mode=2, as stock uses, NOT the 1 the other in-tree ipq5018
  * boards use -- see the note on &wifi1 below. Those boards have more DRAM
  * than this one.
- * Status: working. phy0 registers, the Q6 boots
- * (fw_version 0x270206d0) and AP mode comes up. The earlier "scan
- * broken" note referred to a fake cal file that was a copy of
- * bdwlan.bin; that is long gone -- 11-ath11k-caldata now writes the same
- * zero-filled dummy stock ends up with.
  */
 &wifi {
 	status = "okay";
@@ -526,6 +543,25 @@
  * 001 JE437HXZ"). Stock firmware treats it as a QCN6122 throughout.
  * AHB path b00a040.wifi, protection domain q6_wcss_pd2. Settings below are
  * the ones the other in-tree QCN6122 boards use.
+ *
+ * Board data: QSDK reference blob /etc/IPQ5018/WIFI_FW/qcn6122/bdwlan.b50,
+ * deliberately, NOT the stock per-board file. Stock would use
+ * /etc/board_data_files/5g/bdwlan_BR10.b5g here (qcom,board_id=<0x60> is
+ * symlinked to /tmp/board_data_files/5g/bdwlan.b5g, filled from
+ * bdwlan_${country}${fem_mask_5g}.b5g; this unit is Country=BR,
+ * FEM_MASK_5G=10) -- and BR10 was tried on 2026-09-11 and **breaks this
+ * radio**:
+ *
+ *   ath11k b00a040.wifi: failed to perform regd update : -22
+ *   ath11k b00a040.wifi: failed register the radio with mac80211: -22
+ *   ath11k b00a040.wifi: failed to create pdev core: -22
+ *
+ * with a WARN in ath11k_regd_update(); phy1 never appears and the radio is
+ * gone entirely. The regulatory data in that blob is something mainline
+ * ath11k cannot reconcile. b50 is only ~4% different from BR10 and works, so
+ * it stays until someone fixes the regd path. Contrast &wifi above, where the
+ * equivalent 8.2% mismatch left the 2.4GHz receiver dead -- being close enough
+ * to work is luck here, not design.
  *
  * Both radios run at fw-memory-mode 2, which is what stock uses and what this
  * board needs. Mode 1 is fine on the other in-tree ipq5018 boards, which carry

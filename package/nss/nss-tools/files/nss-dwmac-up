@@ -40,7 +40,15 @@ poll_until 30 lan_up || echo "WARN: netifd lan not up after 30s, arming anyway"
 eth_promisc() {
   [ $(( $(cat /sys/class/net/$TRUNK/flags 2>/dev/null || echo 0) & 0x100 )) -ne 0 ]
 }
-poll_until 15 eth_promisc || echo "WARN: $TRUNK not promiscuous after 15s, arming anyway"
+# C-3PO (nss.general.topology=dsa): the trunk is the DSA conduit, no bridge
+# sits on it and it need not go promiscuous - the tagger adds its VIDs to
+# the conduit's hardware VLAN filter and the user ports add their MACs.
+TOPOLOGY="$(uci -q get nss.general.topology)"
+if [ "$TOPOLOGY" = "dsa" ]; then
+  echo "topology dsa: $TRUNK is the DSA conduit (tagger $(cat /sys/class/net/$TRUNK/dsa/tagging 2>/dev/null))"
+else
+  poll_until 15 eth_promisc || echo "WARN: $TRUNK not promiscuous after 15s, arming anyway"
+fi
 
 sleep 3
 
@@ -200,6 +208,12 @@ pbuf_tune
 # (measured: E126 vs the working E128 flow).
 modprobe qca-nss-vlan 2>/dev/null
 
+# C-3PO: the DSA user ports get their firmware VLAN interfaces the same way
+# (loaded after the arm, its own resync walks the existing ports).
+if [ "$TOPOLOGY" = "dsa" ]; then
+  modprobe qca-dsa-nss 2>/dev/null || echo "WARN: qca-dsa-nss did not load - DSA ports stay without NSS interface numbers"
+fi
+
 # Everything below is best-effort: a failure must not leave the firmware
 # armed without the rest of the plane being reported.
 set +e
@@ -246,6 +260,8 @@ fi
 # One-shot state dump for the boot log - what the data plane looks like
 # right after bring-up (no periodic monitoring, by design).
 echo "nss-dwmac diag: $(cat $GLUE_STATUS 2>/dev/null | tr '\n' ' ')"
+[ "$TOPOLOGY" = "dsa" ] &&
+  echo "nss-dwmac diag: qca-dsa-nss $(cat /sys/kernel/debug/qca-dsa-nss/status 2>/dev/null | tr '\n' ' ')"
 for p in "/sys/class/net/$TRUNK" "/sys/class/net/$TRUNK".*; do
   [ -d "$p" ] || continue
   i="${p##*/}"

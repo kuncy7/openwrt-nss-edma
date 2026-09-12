@@ -98,12 +98,56 @@ switch_to_trunk() {
 	fi
 }
 
+# C-3PO: keep the DSA switch driver and its ports, and have the switch talk
+# to the CPU in plain 802.1Q instead of the Atheros header. The kernel's
+# qca-8021q tagger does that (a standalone port carries VID 3072+N, a
+# bridge's ports share one VID); the firmware parses 802.1Q natively, and
+# qca-dsa-nss (loaded by nss-dwmac-up after the arm) gives every port and
+# bridge a firmware VLAN interface so ECM can write rules for them. The
+# tag protocol can only be switched while the conduit and every user port
+# are down, which is the case here: the service runs before netifd.
+switch_to_8021q() {
+	local trunk tagging cur
+
+	trunk="$(uci -q get nss.general.trunk)"
+	[ -n "$trunk" ] || trunk=eth0
+	tagging="/sys/class/net/$trunk/dsa/tagging"
+	cur="$(cat "$tagging" 2>/dev/null)"
+	if [ -z "$cur" ]; then
+		logger -t nss "topology dsa: $trunk is not a DSA conduit, nothing to switch"
+		return 1
+	fi
+	[ "$cur" = "qca-8021q" ] && return 0
+	# The kernel refuses the switch while the conduit or any user port is
+	# up. netifd has not run yet, but preinit brings the lan ports up for
+	# the failsafe window and can leave them admin-up (measured: lan1 up
+	# at 6 s, the write at 11 s fails). The user ports are the conduit's
+	# uppers in sysfs; take them and the conduit down first - netifd
+	# configures them from scratch a moment later anyway.
+	for up in "/sys/class/net/$trunk"/upper_*; do
+		[ -e "$up" ] || continue
+		ip link set "${up##*/upper_}" down 2>/dev/null
+	done
+	ip link set "$trunk" down 2>/dev/null
+	if echo qca-8021q > "$tagging" 2>/dev/null; then
+		logger -t nss "topology dsa: $trunk tagger $cur -> qca-8021q"
+		return 0
+	fi
+	logger -t nss "topology dsa: could not switch $trunk tagger from $cur to qca-8021q (ports up? kernel without CONFIG_NET_DSA_TAG_QCA_8021Q?) - the firmware will not parse this traffic"
+	return 1
+}
+
 start_service() {
-	local mask wifi_offload
+	local mask wifi_offload topology
 
 	. /lib/nss/functions.sh
 
-	switch_to_trunk
+	topology="$(uci -q get nss.general.topology)"
+	if [ "$topology" = "dsa" ]; then
+		switch_to_8021q
+	else
+		switch_to_trunk
+	fi
 
 	wifi_offload="$(uci -q get nss.general.wifi_offload)"
 	[ "$wifi_offload" = "1" ] || wifi_offload=0

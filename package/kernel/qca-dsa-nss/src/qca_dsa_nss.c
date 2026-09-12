@@ -154,9 +154,32 @@ static bool dsa_nss_port_is_8021q(const struct dsa_port *dp)
 	       dp->cpu_dp->tag_ops->proto == DSA_TAG_PROTO_QCA_8021Q;
 }
 
+/* The qca-8021q DSA port behind @dev: @dev itself, or the real device of an
+ * 802.1Q upper of one (wan.35). NULL for anything else.
+ */
+static struct dsa_port *dsa_nss_port_of(struct net_device *dev, bool *upper)
+{
+	struct dsa_port *dp;
+
+	*upper = false;
+	if (is_vlan_dev(dev)) {
+		dev = vlan_dev_real_dev(dev);
+		*upper = true;
+	}
+	if (!dsa_user_dev_check(dev))
+		return NULL;
+	dp = dsa_port_from_netdev(dev);
+	if (IS_ERR_OR_NULL(dp) || !dsa_nss_port_is_8021q(dp))
+		return NULL;
+	return dp;
+}
+
 /*
- * One entry per standalone qca-8021q port and one per VLAN-unaware
- * bridge on such ports. Returns the count.
+ * One entry per standalone qca-8021q port, one per VLAN-unaware bridge on
+ * such ports, and one per 802.1Q upper of such a port (its own VID - the
+ * switch carries that VLAN through, the tagger leaves it alone, and it is
+ * on the conduit as a single tag, exactly like eth0.<vid> on a trunk).
+ * Returns the count.
  */
 static int dsa_nss_collect(struct dsa_nss_want *want, int max)
 {
@@ -167,12 +190,11 @@ static int dsa_nss_collect(struct dsa_nss_want *want, int max)
 		struct net_device *conduit, *bound;
 		struct dsa_port *dp;
 		int phys_if, i;
+		bool upper;
 		u16 vid;
 
-		if (!dsa_user_dev_check(dev))
-			continue;
-		dp = dsa_port_from_netdev(dev);
-		if (IS_ERR_OR_NULL(dp) || !dsa_nss_port_is_8021q(dp))
+		dp = dsa_nss_port_of(dev, &upper);
+		if (!dp)
 			continue;
 
 		conduit = dp->cpu_dp->conduit;
@@ -180,7 +202,10 @@ static int dsa_nss_collect(struct dsa_nss_want *want, int max)
 		if (phys_if < 0 || phys_if >= NSS_MAX_PHYSICAL_INTERFACES)
 			continue;	/* conduit not armed as a firmware port */
 
-		if (dp->bridge && dp->bridge->tx_fwd_offload) {
+		if (upper) {
+			vid = vlan_dev_vlan_id(dev);
+			bound = dev;
+		} else if (dp->bridge && dp->bridge->tx_fwd_offload) {
 			unsigned int vbid = dsa_port_bridge_num_get(dp);
 
 			vid = dsa_tag_8021q_bridge_vid(vbid);
@@ -307,9 +332,10 @@ static int dsa_nss_netdev_event(struct notifier_block *nb, unsigned long event,
 				void *ptr)
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+	bool upper;
 	int i;
 
-	if (!dsa_user_dev_check(dev))
+	if (!dsa_nss_port_of(dev, &upper))
 		return NOTIFY_DONE;
 
 	switch (event) {

@@ -45,7 +45,7 @@ define Package/nss-tools-dwmac
   TITLE:=NSS offload runtime for ipq50xx (qca-dwmac-nss glue)
   DEPENDS:=@(TARGET_qualcommax_ipq50xx) +kmod-qca-dwmac-nss +kmod-qca-nss-drv \
 	+kmod-qca-nss-ecm +kmod-qca-nss-drv-vlan-mgr +kmod-qca8337-nss \
-	+ip-full
+	+kmod-qca-dsa-nss +ip-full
   CONFLICTS:=nss-tools
   PKGARCH:=all
 endef

@@ -208,6 +208,13 @@ pbuf_tune
 # (measured: E126 vs the working E128 flow).
 modprobe qca-nss-vlan 2>/dev/null
 
+# The PPPoE manager registers each PPPoE session with the firmware as it
+# comes up; ECM then finds an NSS interface number for pppoe-wan and writes
+# the rule. Without it ECM sees the session, marks every rule invalid and
+# the WAN silently stays on the host path (measured on the B3000 with a
+# PPPoE WAN: 0 rules, 22k exceptions in 20 s). Same as nss-up on ipq807x.
+modprobe qca-nss-pppoe 2>/dev/null || true
+
 # C-3PO: the DSA user ports get their firmware VLAN interfaces the same way
 # (loaded after the arm, its own resync walks the existing ports).
 if [ "$TOPOLOGY" = "dsa" ]; then

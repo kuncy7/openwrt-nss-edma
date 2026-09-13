@@ -4,6 +4,7 @@
 
 #include "ipq5018.dtsi"
 #include "ipq5018-ess.dtsi"
+#include "ipq5018-nss.dtsi"
 
 /*
  * Include QCN6122 DTSI for the 5GHz radio protection domain definitions.
@@ -312,6 +313,21 @@
 		reg = <29>;
 
 		reset-gpios = <&tlmm 33 GPIO_ACTIVE_LOW>;
+
+		/*
+		 * The NSS firmware parses 802.1Q natively but cannot parse a DSA
+		 * tag sitting where the ethertype belongs, and DSA user ports
+		 * never get an NSS interface number -- so on IPQ5018 DSA tagging
+		 * and ECM acceleration are mutually exclusive. This makes the
+		 * driver report DSA_TAG_PROTO_NONE and clear CPU_CTRL_EN, so the
+		 * conduit carries plain 802.3 while rtl8365mb stays bound and
+		 * keeps phylink, the ext-interface SerDes and the front PHYs.
+		 *
+		 * Staying bound is the point: the CPU port's SGMII link is
+		 * phylink-managed, and unbinding the driver takes it down --
+		 * which is what stalled the unbind-and-re-arm route here.
+		 */
+		realtek,headerless-cpu-port;
 
 		mdio {
 			#address-cells = <1>;

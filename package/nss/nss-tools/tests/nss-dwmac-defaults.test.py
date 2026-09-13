@@ -29,7 +29,9 @@ if op == 'set':
     key, value = key.split('=', 1)
     state[key] = value
 elif op == 'delete':
-    state.pop(key, None)
+    # A section's options go with it, as they do under the real uci.
+    for k in [k for k in state if k == key or k.startswith(key + '.')]:
+        del state[k]
 elif op == 'add_list':
     key, value = key.split('=', 1)
     state[key] = (state.get(key, '') + ' ' + value).strip()
@@ -132,5 +134,60 @@ with tempfile.TemporaryDirectory(prefix='nss-dwmac-defaults-') as directory:
     check(r, {'network.wan.device': 'wan', 'network.@device[0].ports': 'eth1',
               'nss.general.topology': 'lan-trunk', 'nss.general.extra_ports': '0:wan'}, 'd50')
 
+    # TP-Link EX511 v2: a headerless RTL8367D that keeps its DSA driver. One
+    # flat LAN on the untagged trunk, no VTU, no fabric module; the five DSA
+    # user ports leave br-lan but each gets a bare interface holding it up,
+    # and the WAN socket - which can transmit but never receive - loses its
+    # DHCP: wan stays with proto none, wan6 goes altogether.
+    ex511 = dict(b3000, **{'network.@device[0].ports': 'lan1 lan2 lan3 lan4',
+                           'network.wan.proto': 'dhcp', 'network.wan6.proto': 'dhcpv6'})
+    ports = ('wan', 'lan1', 'lan2', 'lan3', 'lan4')
+    r = run('tplink,ex511-v2', ex511)
+    check(r, {
+        'nss.general.fw_mask': '0x2', 'nss.general.trunk': 'eth0',
+        'nss.general.trunk_if': '1', 'nss.general.fabric': 'none',
+        'nss.general.wifi_offload': '1', 'nss.general.topology': 'lan-trunk',
+        'network.@device[0].ports': 'eth0',
+        'network.wan.device': 'wan', 'network.wan.proto': 'none',
+    }, 'ex511')
+    for key in ('nss.general.vtu', 'nss.general.switch_args', 'nss.general.extra_ports',
+                'nss.general.switch_dev'):
+        assert key not in r, ('ex511', key, r[key])
+    assert not [k for k in r if k.startswith('network.wan6')], ('ex511', 'wan6 survived')
+    for port in ports:
+        check(r, {'network.port_%s' % port: 'interface', 'network.port_%s.device' % port: port,
+                  'network.port_%s.proto' % port: 'none', 'network.port_%s.auto' % port: '1'},
+              'ex511 port ' + port)
+    assert run('tplink,ex511-v2', r) == r, 'second run must change nothing'
+
+    # The port interfaces are only added where missing: a config that already
+    # holds one (no marker yet, so the table still runs) keeps it as it is.
+    r = run('tplink,ex511-v2', dict(ex511, **{'network.port_lan1': 'interface',
+                                              'network.port_lan1.device': 'lan1',
+                                              'network.port_lan1.proto': 'static',
+                                              'network.port_lan1.ipaddr': '10.0.0.2'}))
+    check(r, {'network.port_lan1.proto': 'static', 'network.port_lan1.ipaddr': '10.0.0.2',
+              'network.port_lan2.proto': 'none'}, 'ex511 existing port')
+    assert 'network.port_lan1.auto' not in r
+
+    # wan present, wan6 already absent: wan is still neutered, nothing else appears.
+    r = run('tplink,ex511-v2', {k: v for k, v in ex511.items() if not k.startswith('network.wan6')})
+    assert r['network.wan.proto'] == 'none'
+    assert not [k for k in r if k.startswith('network.wan6')], ('ex511 no wan6', 'wan6 appeared')
+
+    # A wan someone already moved onto a VLAN of the trunk is not on the dead
+    # port; it works, and keeps its protocol. wan6 with it.
+    r = run('tplink,ex511-v2', dict(ex511, **{'network.wan.device': 'eth0.35',
+                                              'network.wan6.device': 'eth0.35'}))
+    check(r, {'network.wan.device': 'eth0.35', 'network.wan.proto': 'dhcp',
+              'network.wan6.device': 'eth0.35', 'network.wan6.proto': 'dhcpv6',
+              'network.port_wan.proto': 'none'}, 'ex511 wan on a vlan')
+
+    # The same board with wan and wan6 already gone (a dumb AP someone
+    # trimmed by hand): the port interfaces still appear, nothing else does.
+    r = run('tplink,ex511-v2', {k: v for k, v in ex511.items() if not k.startswith('network.wan')})
+    assert 'network.port_wan.proto' in r
+    assert not [k for k in r if k.startswith('network.wan')], ('ex511 no wan', 'wan reappeared')
+
 print('PASS: RA74 dual link, rerun, Wi-Fi choice kept, tagged WAN, no wan6, migrated config, '
-      'B3000 MAC clone, D50 LAN-only trunk')
+      'B3000 MAC clone, D50 LAN-only trunk, EX511 headerless switch')

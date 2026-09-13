@@ -189,6 +189,38 @@ nss_dwmac_board_defaults() {
 		switch_args=''
 		vtu=''
 		;;
+	tplink,ex511-v2)
+		# RTL8367D (not a QCA8337) at MDIO addr 29 on mdio1, driven by the
+		# rtl8365mb DSA driver. port 6 = CPU on gmac1 (SGMII 1G, eth0),
+		# port 0 = wan, ports 1-4 = lan1-4.
+		#
+		# fabric='none': rtl8365mb stays bound and keeps the switch. The
+		# CPU tag is turned off in the driver instead, via the DT property
+		# realtek,headerless-cpu-port (DSA_TAG_PROTO_NONE + CPU_CTRL_EN=0),
+		# so eth0 carries the plain 802.1Q the firmware parses. Leaving
+		# this unset would insmod qca8337-nss against MDIO address 17 on
+		# this bus and write whatever answers there.
+		#
+		# The unbind route that every QCA8337 board uses does NOT work
+		# here: this switch's CPU port is a phylink-managed SGMII PCS, not
+		# a forced-mode MAC, so unbinding the driver takes the link down
+		# and the fabric goes quiet however correctly it is programmed.
+		#
+		# Flat dumb AP: one untagged domain, no VTU, wan is not a separate
+		# VLAN - br-lan sits on the untagged trunk.
+		fw_mask='0x2'
+		trunk='eth0'
+		trunk_if='1'
+		wan_on_trunk=0
+		fabric='none'
+		switch_args=''
+		vtu=''
+		# With no tagger the DSA user ports cannot receive, so they are not
+		# bridge members -- but they must still be brought up: dsa_port_disable
+		# both stops phylink and writes BR_STATE_DISABLED into the switch, so a
+		# down port is a dead port in the fabric, not just a dark PHY.
+		keep_ports='wan lan1 lan2 lan3 lan4'
+		;;
 	*)
 		return 1
 		;;
@@ -308,6 +340,39 @@ if [ "$known_board" = 1 ]; then
 		uci -q delete network.@device[0].ports
 		uci add_list network.@device[0].ports="$lan_port"
 	fi
+
+	#
+	# Boards whose switch keeps its DSA driver bound (fabric='none' with a
+	# headerless CPU port) still have user port netdevs, and those ports are
+	# no longer bridge members after the rewrite above. They must not be left
+	# down: dsa_port_disable() stops phylink *and* writes BR_STATE_DISABLED
+	# into the switch, so an admin-down port is dead in the fabric and no
+	# frame ever reaches the trunk. Hold them up with an unconfigured
+	# interface each - no proto, no address, just IFF_UP.
+	#
+	for _p in $keep_ports; do
+		[ -n "$(uci -q get "network.port_$_p")" ] && continue
+		uci set "network.port_$_p=interface"
+		uci set "network.port_$_p.device=$_p"
+		uci set "network.port_$_p.proto=none"
+		uci set "network.port_$_p.auto=1"
+	done
+	#
+	# A headerless DSA port can transmit but never receive (tag_none has
+	# no .rcv), so the board's default wan/wan6 interfaces on it would
+	# run DHCP forever: every DISCOVER leaves through the conduit and is
+	# flooded to the LAN sockets, and wan never comes up. On such a board
+	# the WAN socket is one more port of the flat LAN: wan keeps its
+	# section with no protocol on it, wan6 goes. Only while they still sit
+	# on the dead port - a wan someone has already moved onto a VLAN of
+	# the trunk works, and is left alone.
+	#
+	case " $keep_ports " in
+	*" wan "*)
+		[ "$(uci -q get network.wan.device)" = wan ] && uci set network.wan.proto='none'
+		[ "$(uci -q get network.wan6.device)" = wan ] && uci -q delete network.wan6
+		;;
+	esac
 fi
 
 uci commit

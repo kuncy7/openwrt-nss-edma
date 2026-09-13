@@ -94,10 +94,22 @@
 		 * bootargs-append, which OpenWrt appends to whatever U-Boot passes
 		 * (920-device_tree_cmdline.patch), as every other ipq50xx board does.
 		 *
-		 * coherent_pool=2M is required: without it the atomic DMA pool is
-		 * exhausted loading the Q6 firmware segments and ath11k fails -12.
+		 * coherent_pool sizes the atomic DMA pools. Every other ipq50xx
+		 * board passes 2M, and this one did too, because the MPD firmware
+		 * loader (mdt_load_split_segment_dma) allocated its per-segment
+		 * bounce buffers with a bare GFP_DMA, which the DMA layer treats
+		 * as atomic: 268-374 KB segments came out of the pool and the Q6
+		 * failed -12 with anything smaller. Patch 0828 gives the loader
+		 * GFP_KERNEL; nothing else on the board draws on the pools
+		 * (ath11k, qca-nss-drv and the qcom platform drivers were
+		 * checked). 2M costs far more than it says: three pools (kernel,
+		 * DMA, DMA32) of 2 MiB each and the DMA one doubles itself on
+		 * first use -- 8 MiB measured in /sys/kernel/debug/dma_pools on
+		 * a 256 MiB board. 512K keeps a margin over the default; if
+		 * pool_size_dma reads 1048576 after boot something is still using
+		 * it, and a Q6 -12 at probe means 0828 is missing.
 		 */
-		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=2M";
+		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=512K";
 	};
 
 	/*

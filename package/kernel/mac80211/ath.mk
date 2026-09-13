@@ -21,7 +21,9 @@ PKG_CONFIG_DEPENDS += \
 	CONFIG_ATH11K_MEM_PROFILE_512M \
 	CONFIG_ATH11K_MEM_PROFILE_256M \
 	CONFIG_ATH11K_NSS_SUPPORT \
-	CONFIG_ATH11K_NSS_MESH_SUPPORT
+	CONFIG_ATH11K_NSS_MESH_SUPPORT \
+	CONFIG_PACKAGE_nss-tools-dwmac \
+	CONFIG_TARGET_qualcommax_ipq50xx
 
 ifdef CONFIG_PACKAGE_MAC80211_DEBUGFS
   config-y += \
@@ -349,7 +351,17 @@ ifdef CONFIG_ATH11K_NSS_SUPPORT
 # rmmod to recover with. Reported by @danpawlik on the forum.
 ifneq ($(CONFIG_PACKAGE_nss-tools-dwmac),y)
   AUTOLOAD:=$(call AutoProbe,ath11k)
+ifeq ($(CONFIG_TARGET_qualcommax_ipq50xx),y)
+# ipq50xx without the service: the NSS core only comes up when the service
+# arms a GMAC, so nothing ever enables it here. With nss_offload=1 anyway,
+# ath11k_nss_setup() logs "NSS offload support disabled, falling back to
+# default mode" and still returns -ENOTSUPP, which core.c treats as fatal:
+# "failed to create pdev core: -524", no radios at all (measured on a TP-Link
+# Archer AX55 v1 image built without nss-tools-dwmac). Load them on the host.
+  MODPARAMS.ath11k:=nss_offload=0 frame_mode=2
+else
   MODPARAMS.ath11k:=nss_offload=1 frame_mode=2
+endif
 endif
 endif
 endef

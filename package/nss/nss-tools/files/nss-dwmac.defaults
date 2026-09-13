@@ -239,7 +239,13 @@ nss_dwmac_board_defaults() {
 # nothing to migrate: the network config stays on the DSA ports exactly
 # as netifd generated it. qca8k is built in and has probed by now, so the
 # driver's device list is the whole test.
-if ls /sys/bus/mdio_bus/drivers/qca8k/ 2>/dev/null | grep -q mdio; then
+qca8k_bound() {
+	for d in /sys/bus/mdio_bus/drivers/qca8k/*mdio*; do
+		[ -e "$d" ] && return 0
+	done
+	return 1
+}
+if qca8k_bound; then
 	[ -x /etc/init.d/qca-nss-drv ] && /etc/init.d/qca-nss-drv disable
 	[ -n "$(uci -q get nss.general.enabled)" ] || uci set nss.general.enabled='1'
 	[ -n "$(uci -q get nss.general.wifi_offload)" ] || uci set nss.general.wifi_offload='1'

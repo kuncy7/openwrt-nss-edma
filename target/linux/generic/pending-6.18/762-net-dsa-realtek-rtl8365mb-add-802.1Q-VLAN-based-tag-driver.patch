@@ -1,0 +1,705 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Date: Sun, 13 Sep 2026 20:40:00 +0200
+Subject: [PATCH] net: dsa: realtek: rtl8365mb: add an 802.1Q VLAN-based tag driver
+
+Same reason as the qca8k tagger before it: the 8-byte Realtek CPU tag
+that tag_rtl8_4 puts behind the source address is understood by the
+switch and by tag_rtl8_4 alone, so a hardware accelerator on the
+conduit's MAC that only parses 802.1Q cannot follow the frame. On the
+IPQ5018 that means the DSA ports of an RTL8367S and the NSS firmware
+exclude each other.
+
+Add a tag driver built on the tag_8021q framework, the same wire format
+as tag_qca_8021q (the source port travels in a VLAN tag the switch
+inserts, an 802.1Q upper of a standalone port is carried as it is), and
+teach rtl8365mb the mode: change_tag_protocol turns the CPU tag off on
+the CPU ports, takes the VLAN engine out of the transparent mode a
+VLAN-unaware port normally gets (in 8021q mode the VLAN 4K membership
+decides where a frame may go and the entry's untag mask whether the tag
+stays on - the CPU port is never in an untag mask, the user ports are
+in their own), registers with tag_8021q, and the tag_8021q VIDs go into
+the VLAN 4K table and the PVID registers like any other VLAN. Bridge
+join and leave swap the standalone VID for the bridge's; FDB and MDB
+entries a VLAN-unaware bridge hands over with VID 0 go into the
+tag_8021q VID the switch learns in (IVL). The user ports advertise
+NETIF_F_HW_VLAN_CTAG_FILTER in this mode so that the VLAN of an 802.1Q
+upper is installed on the port and the CPU port. The default stays the
+Realtek tag; the VLAN tagger is chosen from the device tree
+(dsa-tag-protocol = "rtl8365mb-8021q") or at runtime through
+/sys/class/net/<conduit>/dsa/tagging.
+
+Same limit as the qca8k and vsc73xx taggers: VLAN-aware bridges are
+refused.
+
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+--- a/drivers/net/dsa/realtek/rtl8365mb_main.c
++++ b/drivers/net/dsa/realtek/rtl8365mb_main.c
+@@ -93,6 +93,7 @@
+ 
+ #include <linux/bitfield.h>
+ #include <linux/bitops.h>
++#include <linux/dsa/8021q.h>
+ #include <linux/interrupt.h>
+ #include <linux/irqdomain.h>
+ #include <linux/mii.h>
+@@ -836,6 +837,7 @@ struct rtl8365mb_port {
+  * struct rtl8365mb - driver private data
+  * @priv: pointer to parent realtek_priv data
+  * @irq: registered IRQ or zero
++ * @tag_proto: the tag protocol in use, see rtl8365mb_change_tag_protocol()
+  * @chip_info: chip-specific info about the attached switch
+  * @cpu: CPU tagging and CPU port configuration for this chip
+  * @mib_lock: prevent concurrent reads of MIB counters
+@@ -849,6 +851,7 @@ struct rtl8365mb_port {
+ struct rtl8365mb {
+ 	struct realtek_priv *priv;
+ 	int irq;
++	enum dsa_tag_protocol tag_proto;
+ 	const struct rtl8365mb_chip_info *chip_info;
+ 	struct rtl8365mb_cpu cpu;
+ 	struct mutex mib_lock;
+@@ -1874,6 +1877,19 @@ static void rtl8365mb_port_stp_state_set
+ 			   val << RTL8365MB_MSTI_CTRL_PORT_STATE_OFFSET(port));
+ }
+ 
++/* The rtl8365mb-8021q tagger: the switch talks to the CPU port in plain
++ * 802.1Q. A standalone port carries its tag_8021q VID as PVID, the ports
++ * of a bridge share the bridge's VID, and the CPU port is a tagged member
++ * of all of them. The CPU tag is off, so the conduit sees VLAN frames and
++ * nothing else.
++ */
++static bool rtl8365mb_is_8021q(struct realtek_priv *priv)
++{
++	struct rtl8365mb *mb = priv->chip_data;
++
++	return mb->tag_proto == DSA_TAG_PROTO_RTL8365MB_8021Q;
++}
++
+ static int rtl8365mb_port_set_transparent(struct realtek_priv *priv,
+ 					  int igr_port, int egr_port,
+ 					  bool enable)
+@@ -1934,6 +1950,22 @@ static int rtl8365mb_port_vlan_filtering
+ 	dev_dbg(priv->dev, "port %d: %s VLAN filtering\n", port,
+ 		vlan_filtering ? "enable" : "disable");
+ 
++	/* With the rtl8365mb-8021q tagger the VLAN setup is the tagger's:
++	 * membership decides, the untag masks strip on the way out, and
++	 * the transparent mode that a VLAN-unaware port normally gets would
++	 * let frames out of the CPU port untagged. VLAN-aware bridges would
++	 * need the same PVID bookkeeping the vsc73xx tagger does not do
++	 * either.
++	 */
++	if (rtl8365mb_is_8021q(priv)) {
++		if (vlan_filtering) {
++			NL_SET_ERR_MSG_MOD(extack,
++					   "VLAN-aware bridges are not supported with the rtl8365mb-8021q tagger yet");
++			return -EOPNOTSUPP;
++		}
++		return 0;
++	}
++
+ 	ret = rtl8365mb_vlan_port_get_framefilter(priv, port,
+ 						  &prev_accepted_frame);
+ 	if (ret) {
+@@ -2029,6 +2061,27 @@ undo_transparent:
+ 	return ret;
+ }
+ 
++/* Does another user port already have an 802.1Q upper with this VID? */
++static bool rtl8365mb_vlan_upper_elsewhere(struct dsa_switch *ds, int port,
++					   u16 vid)
++{
++	struct dsa_port *dp;
++	bool found = false;
++
++	rcu_read_lock();
++	dsa_switch_for_each_user_port(dp, ds) {
++		if (dp->index == port || !dp->user)
++			continue;
++		if (__vlan_find_dev_deep_rcu(dp->user, htons(ETH_P_8021Q), vid)) {
++			found = true;
++			break;
++		}
++	}
++	rcu_read_unlock();
++
++	return found;
++}
++
+ static int rtl8365mb_port_vlan_add(struct dsa_switch *ds, int port,
+ 				   const struct switchdev_obj_port_vlan *vlan,
+ 				   struct netlink_ext_ack *extack)
+@@ -2050,6 +2103,33 @@ static int rtl8365mb_port_vlan_add(struc
+ 		return -EOPNOTSUPP;
+ 	}
+ 
++	if (rtl8365mb_is_8021q(priv)) {
++		if (vid_is_dsa_8021q(vlan->vid)) {
++			NL_SET_ERR_MSG_MOD(extack,
++					   "Range 3072-4095 reserved for dsa_8021q operation");
++			return -EBUSY;
++		}
++
++		/* On a VLAN-unaware port the bridge's PVID and untagged
++		 * replays are none of the switch's business - the tag_8021q
++		 * VIDs do the port separation. What is left is the VLAN of
++		 * an 802.1Q upper of the port (wan.35): the port and the CPU
++		 * port become tagged members, and the tagger carries that
++		 * tag as it is. One such VLAN belongs to one port only, or
++		 * the receive side could not tell whose upper it is.
++		 */
++		if (!dsa_port_is_vlan_filtering(dsa_to_port(ds, port))) {
++			if (pvid || untagged)
++				return 0;
++			if (dsa_is_user_port(ds, port) &&
++			    rtl8365mb_vlan_upper_elsewhere(ds, port, vlan->vid)) {
++				NL_SET_ERR_MSG_MOD(extack,
++						   "VID is already an 802.1Q upper of another port");
++				return -EBUSY;
++			}
++		}
++	}
++
+ 	mutex_lock(&priv->vlan_lock);
+ 
+ 	ret = rtl8365mb_vlan_port_get_pvid(priv, port, &pvid_vid);
+@@ -2108,6 +2188,13 @@ static int rtl8365mb_port_vlan_del(struc
+ 	if (vlan->vid == 0)
+ 		return -EOPNOTSUPP;
+ 
++	/* See rtl8365mb_port_vlan_add(): nothing was installed for these. */
++	if (rtl8365mb_is_8021q(priv) &&
++	    !dsa_port_is_vlan_filtering(dsa_to_port(ds, port)) &&
++	    (vid_is_dsa_8021q(vlan->vid) ||
++	     (vlan->flags & (BRIDGE_VLAN_INFO_PVID | BRIDGE_VLAN_INFO_UNTAGGED))))
++		return 0;
++
+ 	mutex_lock(&priv->vlan_lock);
+ 	ret = rtl8365mb_vlan_pvid_port_clear(ds, port, vlan->vid);
+ 	if (ret)
+@@ -2917,15 +3004,242 @@ static int rtl8365mb_cpu_config(struct r
+ 	return 0;
+ }
+ 
++/* The tag_8021q framework hands out the VIDs (3072 + port for a standalone
++ * port, 3088 + n for bridge n): PVID and untagged on the user port, tagged
++ * on the CPU port. Same hardware path as a bridge VLAN, without the
++ * 8021q-mode checks of rtl8365mb_port_vlan_add().
++ */
++static int rtl8365mb_tag_8021q_vlan_add(struct dsa_switch *ds, int port,
++					u16 vid, u16 flags)
++{
++	struct switchdev_obj_port_vlan vlan = {
++		.vid = vid,
++		.flags = flags,
++	};
++	struct realtek_priv *priv = ds->priv;
++	int ret;
++
++	mutex_lock(&priv->vlan_lock);
++	if (flags & BRIDGE_VLAN_INFO_PVID)
++		ret = rtl8365mb_vlan_pvid_port_set(ds, port, vid, NULL);
++	else
++		ret = rtl8365mb_vlan_pvid_port_clear(ds, port, vid);
++	if (!ret)
++		ret = rtl8365mb_vlan_4k_port_add(ds, port, &vlan, NULL);
++	mutex_unlock(&priv->vlan_lock);
++
++	if (ret)
++		dev_err(priv->dev,
++			"Failed to add tag_8021q VLAN %d to port %d (%d)\n",
++			vid, port, ret);
++
++	return ret;
++}
++
++static int rtl8365mb_tag_8021q_vlan_del(struct dsa_switch *ds, int port,
++					u16 vid)
++{
++	struct switchdev_obj_port_vlan vlan = {
++		.vid = vid,
++	};
++	struct realtek_priv *priv = ds->priv;
++	int ret;
++
++	mutex_lock(&priv->vlan_lock);
++	ret = rtl8365mb_vlan_pvid_port_clear(ds, port, vid);
++	if (!ret)
++		ret = rtl8365mb_vlan_4k_port_del(ds, port, &vlan);
++	mutex_unlock(&priv->vlan_lock);
++
++	if (ret)
++		dev_err(priv->dev,
++			"Failed to delete tag_8021q VLAN %d from port %d (%d)\n",
++			vid, port, ret);
++
++	return ret;
++}
++
++/* In 8021q mode the user ports advertise NETIF_F_HW_VLAN_CTAG_FILTER, which
++ * is what makes the core ask for the VLAN of an 802.1Q upper (wan.35)
++ * through port_vlan_add. The core sets the feature on its own only for a
++ * switch that needs standalone VLAN filtering, and clears it when a port
++ * leaves a VLAN-aware bridge.
++ */
++static void rtl8365mb_user_vlan_filter_feature(struct dsa_switch *ds, bool on)
++{
++	struct dsa_port *dp;
++
++	dsa_switch_for_each_user_port(dp, ds) {
++		if (!dp->user)
++			continue;
++		if (on)
++			dp->user->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
++		else
++			dp->user->features &= ~NETIF_F_HW_VLAN_CTAG_FILTER;
++	}
++}
++
++static int rtl8365mb_port_enable(struct dsa_switch *ds, int port,
++				 struct phy_device *phy)
++{
++	struct dsa_port *dp = dsa_to_port(ds, port);
++	struct realtek_priv *priv = ds->priv;
++
++	if (rtl8365mb_is_8021q(priv) && dsa_port_is_user(dp) && dp->user)
++		dp->user->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
++
++	return 0;
++}
++
++/* The VLAN engine for the two modes. A VLAN-unaware port normally runs
++ * transparent to every other port with the egress tag state left as
++ * received (rtl8365mb_port_vlan_filtering): in 8021q mode that would put
++ * an untagged frame on the CPU port. So there the VLAN 4K membership
++ * decides where a frame may go and the entry's untag mask decides whether
++ * the tag stays on - the CPU port is never in an untag mask, the user
++ * ports are in their own. Ingress stays accept-all: an untagged frame
++ * takes the port's PVID, a tagged one keeps its VID and membership sorts
++ * it out on the way out.
++ */
++static int rtl8365mb_set_8021q_vlan_mode(struct dsa_switch *ds, bool on)
++{
++	struct realtek_priv *priv = ds->priv;
++	struct dsa_port *dp, *egr;
++	int ret;
++
++	dsa_switch_for_each_available_port(dp, ds) {
++		if (!on) {
++			ret = rtl8365mb_port_vlan_filtering(ds, dp->index,
++							    dsa_port_is_vlan_filtering(dp),
++							    NULL);
++			if (ret)
++				return ret;
++			continue;
++		}
++
++		dsa_switch_for_each_available_port(egr, ds) {
++			ret = rtl8365mb_port_set_transparent(priv, dp->index,
++							     egr->index, false);
++			if (ret)
++				return ret;
++		}
++
++		ret = rtl8365mb_port_set_vlan_egress_mode(priv, dp->index,
++							  RTL8365MB_VLAN_EGRESS_MODE_ORIGINAL);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++/* A bridge that is not VLAN-aware hands its FDB and MDB entries over with
++ * VID 0; the switch learns with IVL in the tag_8021q VID the bridge's
++ * frames are classified into, and that is where the static entries have
++ * to go for the lookups to meet them.
++ */
++static u16 rtl8365mb_db_vid(struct realtek_priv *priv, struct dsa_db db,
++			    u16 vid)
++{
++	if (vid || !rtl8365mb_is_8021q(priv))
++		return vid;
++
++	switch (db.type) {
++	case DSA_DB_BRIDGE:
++		return dsa_tag_8021q_bridge_vid(db.bridge.num);
++	case DSA_DB_PORT:
++		return dsa_tag_8021q_standalone_vid(db.dp);
++	default:
++		return vid;
++	}
++}
++
++static int rtl8365mb_port_fdb_add(struct dsa_switch *ds, int port,
++				  const unsigned char *addr, u16 vid,
++				  struct dsa_db db)
++{
++	return rtl83xx_port_fdb_add(ds, port, addr,
++				    rtl8365mb_db_vid(ds->priv, db, vid), db);
++}
++
++static int rtl8365mb_port_fdb_del(struct dsa_switch *ds, int port,
++				  const unsigned char *addr, u16 vid,
++				  struct dsa_db db)
++{
++	return rtl83xx_port_fdb_del(ds, port, addr,
++				    rtl8365mb_db_vid(ds->priv, db, vid), db);
++}
++
++static int rtl8365mb_port_mdb_add(struct dsa_switch *ds, int port,
++				  const struct switchdev_obj_port_mdb *mdb,
++				  struct dsa_db db)
++{
++	struct switchdev_obj_port_mdb m = *mdb;
++
++	m.vid = rtl8365mb_db_vid(ds->priv, db, mdb->vid);
++
++	return rtl83xx_port_mdb_add(ds, port, &m, db);
++}
++
++static int rtl8365mb_port_mdb_del(struct dsa_switch *ds, int port,
++				  const struct switchdev_obj_port_mdb *mdb,
++				  struct dsa_db db)
++{
++	struct switchdev_obj_port_mdb m = *mdb;
++
++	m.vid = rtl8365mb_db_vid(ds->priv, db, mdb->vid);
++
++	return rtl83xx_port_mdb_del(ds, port, &m, db);
++}
++
++static int rtl8365mb_port_bridge_join(struct dsa_switch *ds, int port,
++				      struct dsa_bridge bridge,
++				      bool *tx_fwd_offload,
++				      struct netlink_ext_ack *extack)
++{
++	int ret;
++
++	ret = rtl83xx_port_bridge_join(ds, port, bridge, tx_fwd_offload,
++				       extack);
++	if (ret)
++		return ret;
++
++	if (rtl8365mb_is_8021q(ds->priv))
++		return dsa_tag_8021q_bridge_join(ds, port, bridge,
++						 tx_fwd_offload, extack);
++
++	return 0;
++}
++
++static void rtl8365mb_port_bridge_leave(struct dsa_switch *ds, int port,
++					struct dsa_bridge bridge)
++{
++	struct dsa_port *dp = dsa_to_port(ds, port);
++
++	if (rtl8365mb_is_8021q(ds->priv))
++		dsa_tag_8021q_bridge_leave(ds, port, bridge);
++
++	rtl83xx_port_bridge_leave(ds, port, bridge);
++
++	if (rtl8365mb_is_8021q(ds->priv) && dsa_port_is_user(dp) && dp->user)
++		dp->user->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
++}
++
+ static int rtl8365mb_change_tag_protocol(struct dsa_switch *ds,
+ 					 enum dsa_tag_protocol proto)
+ {
+ 	struct realtek_priv *priv = ds->priv;
++	enum dsa_tag_protocol old;
+ 	struct rtl8365mb_cpu *cpu;
+ 	struct rtl8365mb *mb;
++	int ret;
+ 
+ 	mb = priv->chip_data;
+ 	cpu = &mb->cpu;
++	old = mb->tag_proto;
++
++	if (proto == old)
++		return 0;
+ 
+ 	switch (proto) {
+ 	case DSA_TAG_PROTO_RTL8_4:
+@@ -2936,6 +3250,26 @@ static int rtl8365mb_change_tag_protocol
+ 		cpu->format = RTL8365MB_CPU_FORMAT_8BYTES;
+ 		cpu->position = RTL8365MB_CPU_POS_BEFORE_CRC;
+ 		break;
++	case DSA_TAG_PROTO_RTL8365MB_8021Q:
++		/* CPU tag off on the CPU ports, the VLAN engine in the mode
++		 * the tagger needs, then the tag_8021q VIDs go in through
++		 * rtl8365mb_tag_8021q_vlan_add().
++		 */
++		cpu->enable = false;
++		ret = rtl8365mb_cpu_config(priv);
++		if (ret)
++			goto restore_cpu;
++
++		ret = rtl8365mb_set_8021q_vlan_mode(ds, true);
++		if (ret)
++			goto restore_vlan;
++
++		mb->tag_proto = proto;
++		ret = dsa_tag_8021q_register(ds, htons(ETH_P_8021Q));
++		if (ret)
++			goto restore_vlan;
++		rtl8365mb_user_vlan_filter_feature(ds, true);
++		return 0;
+ 	/* The switch also supports a 4-byte format, similar to rtl4a but with
+ 	 * the same 0x04 8-bit version and probably 8-bit port source/dest.
+ 	 * There is no public doc about it. Not supported yet and it will probably
+@@ -2945,7 +3279,27 @@ static int rtl8365mb_change_tag_protocol
+ 		return -EPROTONOSUPPORT;
+ 	}
+ 
++	if (old == DSA_TAG_PROTO_RTL8365MB_8021Q) {
++		dsa_tag_8021q_unregister(ds);
++		rtl8365mb_user_vlan_filter_feature(ds, false);
++		mb->tag_proto = proto;
++		ret = rtl8365mb_set_8021q_vlan_mode(ds, false);
++		if (ret)
++			return ret;
++	}
++
++	cpu->enable = cpu->mask > 0;
++	mb->tag_proto = proto;
++
+ 	return rtl8365mb_cpu_config(priv);
++
++restore_vlan:
++	mb->tag_proto = old;
++	rtl8365mb_set_8021q_vlan_mode(ds, false);
++restore_cpu:
++	cpu->enable = cpu->mask > 0;
++	rtl8365mb_cpu_config(priv);
++	return ret;
+ }
+ 
+ static int rtl8365mb_switch_init(struct realtek_priv *priv)
+@@ -3157,13 +3511,19 @@ static int rtl8365mb_setup(struct dsa_sw
+ 	if (ret)
+ 		goto out_teardown_irq;
+ 
++	/* The header, until change_tag_protocol() says otherwise. */
++	mb->tag_proto = cpu->position == RTL8365MB_CPU_POS_BEFORE_CRC ?
++			DSA_TAG_PROTO_RTL8_4T : DSA_TAG_PROTO_RTL8_4;
++
+ 	ret = rtl8365mb_port_change_mtu(ds, cpu->trap_port, ETH_DATA_LEN);
+ 	if (ret)
+ 		goto out_teardown_irq;
+ 
+ 	ds->assisted_learning_on_cpu_port = true;
+ 	ds->fdb_isolation = true;
+-	/* The EFID is 3 bits, but EFID 0 is reserved for standalone ports */
++	/* The EFID is 3 bits, but EFID 0 is reserved for standalone ports.
++	 * The same 7 is what tag_8021q can enumerate (DSA_TAG_8021Q_MAX_NUM_BRIDGES).
++	 */
+ 	ds->max_num_bridges = FIELD_MAX(RTL8365MB_EFID_MASK);
+ 
+ 	ds->configure_vlan_while_not_filtering = true;
+@@ -3288,20 +3648,23 @@ static const struct dsa_switch_ops rtl83
+ 	.setup = rtl8365mb_setup,
+ 	.teardown = rtl8365mb_teardown,
+ 	.phylink_get_caps = rtl8365mb_phylink_get_caps,
+-	.port_bridge_join = rtl83xx_port_bridge_join,
+-	.port_bridge_leave = rtl83xx_port_bridge_leave,
++	.port_enable = rtl8365mb_port_enable,
++	.port_bridge_join = rtl8365mb_port_bridge_join,
++	.port_bridge_leave = rtl8365mb_port_bridge_leave,
+ 	.port_pre_bridge_flags = rtl8365mb_port_pre_bridge_flags,
+ 	.port_bridge_flags = rtl83xx_port_bridge_flags,
+ 	.port_stp_state_set = rtl8365mb_port_stp_state_set,
+ 	.port_fast_age = rtl83xx_port_fast_age,
+-	.port_fdb_add = rtl83xx_port_fdb_add,
+-	.port_fdb_del = rtl83xx_port_fdb_del,
++	.port_fdb_add = rtl8365mb_port_fdb_add,
++	.port_fdb_del = rtl8365mb_port_fdb_del,
+ 	.port_fdb_dump = rtl83xx_port_fdb_dump,
+-	.port_mdb_add = rtl83xx_port_mdb_add,
+-	.port_mdb_del = rtl83xx_port_mdb_del,
++	.port_mdb_add = rtl8365mb_port_mdb_add,
++	.port_mdb_del = rtl8365mb_port_mdb_del,
+ 	.port_vlan_add = rtl8365mb_port_vlan_add,
+ 	.port_vlan_del = rtl8365mb_port_vlan_del,
+ 	.port_vlan_filtering = rtl8365mb_port_vlan_filtering,
++	.tag_8021q_vlan_add = rtl8365mb_tag_8021q_vlan_add,
++	.tag_8021q_vlan_del = rtl8365mb_tag_8021q_vlan_del,
+ 	.get_strings = rtl8365mb_get_strings,
+ 	.get_ethtool_stats = rtl8365mb_get_ethtool_stats,
+ 	.get_sset_count = rtl8365mb_get_sset_count,
+--- a/include/net/dsa.h
++++ b/include/net/dsa.h
+@@ -58,6 +58,7 @@ struct tc_action;
+ #define DSA_TAG_PROTO_MXL862_VALUE		30
+ #define DSA_TAG_PROTO_MXL862_8021Q_VALUE	31
+ #define DSA_TAG_PROTO_QCA_8021Q_VALUE		32
++#define DSA_TAG_PROTO_RTL8365MB_8021Q_VALUE	34
+ 
+ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_NONE		= DSA_TAG_PROTO_NONE_VALUE,
+@@ -93,6 +94,7 @@ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_MXL862		= DSA_TAG_PROTO_MXL862_VALUE,
+ 	DSA_TAG_PROTO_MXL862_8021Q	= DSA_TAG_PROTO_MXL862_8021Q_VALUE,
+ 	DSA_TAG_PROTO_QCA_8021Q		= DSA_TAG_PROTO_QCA_8021Q_VALUE,
++	DSA_TAG_PROTO_RTL8365MB_8021Q	= DSA_TAG_PROTO_RTL8365MB_8021Q_VALUE,
+ };
+ 
+ struct dsa_switch;
+--- a/net/dsa/Kconfig
++++ b/net/dsa/Kconfig
+@@ -172,6 +172,14 @@ config NET_DSA_TAG_RTL8_4
+ 	  Say Y or M if you want to enable support for tagging frames for Realtek
+ 	  switches with 8 byte protocol 4 tags, such as the Realtek RTL8365MB-VC.
+ 
++config NET_DSA_TAG_RTL8365MB_8021Q
++	tristate "Tag driver for Realtek RTL8365MB switches, using VLAN"
++	help
++	  Say Y or M if you want to enable support for tagging frames for
++	  the Realtek RTL8365MB switch family using 802.1Q VLAN tags instead
++	  of the 8-byte Realtek CPU tag. The conduit then sees plain VLAN
++	  frames, which anything in front of the CPU can parse.
++
+ config NET_DSA_TAG_RZN1_A5PSW
+ 	tristate "Tag driver for Renesas RZ/N1 A5PSW switch"
+ 	help
+--- a/net/dsa/Makefile
++++ b/net/dsa/Makefile
+@@ -37,6 +37,7 @@ obj-$(CONFIG_NET_DSA_TAG_QCA) += tag_qca
+ obj-$(CONFIG_NET_DSA_TAG_QCA_8021Q) += tag_qca_8021q.o
+ obj-$(CONFIG_NET_DSA_TAG_RTL4_A) += tag_rtl4_a.o
+ obj-$(CONFIG_NET_DSA_TAG_RTL8_4) += tag_rtl8_4.o
++obj-$(CONFIG_NET_DSA_TAG_RTL8365MB_8021Q) += tag_rtl8365mb_8021q.o
+ obj-$(CONFIG_NET_DSA_TAG_RZN1_A5PSW) += tag_rzn1_a5psw.o
+ obj-$(CONFIG_NET_DSA_TAG_SJA1105) += tag_sja1105.o
+ obj-$(CONFIG_NET_DSA_TAG_TRAILER) += tag_trailer.o
+--- /dev/null
++++ b/net/dsa/tag_rtl8365mb_8021q.c
+@@ -0,0 +1,129 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (C) 2026 Stanislaw Pal <stefdo61@gmail.com>
++ *
++ * 802.1Q VLAN-based tag driver for the Realtek RTL8365MB switch family,
++ * built on the tag_8021q framework: the source port travels in a VLAN tag
++ * the switch itself inserts, instead of the 8-byte Realtek CPU tag that
++ * only the switch and tag_rtl8_4 understand. That keeps the conduit's
++ * frames plain 802.1Q, which any MAC - and any hardware in front of it -
++ * parses. Same wire format as tag_rtl8365mb_8021q; the switch side differs.
++ */
++#include <linux/dsa/8021q.h>
++#include <linux/if_vlan.h>
++#include <net/dsa.h>
++
++#include "tag.h"
++#include "tag_8021q.h"
++
++#define RTL8365MB_8021Q_NAME "rtl8365mb-8021q"
++
++static struct sk_buff *rtl8365mb_8021q_xmit(struct sk_buff *skb,
++				      struct net_device *netdev)
++{
++	struct dsa_port *dp = dsa_user_to_port(netdev);
++	u16 queue_mapping = skb_get_queue_mapping(skb);
++	u16 tx_vid = dsa_tag_8021q_standalone_vid(dp);
++	u8 pcp;
++
++	if (skb->offload_fwd_mark) {
++		unsigned int bridge_num = dsa_port_bridge_num_get(dp);
++		struct net_device *br = dsa_port_bridge_dev_get(dp);
++
++		/* A VLAN-aware bridge carries its own VID; the switch
++		 * forwards on that one.
++		 */
++		if (br_vlan_enabled(br))
++			return skb;
++
++		tx_vid = dsa_tag_8021q_bridge_vid(bridge_num);
++	}
++
++	/* An 802.1Q upper of the port (wan.35 for a PPPoE ISP) already
++	 * put its own tag in the skb. The switch carries that VLAN as it
++	 * is - the port and the CPU port are tagged members of it (see
++	 * rtl8365mb_port_vlan_add) - so send the frame with that tag alone
++	 * instead of stacking the port's tag_8021q VID in front of it.
++	 */
++	if (skb_vlan_tag_present(skb) &&
++	    !vid_is_dsa_8021q(skb_vlan_tag_get_id(skb)))
++		return skb;
++
++	pcp = netdev_txq_to_tc(netdev, queue_mapping);
++
++	return dsa_8021q_xmit(skb, netdev, ETH_P_8021Q,
++			      ((pcp << VLAN_PRIO_SHIFT) | tx_vid));
++}
++
++/* The user port that owns an 802.1Q upper with this VID, for a frame the
++ * switch delivered in a VLAN that is not a tag_8021q one. Such a VLAN is
++ * only ever installed for one port (rtl8365mb_port_vlan_add refuses a second),
++ * so the first match is the only match.
++ */
++static struct net_device *rtl8365mb_8021q_find_vlan_upper(struct net_device *conduit,
++						    __be16 proto, u16 vid)
++{
++	struct dsa_port *cpu_dp = conduit->dsa_ptr;
++	struct dsa_port *dp;
++
++	dsa_tree_for_each_user_port(dp, cpu_dp->dst) {
++		if (dp->cpu_dp != cpu_dp)
++			continue;
++		if (__vlan_find_dev_deep_rcu(dp->user, proto, vid))
++			return dp->user;
++	}
++
++	return NULL;
++}
++
++static struct sk_buff *rtl8365mb_8021q_rcv(struct sk_buff *skb,
++				     struct net_device *netdev)
++{
++	int src_port = -1, switch_id = -1, vbid = -1, vid = -1;
++
++	/* The conduit is promiscuous for the sake of the tag_8021q VIDs,
++	 * and a promiscuous MAC passes MAC control frames up as well. The
++	 * switch sends PAUSE at the CPU port whenever a slow user port
++	 * cannot drain what the CPU pushes; they carry no VLAN tag and
++	 * nothing above wants them.
++	 */
++	if (unlikely(eth_hdr(skb)->h_proto == htons(ETH_P_PAUSE)))
++		return NULL;
++
++	dsa_8021q_rcv(skb, &src_port, &switch_id, &vbid, &vid);
++
++	/* A VLAN of an 802.1Q upper: dsa_8021q_rcv left its tag on the skb
++	 * as hwaccel metadata, so once the frame reaches the user port the
++	 * kernel's VLAN demux hands it to the upper; we only pick the port.
++	 */
++	if (vid >= 0 && !vid_is_dsa_8021q(vid) && skb_vlan_tag_present(skb))
++		skb->dev = rtl8365mb_8021q_find_vlan_upper(netdev, skb->vlan_proto, vid);
++	else
++		skb->dev = dsa_tag_8021q_find_user(netdev, src_port, switch_id,
++						   vid, vbid);
++	if (!skb->dev) {
++		net_warn_ratelimited("%s: dropped frame from %pM proto 0x%04x: src_port=%d switch_id=%d vid=%d vbid=%d\n",
++				     netdev->name, eth_hdr(skb)->h_source,
++				     ntohs(eth_hdr(skb)->h_proto), src_port,
++				     switch_id, vid, vbid);
++		return NULL;
++	}
++
++	dsa_default_offload_fwd_mark(skb);
++
++	return skb;
++}
++
++static const struct dsa_device_ops rtl8365mb_8021q_netdev_ops = {
++	.name			= RTL8365MB_8021Q_NAME,
++	.proto			= DSA_TAG_PROTO_RTL8365MB_8021Q,
++	.xmit			= rtl8365mb_8021q_xmit,
++	.rcv			= rtl8365mb_8021q_rcv,
++	.needed_headroom	= VLAN_HLEN,
++	.promisc_on_conduit	= true,
++};
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("DSA tag driver for Realtek RTL8365MB switches, using VLAN");
++MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_RTL8365MB_8021Q, RTL8365MB_8021Q_NAME);
++
++module_dsa_tag_driver(rtl8365mb_8021q_netdev_ops);

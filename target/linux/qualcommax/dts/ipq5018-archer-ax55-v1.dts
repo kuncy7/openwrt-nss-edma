@@ -294,9 +294,18 @@
 
 	phy-mode = "2500base-x";
 
+	/*
+	 * The trunk runs at 2.5G into a switch whose front ports are 1G, so
+	 * the switch has to be able to hold the GMAC back: without pause,
+	 * Wi-Fi uplink through the router drops to half (466 vs 940 Mbit/s)
+	 * with 13 % UDP loss and clean NSS counters, the frames lost inside
+	 * the switch (measured by gabonpivovich-web, OpenWrt forum t/253014
+	 * #306; stock enables it from inside qca-nss-dp).
+	 */
 	fixed-link {
 		speed = <2500>;
 		full-duplex;
+		pause;
 	};
 };
 
@@ -398,6 +407,7 @@
 				fixed-link {
 					speed = <2500>;
 					full-duplex;
+					pause;
 				};
 			};
 		};

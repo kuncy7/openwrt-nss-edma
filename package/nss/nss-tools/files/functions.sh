@@ -126,6 +126,29 @@ nss_dsa_conduit() {
 	fi
 }
 
+# nss_dsa_tagger <conduit>: the tag_8021q tagger for the switch behind the
+# conduit - the kernel's tag driver that keeps the switch driver bound and
+# has the switch talk to the CPU in plain 802.1Q, which the firmware
+# parses. Prints the tagger's name; for a switch this plane has no such
+# tagger for it prints the driver's name and returns 1.
+nss_dsa_tagger() {
+	local u p drv
+	for u in "/sys/class/net/$1"/upper_*; do
+		[ -e "$u" ] || continue
+		p="${u##*/upper_}"
+		[ -n "$(cat "/sys/class/net/$p/phys_switch_id" 2>/dev/null)" ] || continue
+		drv="$(readlink "/sys/class/net/$p/device/driver" 2>/dev/null)" || true
+		drv="${drv##*/}"
+		case "$drv" in
+		qca8k) echo qca-8021q; return 0 ;;
+		rtl8365mb-mdio|rtl8365mb-smi) echo rtl8365mb-8021q; return 0 ;;
+		esac
+		echo "${drv:-unknown}"
+		return 1
+	done
+	return 1
+}
+
 # nss_dsa_fw_mask: which GMACs to hand to the firmware, from what is up:
 # the conduit that carries the user ports, and every GMAC that is not a
 # conduit and is administratively up - a WAN PHY of its own (Xunison D50,

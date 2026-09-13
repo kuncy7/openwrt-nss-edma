@@ -11,13 +11,13 @@ define KernelPackage/qca-dsa-nss
   SECTION:=kernel
   CATEGORY:=Kernel modules
   SUBMENU:=Network Devices
-  TITLE:=NSS firmware VLAN interfaces for qca-8021q DSA ports
+  TITLE:=NSS firmware VLAN interfaces for tag_8021q DSA ports
   DEPENDS:=@TARGET_qualcommax_ipq50xx +kmod-qca-nss-drv
   FILES:=$(PKG_BUILD_DIR)/qca-dsa-nss.ko
 endef
 
 define KernelPackage/qca-dsa-nss/description
-  Gives the user ports of a DSA switch driven by the qca-8021q tagger an
+  Gives the user ports of a DSA switch driven by a tag_8021q tagger (qca-8021q, rtl8365mb-8021q) an
   NSS interface number: one firmware VLAN interface (dynamic interface type
   VLAN on the conduit's phys_if) per standalone port and per VLAN-unaware
   bridge, carrying the VID the tagger uses. ECM treats a DSA port as plain

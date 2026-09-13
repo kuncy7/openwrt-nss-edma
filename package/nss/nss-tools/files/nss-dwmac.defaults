@@ -1,4 +1,5 @@
-# Pick the topology for the ipq50xx NSS plane. A qca8k switch means C-3PO
+# Pick the topology for the ipq50xx NSS plane. A DSA switch with a tag_8021q
+# tagger (qca8k, rtl8365mb) means C-3PO
 # (topology 'dsa': the driver and the ports stay, nothing below applies).
 # Otherwise migrate the network config from the DSA ports to the VLAN-trunk
 # topology: the switch fabric splits the front ports into VLANs (VTU
@@ -231,28 +232,51 @@ nss_dwmac_board_defaults() {
 
 [ -n "$(uci -q get nss.general.topology)" ] && exit 0
 
-# C-3PO: a board whose switch is driven by qca8k gets the dsa topology -
-# the qca-8021q tagger keeps the driver and the ports, and everything the
+# C-3PO: a board whose switch is driven by qca8k or rtl8365mb gets the dsa
+# topology - the tag_8021q tagger keeps the driver and the ports, and everything the
 # trunk table below carries (VTU, cpu_port, ports, wake_phys, which GMAC
 # is the trunk, fw_mask) is read off the board at every boot instead (see
 # nss_dsa_* in /lib/nss/functions.sh, and nss-dwmac-probe). There is
 # nothing to migrate: the network config stays on the DSA ports exactly
-# as netifd generated it. qca8k is built in and has probed by now, so the
-# driver's device list is the whole test.
-qca8k_bound() {
-	for d in /sys/bus/mdio_bus/drivers/qca8k/*mdio*; do
+# as netifd generated it. The switch drivers have probed by now (qca8k is
+# built in, rtl8365mb autoloads at 42), so their device lists are the whole
+# test.
+c3po_switch_bound() {
+	local d
+	for d in /sys/bus/mdio_bus/drivers/qca8k/*mdio* \
+		 /sys/bus/mdio_bus/drivers/rtl8365mb-mdio/*mdio*; do
 		[ -e "$d" ] && return 0
 	done
 	return 1
 }
-if qca8k_bound; then
+# Wi-Fi offload (wifili) needs the radios' firmware in memory mode 2 - on
+# the QCN6122 measured by LS3434 (GL-B3000 DTS) and by gabonpivovich-web on
+# the Archer AX55 (forum #306), whose DTS still says 1. Read the mode off
+# the board: with a 1 anywhere the radios stay on the host until the DTS
+# is changed, and nss.general.wifi_offload=1 by hand overrides this.
+wifi_fw_memory_mode_2() {
+	local f
+	for f in /sys/firmware/devicetree/base/soc*/wifi*/qcom,ath11k-fw-memory-mode; do
+		[ -e "$f" ] || continue
+		[ "$(hexdump -v -e '1/1 "%02x"' "$f")" = "00000002" ] || return 1
+	done
+	return 0
+}
+if c3po_switch_bound; then
 	[ -x /etc/init.d/qca-nss-drv ] && /etc/init.d/qca-nss-drv disable
 	[ -n "$(uci -q get nss.general.enabled)" ] || uci set nss.general.enabled='1'
-	[ -n "$(uci -q get nss.general.wifi_offload)" ] || uci set nss.general.wifi_offload='1'
+	if [ -z "$(uci -q get nss.general.wifi_offload)" ]; then
+		if wifi_fw_memory_mode_2; then
+			uci set nss.general.wifi_offload='1'
+		else
+			uci set nss.general.wifi_offload='0'
+			logger -t nss "topology dsa: Wi-Fi stays on the host - the DTS asks for ath11k-fw-memory-mode 1 and wifili needs 2 (nss.general.wifi_offload=1 to try anyway)"
+		fi
+	fi
 	[ -n "$(uci -q get nss.general.fw_logbuf)" ] || uci set nss.general.fw_logbuf='256'
 	uci set nss.general.topology='dsa'
 	uci commit nss
-	logger -t nss "topology dsa: qca8k switch found, the ports stay with DSA and the wiring is read off the board"
+	logger -t nss "topology dsa: a tag_8021q-capable switch found, the ports stay with DSA and the wiring is read off the board"
 	exit 0
 fi
 

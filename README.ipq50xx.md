@@ -220,15 +220,17 @@ migrates an existing DSA-style network config once (`br-lan` ports →
 `eth0.1`, `wan`/`wan6` device → `eth0.2`) and leaves a marker
 (`nss.general.topology='vlan-trunk'`) so it never runs again.
 
-**`nss.general.topology='dsa'`** (C-3PO) keeps `qca8k` bound and the ports
-as they are on a stock image - `lan1`/`lan2`/`wan`, `br-lan` on the lan ports,
-`wan` (or `wan.35` for a PPPoE ISP) as the WAN device. The service switches
-the conduit's tag protocol to `qca-8021q` before netifd runs (the switch
-then talks to the CPU in plain 802.1Q, which the firmware parses), and after
-the arm `qca-dsa-nss` gives every port, bridge and 802.1Q upper of a port a
-firmware VLAN interface so ECM can write rules for them.
+**`nss.general.topology='dsa'`** (C-3PO) keeps the switch driver bound and
+the ports as they are on a stock image - `lan1`/`lan2`/`wan`, `br-lan` on the
+lan ports, `wan` (or `wan.35` for a PPPoE ISP) as the WAN device. The service
+switches the conduit's tag protocol to the switch's tag_8021q tagger before
+netifd runs - `qca-8021q` for `qca8k` (QCA8337), `rtl8365mb-8021q` for
+`rtl8365mb` (RTL8367S) - so the switch talks to the CPU in plain 802.1Q,
+which the firmware parses, and after the arm `qca-dsa-nss` gives every port,
+bridge and 802.1Q upper of a port a firmware VLAN interface so ECM can write
+rules for them.
 
-On this branch a board whose switch is driven by `qca8k` gets the `dsa`
+On this branch a board whose switch is driven by `qca8k` or `rtl8365mb` gets the `dsa`
 topology on first boot, and **nothing about the wiring is configured**: the
 switch stays with its driver, so ports, CPU port and VLANs are the kernel's,
 and the rest is read off the board at every boot - the GMACs from the nodes
@@ -245,9 +247,14 @@ the switch. To try it on a board that migrated to the trunk on another image:
 `uci set nss.general.topology='dsa'`, put the network config back on the DSA
 ports, reboot. Measured on the GL-B3000 against the trunk topology:
 the same plane (5 GHz → NAT → WAN 597/570/631 up, 650/642/629 down Mbit/s
-at 1-6 % CPU), and PPPoE over `wan.35` accelerated (see below). Not yet:
-VLAN-aware bridges (refused by the tagger) and any switch other than the
-QCA8337.
+at 1-6 % CPU), and PPPoE over `wan.35` accelerated (see below). On the
+TP-Link Archer AX55 v1 (RTL8367S), with nothing in uci but the defaults and
+`wifi_offload`: 5 GHz → NAT → WAN 532/502/457 up, 582/693/597 down Mbit/s at
+4-6 % CPU. Wi-Fi offload defaults to off when the DTS asks for
+`qcom,ath11k-fw-memory-mode = <1>`, as the AX55 DTS does; wifili came up in
+that mode on the AX55 all the same, so `uci set nss.general.wifi_offload=1`
+turns it on there. Not yet: VLAN-aware bridges (refused by both taggers) and
+switches other than these two.
 
 ### `uci` knobs (`/etc/config/nss`, section `general`)
 

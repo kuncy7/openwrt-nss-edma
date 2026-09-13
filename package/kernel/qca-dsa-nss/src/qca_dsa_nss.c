@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * qca-dsa-nss: NSS firmware VLAN interfaces for the user ports of a DSA
- * switch driven by the qca-8021q tagger.
+ * switch driven by a tag_8021q tagger (qca-8021q, rtl8365mb-8021q).
  *
  * With tag_8021q the switch talks to its CPU port in plain 802.1Q: a
  * standalone port carries its own VID (3072 + port), the ports of a
@@ -148,13 +148,16 @@ struct dsa_nss_want {
 	struct net_device *ndev;
 };
 
+/* A port whose switch runs a tag_8021q tagger (qca-8021q on qca8k,
+ * rtl8365mb-8021q on rtl8365mb): the switch talks to the conduit in plain
+ * 802.1Q, and the VIDs are the framework's regardless of the switch.
+ */
 static bool dsa_nss_port_is_8021q(const struct dsa_port *dp)
 {
-	return dp->cpu_dp && dp->cpu_dp->tag_ops &&
-	       dp->cpu_dp->tag_ops->proto == DSA_TAG_PROTO_QCA_8021Q;
+	return dp->cpu_dp && dp->ds && dp->ds->tag_8021q_ctx;
 }
 
-/* The qca-8021q DSA port behind @dev: @dev itself, or the real device of an
+/* The tag_8021q DSA port behind @dev: @dev itself, or the real device of an
  * 802.1Q upper of one (wan.35). NULL for anything else.
  */
 static struct dsa_port *dsa_nss_port_of(struct net_device *dev, bool *upper)
@@ -175,7 +178,7 @@ static struct dsa_port *dsa_nss_port_of(struct net_device *dev, bool *upper)
 }
 
 /*
- * One entry per standalone qca-8021q port, one per VLAN-unaware bridge on
+ * One entry per standalone tag_8021q port, one per VLAN-unaware bridge on
  * such ports, and one per 802.1Q upper of such a port (its own VID - the
  * switch carries that VLAN through, the tagger leaves it alone, and it is
  * on the conduit as a single tag, exactly like eth0.<vid> on a trunk).
@@ -435,7 +438,7 @@ static int __init qca_dsa_nss_init(void)
 	debugfs_create_file("resync", 0200, dsa_nss_dentry, NULL,
 			    &dsa_nss_resync_fops);
 
-	pr_info("qca-dsa-nss: firmware vlan nodes for qca-8021q DSA ports\n");
+	pr_info("qca-dsa-nss: firmware vlan nodes for tag_8021q DSA ports\n");
 	dsa_nss_schedule();
 	return 0;
 }
@@ -458,4 +461,4 @@ module_init(qca_dsa_nss_init);
 module_exit(qca_dsa_nss_exit);
 
 MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION("NSS firmware VLAN interfaces for qca-8021q DSA user ports");
+MODULE_DESCRIPTION("NSS firmware VLAN interfaces for tag_8021q DSA user ports");

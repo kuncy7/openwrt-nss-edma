@@ -173,6 +173,22 @@
 
 };
 
+/*
+ * The NSS core's DDR region: firmware image plus its heap. ipq5018.dtsi
+ * reserves 16 MiB, sized for the 512 MiB boards. Stock (AP-MP03.3 DTB,
+ * MP_256 marker) reserves 8 MiB for the same MP firmware family, and
+ * that is what this 256 MiB board can afford: the reservation comes off
+ * MemTotal before Linux sees it. Both blobs (stock 2022-05, and
+ * NSS.FW.12.2-156-MP.R) are ~770 KB images; the rest is heap, and the
+ * driver reports whatever is here as heap_ddr_size to the firmware.
+ * If the core stops booting ("nss core 0 booted successfully" missing)
+ * or n2h pbuf allocation failures climb, this is the first thing to
+ * revert.
+ */
+&nss_region {
+	reg = <0x0 0x40000000 0x0 0x800000>;
+};
+
 &sleep_clk {
 	clock-frequency = <32000>;
 };

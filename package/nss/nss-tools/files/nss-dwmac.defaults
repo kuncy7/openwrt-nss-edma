@@ -1,9 +1,11 @@
-# Migrate the network config from the DSA ports to the VLAN-trunk topology
-# the ipq50xx NSS plane uses: the switch fabric splits the front ports into
-# VLANs (VTU programmed by qca8337-nss), the eth0 trunk carries them
-# tagged, and netifd builds eth0.1 (lan) / eth0.2 (wan) on top. The same
-# topology serves both data paths, so this migration is one-way and guarded
-# by a marker - rerunning the script (or a sysupgrade that keeps settings)
+# Pick the topology for the ipq50xx NSS plane. A qca8k switch means C-3PO
+# (topology 'dsa': the driver and the ports stay, nothing below applies).
+# Otherwise migrate the network config from the DSA ports to the VLAN-trunk
+# topology: the switch fabric splits the front ports into VLANs (VTU
+# programmed by qca8337-nss), the eth0 trunk carries them tagged, and
+# netifd builds eth0.1 (lan) / eth0.2 (wan) on top. The same topology
+# serves both data paths, so this migration is one-way and guarded by a
+# marker - rerunning the script (or a sysupgrade that keeps settings)
 # changes nothing.
 #
 # The per-board table and the board_name keying are George Moussalem's
@@ -228,6 +230,25 @@ nss_dwmac_board_defaults() {
 }
 
 [ -n "$(uci -q get nss.general.topology)" ] && exit 0
+
+# C-3PO: a board whose switch is driven by qca8k gets the dsa topology -
+# the qca-8021q tagger keeps the driver and the ports, and everything the
+# trunk table below carries (VTU, cpu_port, ports, wake_phys, which GMAC
+# is the trunk, fw_mask) is read off the board at every boot instead (see
+# nss_dsa_* in /lib/nss/functions.sh, and nss-dwmac-probe). There is
+# nothing to migrate: the network config stays on the DSA ports exactly
+# as netifd generated it. qca8k is built in and has probed by now, so the
+# driver's device list is the whole test.
+if ls /sys/bus/mdio_bus/drivers/qca8k/ 2>/dev/null | grep -q mdio; then
+	[ -x /etc/init.d/qca-nss-drv ] && /etc/init.d/qca-nss-drv disable
+	[ -n "$(uci -q get nss.general.enabled)" ] || uci set nss.general.enabled='1'
+	[ -n "$(uci -q get nss.general.wifi_offload)" ] || uci set nss.general.wifi_offload='1'
+	[ -n "$(uci -q get nss.general.fw_logbuf)" ] || uci set nss.general.fw_logbuf='256'
+	uci set nss.general.topology='dsa'
+	uci commit nss
+	logger -t nss "topology dsa: qca8k switch found, the ports stay with DSA and the wiring is read off the board"
+	exit 0
+fi
 
 board="$(board_name)"
 known_board=1

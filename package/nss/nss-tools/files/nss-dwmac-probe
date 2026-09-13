@@ -1,0 +1,33 @@
+#!/bin/sh
+# What the C-3PO automat reads off this board: the GMACs and their netdevs,
+# the DSA conduit and its user ports, the switch driver and tag protocol,
+# and the fw_mask it would arm right now - next to whatever nss.general
+# overrides. Read-only; paste it whole into a board report.
+. /lib/nss/functions.sh
+
+nss_dsa_conduit
+nss_dsa_fw_mask
+
+echo "board:          $(cat /tmp/sysinfo/board_name 2>/dev/null)"
+echo "topology:       $(uci -q get nss.general.topology)"
+echo "GMACs:          $(nss_gmac_netdevs | tr '\n' ' ')"
+for e in $(nss_gmac_netdevs); do
+	n="${e#*:}"
+	printf '  %-6s phys_if %s  %s  flags %s  carrier %s  tagging %s\n' "$n" "${e%%:*}" \
+		"$(cat "/sys/class/net/$n/operstate" 2>/dev/null)" \
+		"$(cat "/sys/class/net/$n/flags" 2>/dev/null)" \
+		"$(cat "/sys/class/net/$n/carrier" 2>/dev/null || echo -)" \
+		"$(cat "/sys/class/net/$n/dsa/tagging" 2>/dev/null || echo -)"
+done
+echo "conduit:        ${NSS_CONDUIT:-none} (phys_if ${NSS_CONDUIT_IF:--})"
+echo "switch driver:  ${NSS_SWITCH_DRIVER:-none}"
+echo "user ports:     ${NSS_USER_PORTS:-none}"
+echo "fw_mask now:    $NSS_FW_MASK (uci: $(uci -q get nss.general.fw_mask || echo unset))"
+echo "overrides:      trunk=$(uci -q get nss.general.trunk) trunk_if=$(uci -q get nss.general.trunk_if) extra_ports=$(uci -q get nss.general.extra_ports)"
+echo "glue:           $(cat /sys/kernel/debug/qca-dwmac-nss/ifmap 2>/dev/null | tr '\n' ' ')"
+sed 's/^/  /' /sys/kernel/debug/qca-dwmac-nss/status 2>/dev/null
+[ -r /sys/kernel/debug/qca-dsa-nss/status ] && {
+	echo "qca-dsa-nss:"
+	sed 's/^/  /' /sys/kernel/debug/qca-dsa-nss/status
+}
+exit 0

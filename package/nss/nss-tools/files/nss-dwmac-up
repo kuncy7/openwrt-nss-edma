@@ -12,13 +12,20 @@ set -e
 
 GLUE_STATUS=/sys/kernel/debug/qca-dwmac-nss/status
 FWM=/sys/kernel/debug/qca-dwmac-nss/fw_mask
-# Every optional uci read here carries "|| VAR=''": under set -e an
+# Every optional uci read below carries "|| VAR=''": under set -e an
 # assignment from a failing command substitution ends the script, and
-# 'uci -q get' fails for an option that is not set. The board table sets
-# all of them, so a known board never noticed; a board without an entry
-# died right here, before the arm and before ath11k - no firmware plane
-# and, with wifi_offload=1, no radios (measured on a GL-B3000, E287).
+# 'uci -q get' fails for an option that is not set. That used to be
+# invisible because the board table set all of them; on the dsa topology
+# trunk and fw_mask are unset on purpose, and the script died right here,
+# before the arm and before ath11k - a board with no radios (measured, E287).
+TOPOLOGY="$(uci -q get nss.general.topology)" || TOPOLOGY=''
 TRUNK="$(uci -q get nss.general.trunk)" || TRUNK=''
+# C-3PO: the trunk is the DSA conduit, and the board says which netdev
+# that is (nss.general.trunk overrides).
+if [ -z "$TRUNK" ] && [ "$TOPOLOGY" = "dsa" ]; then
+  nss_dsa_conduit
+  TRUNK="$NSS_CONDUIT"
+fi
 [ -n "$TRUNK" ] || TRUNK=eth0
 
 # Arm the firmware data plane only once netifd has FINISHED with the
@@ -49,7 +56,6 @@ eth_promisc() {
 # C-3PO (nss.general.topology=dsa): the trunk is the DSA conduit, no bridge
 # sits on it and it need not go promiscuous - the tagger adds its VIDs to
 # the conduit's hardware VLAN filter and the user ports add their MACs.
-TOPOLOGY="$(uci -q get nss.general.topology)"
 if [ "$TOPOLOGY" = "dsa" ]; then
   echo "topology dsa: $TRUNK is the DSA conduit (tagger $(cat /sys/class/net/$TRUNK/dsa/tagging 2>/dev/null))"
 else
@@ -60,6 +66,14 @@ sleep 3
 
 if [ "$(cat $FWM 2>/dev/null)" = "0x0" ]; then
   MASK="$(uci -q get nss.general.fw_mask)" || MASK=''
+  if [ -z "$MASK" ] && [ "$TOPOLOGY" = "dsa" ]; then
+    # C-3PO: netifd has run, so a GMAC that is up is one that is in use -
+    # the conduit and any WAN PHY of its own get armed, an unused GMAC or
+    # a second CPU port DSA does not use stay on the host.
+    nss_dsa_fw_mask
+    MASK="$NSS_FW_MASK"
+    echo "topology dsa: fw_mask $MASK from the board (conduit ${NSS_CONDUIT:-none} = phys_if ${NSS_CONDUIT_IF:--}, GMACs $(nss_gmac_netdevs | tr '\n' ' '))"
+  fi
   [ -n "$MASK" ] || MASK=0x2
   echo "$MASK" > $FWM 2>/dev/null
 fi

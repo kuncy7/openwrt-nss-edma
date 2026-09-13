@@ -105,11 +105,22 @@ switch_to_trunk() {
 # bridge a firmware VLAN interface so ECM can write rules for them. The
 # tag protocol can only be switched while the conduit and every user port
 # are down, which is the case here: the service runs before netifd.
+#
+# Nothing here is configured: the conduit is the netdev DSA hangs the user
+# ports off (nss_dsa_conduit), and a board with no switch at all has
+# nothing to switch. nss.general.trunk still overrides the conduit.
 switch_to_8021q() {
 	local trunk tagging cur
 
 	trunk="$(uci -q get nss.general.trunk)"
-	[ -n "$trunk" ] || trunk=eth0
+	if [ -z "$trunk" ]; then
+		nss_dsa_conduit
+		trunk="$NSS_CONDUIT"
+	fi
+	if [ -z "$trunk" ]; then
+		logger -t nss "topology dsa: no DSA switch on this board - the GMACs go to the firmware as they are"
+		return 0
+	fi
 	tagging="/sys/class/net/$trunk/dsa/tagging"
 	cur="$(cat "$tagging" 2>/dev/null)"
 	if [ -z "$cur" ]; then
@@ -188,11 +199,20 @@ start_service() {
 	# first and the parameter is then lost without a word.
 	local trunk trunk_if extra ifmap
 	trunk="$(uci -q get nss.general.trunk)"
-	[ -n "$trunk" ] || trunk=eth0
 	trunk_if="$(uci -q get nss.general.trunk_if)"
-	[ -n "$trunk_if" ] || trunk_if=1
 	extra="$(uci -q get nss.general.extra_ports | tr ' ' ',')"
-	ifmap="$trunk_if:$trunk${extra:+,$extra}"
+	if [ "$topology" = "dsa" ] && [ -z "$trunk$trunk_if$extra" ]; then
+		# C-3PO: every GMAC that has a netdev, by the node it sits on.
+		# Which of them the firmware gets is nss-dwmac-up's call, once
+		# netifd has said which ones are in use (nss_dsa_fw_mask).
+		ifmap="$(nss_gmac_netdevs | tr '\n' ',')"
+		ifmap="${ifmap%,}"
+		logger -t nss "topology dsa: GMAC map read off the board: $ifmap"
+	else
+		[ -n "$trunk" ] || trunk=eth0
+		[ -n "$trunk_if" ] || trunk_if=1
+		ifmap="$trunk_if:$trunk${extra:+,$extra}"
+	fi
 	insmod "/lib/modules/$(uname -r)/qca-dwmac-nss.ko" ifmap="$ifmap" 2>/dev/null ||
 		modprobe qca-dwmac-nss 2>/dev/null
 	[ -w /sys/kernel/debug/qca-dwmac-nss/ifmap ] &&

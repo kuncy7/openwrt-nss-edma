@@ -226,15 +226,35 @@ as they are on a stock image - `lan1`/`lan2`/`wan`, `br-lan` on the lan ports,
 the conduit's tag protocol to `qca-8021q` before netifd runs (the switch
 then talks to the CPU in plain 802.1Q, which the firmware parses), and after
 the arm `qca-dsa-nss` gives every port, bridge and 802.1Q upper of a port a
-firmware VLAN interface so ECM can write rules for them. To try it on a board
-that migrated to the trunk: set the topology, put the network config back on
-the DSA ports, reboot. Measured on the GL-B3000 against the trunk topology:
+firmware VLAN interface so ECM can write rules for them.
+
+On this branch a board whose switch is driven by `qca8k` gets the `dsa`
+topology on first boot, and **nothing about the wiring is configured**: the
+switch stays with its driver, so ports, CPU port and VLANs are the kernel's,
+and the rest is read off the board at every boot - the GMACs from the nodes
+their netdevs sit on (`ethernet@39c00000` = GMAC0 = `phys_if 0`,
+`ethernet@39d00000` = GMAC1 = `phys_if 1`), the trunk as the conduit DSA hangs
+the user ports off, and `fw_mask` from what netifd brought up: the conduit
+plus any GMAC that is not a conduit and is up (a WAN PHY of its own), never a
+second CPU port DSA does not use or a GMAC nothing configured.
+`nss-dwmac-probe` prints that view; `trunk`, `trunk_if`, `extra_ports` and
+`fw_mask` in uci still override it if a board needs that. The VTU and the
+`qca8337-nss` parameters have no meaning here. A tagged ISP VLAN or a VLAN
+for an SSID is plain netifd (`wan.35`, `lan1.10`): the kernel installs it in
+the switch. To try it on a board that migrated to the trunk on another image:
+`uci set nss.general.topology='dsa'`, put the network config back on the DSA
+ports, reboot. Measured on the GL-B3000 against the trunk topology:
 the same plane (5 GHz → NAT → WAN 597/570/631 up, 650/642/629 down Mbit/s
 at 1-6 % CPU), and PPPoE over `wan.35` accelerated (see below). Not yet:
 VLAN-aware bridges (refused by the tagger) and any switch other than the
 QCA8337.
 
 ### `uci` knobs (`/etc/config/nss`, section `general`)
+
+On the `dsa` topology only the first two matter (`fw_logbuf` has its default);
+`fw_mask`, `trunk`, `trunk_if` and `extra_ports` are read off the board and
+the uci values, if set, override that. The switch rows are for the trunk
+topology alone.
 
 | Option | Default | Meaning |
 |---|---|---|

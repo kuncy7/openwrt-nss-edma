@@ -292,7 +292,9 @@ The board side is small. The parts, in order of effort:
    this branch works - quietly (reported by @Pe3ucTop on an AX6000). **Every
    IPQ5018 board DTS in this branch already carries the line**; a board you
    add yourself needs it. It costs no memory: the 16 MB `nss_region`
-   reservation sits in `ipq5018.dtsi` for every board either way.
+   reservation sits in `ipq5018.dtsi` for every board either way. (On a
+   256 MB board it does cost - 16 MB off `MemTotal` - and stock firmware
+   reserves 8 MiB there; see *256 MB boards* below.)
 2. **Which GMAC feeds what.** phys_if N is GMAC N. On the B3000 the switch is
    on GMAC1 (`fw_mask=0x2`, `trunk=eth0`, `trunk_if=1`) and GMAC0 is unused.
    The glue takes a map of netdevs per phys_if (`ifmap=1:eth0,0:wan`, or the
@@ -307,8 +309,9 @@ The board side is small. The parts, in order of effort:
    Moussalem). Run on the board: GL-B3000, Linksys MX2000, SPNMX56 and
    MX6200, Xunison D50, CMCC MR3000D-CI (wired plane and 5 GHz offload on
    the table entry as written), Redmi AX5400 (both CPU links: LAN on
-   `eth1.1`, WAN on `eth0.2`, Wi-Fi on the host). Straight from the DTS,
-   untested: Linksys MX5500 and MR5500, Xiaomi AX6000, Zyxel SCR50AXE,
+   `eth1.1`, WAN on `eth0.2`, Wi-Fi on the host), TP-Link EX511 v2
+   (RTL8367D, both radios, see the switch note below). Straight from the
+   DTS, untested: Linksys MX5500 and MR5500, Xiaomi AX6000, Zyxel SCR50AXE,
    CMCC PZ-L8, I-O DATA WN-DAX3000GR, Elecom WRC-X3000GS2 / GST2, Yuncore
    AX830 and AX850. On those the settings apply themselves on first boot.
    Anything else logs a line telling you to set them by hand.
@@ -350,6 +353,33 @@ The board side is small. The parts, in order of effort:
    |---|---|---|---|
    | ISP hands PPPoE over tagged VLAN 35 on the WAN jack | Linksys MX2000 (LS3434) | `1:6t,3u,4u,5u;35:6t,2t` | `eth0.35` as the PPPoE device |
    | Dumb AP: lan3 is a tagged uplink with VLANs 10-13 and 40; lan1, lan2 and the WAN jack are untagged ports in VLAN 10 | CMCC MR3000D-CI (csharper2005) - ports 1-3 = lan3/lan2/lan1, 4 = wan, 6 = CPU | `10:6t,1t,2u,3u,4u;11:6t,1t;12:6t,1t;13:6t,1t;40:6t,1t` | `eth1.10` … `eth1.40` in their bridges |
+
+   **A Realtek switch (RTL8367D/S) takes a different route.** `qca8337-nss`
+   does not apply, and the unbind trick does not work either: the RTL8367D's
+   CPU port is a phylink-managed SGMII PCS, so unbinding the driver takes
+   the link down and the fabric goes quiet however correctly it was
+   programmed. On the TP-Link EX511 v2 the switch stays on its DSA driver
+   (`rtl8365mb`, with the RTL8367D family patch in this branch) and the CPU
+   tag is turned off instead: `realtek,headerless-cpu-port` in the switch
+   node selects `DSA_TAG_PROTO_NONE` and clears `CPU_CTRL_EN`, so `eth0`
+   carries plain Ethernet the firmware can parse. The table entry is
+   `fabric='none'`, `wan_on_trunk=0`, no VTU, and `keep_ports='wan lan1
+   lan2 lan3 lan4'`: without a tagger the DSA user ports cannot receive, so
+   they are not bridge members, but they must stay up - `dsa_port_disable()`
+   writes `BR_STATE_DISABLED` into the switch, and a down port is dead in
+   the fabric, not just a dark PHY - and with address learning enabled on
+   them, since the driver only turns learning on at bridge join, which
+   these ports never see. The result is one flat untagged domain across
+   all five sockets (switched, not a hub): the WAN socket is a fifth LAN
+   port - the first-boot script leaves `wan` with no protocol and removes
+   `wan6` - and `bridge-vlan` does not work (it moves dead DSA ports into
+   `br-lan` and drops `eth0` out of it, which cuts every connection
+   including SSH). VLANs on a Realtek switch under this plane are an open
+   item on this route. The Archer AX55 v1 has the same switch and takes
+   the other one: unbind `rtl8365mb` and re-arm the fabric from a module,
+   which does give it VLANs (gabonpivovich-web, forum #306); on the EX511
+   that left the fabric quiet. On either route the table entry is
+   `fabric='none'`.
 
 Also: a board whose WAN is on the internal GE PHY (GMAC0), like the D50, needs
 no VTU at all - the switch only carries LANs, `vlans` can stay empty - and the
@@ -410,7 +440,53 @@ died on its first cold boot - and an empty WIFILI section in `nss_stats` was our
 own N2H bounds check dropping every SOC statistics message, because those are
 larger (2092 B) than the data frame size the host advertises (2048 B).
 
+## 256 MB boards
+
+Every IPQ5018 board on this branch has 512 MB except the TP-Link EX511 v2
+(IPQ5018 + QCN6122, 256 MB), and the defaults tuned for 512 MB do not fit
+in it: the first flashed build OOM-killed the AP daemon on a single iperf3
+run. What it needed, all in the branch and measured on the board (2026-09-13):
+
+- **`nss_region` 8 MiB** in the board DTS, overriding the 16 MiB in
+  `ipq5018.dtsi`. Stock reserves 8 MiB for the same MP firmware family; the
+  driver reports whatever is there as `heap_ddr_size` and the core boots
+  and runs at full throughput in it. 8 MiB back on `MemTotal`.
+- **`qca-nss-pbuf.init` 256MB profile = QSDK's MP_256 values**
+  (`extra_pbuf_core0=800000 n2h_high_water_core0=16336
+  n2h_wifi_pool_buf=0`). The profile shipped before was QSDK's IPQ807x
+  `ap-ac02` one with a transposed digit; its 4096-buffer Wi-Fi pool is what
+  produced the OOM. The counts matter more than they look: every payload
+  the firmware holds is `alloc_skb(1984 + 64)` on the host, and on 64-bit
+  that is 2368 bytes with `skb_shared_info`, which kmalloc rounds up to
+  4096 - twice what the 32-bit stock kernel pays per buffer. Watch
+  `drv_nss_skb_count` in `/sys/kernel/debug/qca-nss-drv/stats/drv`
+  (~3250 idle, ~4500 after a load run), not `Slab`.
+- **`coherent_pool=512K`** in the board DTS instead of the 2M every other
+  board passes - only safe together with patch `0828` below. 2M costs
+  three pools of 2 MiB, one of which doubles itself: 8 MiB.
+- Build options: `CONFIG_NSS_MEM_PROFILE_LOW=y`, `CONFIG_ATH11K_MEM_PROFILE_512M=y`
+  (the 256M choice is a dead symbol - nothing in the ath11k patches branches
+  on it, so it gives the *largest* rings; 512M is the only profile that
+  reduces anything), `qcom,ath11k-fw-memory-mode = <2>` on both radios,
+  firmware 12.2-156.
+
+Result: ~850 / ~740 Mbit/s on 5 GHz with 4 streams (stock: 843 / 906),
+0 OOM, 20 MB available after the run against 3 MB before. Not done:
+`vm.min_free_kbytes` (OpenWrt's init sets 16384 on anything over 64 MB,
+stock uses 2048), and ~50 MB of used memory that no `/proc/meminfo` counter
+names on this kernel config - attributing it needs `CONFIG_PAGE_OWNER`.
+
 ## Fixes worth knowing about
+
+- **`0828` (kernel) - MPD firmware segments allocated with `GFP_KERNEL`.**
+  `mdt_load_split_segment_dma()` allocated its per-segment bounce buffers
+  with a bare `GFP_DMA`, which carries no reclaim bit, so the DMA layer
+  served the 268-374 KB Q6 user-PD segments from the atomic coherent pool -
+  from a function that calls `request_firmware()` a few lines later. That
+  is why every ipq50xx board carries `coherent_pool=2M` and why the Q6
+  fails `-12` without it (`qcom-q6-mpd pd-1: Error in dma alloc ptr:
+  268164`). With the fix nothing on the board draws on the pools; 512K is
+  plenty and the kernel default would do.
 
 - **`0136` - park the core before copying the firmware over it.** Warm
   reboots used to leave the NSS core dead one time in two: the old firmware

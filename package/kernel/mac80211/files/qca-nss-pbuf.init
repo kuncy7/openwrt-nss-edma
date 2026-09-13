@@ -125,8 +125,40 @@ apply_nss_config() {
       extra_pbuf_core0=3100000 n2h_high_water_core0=30624 n2h_wifi_pool_buf=8192 apply_sysctl
       ;;
       # 256MB profile
+      #
+      # These are the values QSDK's own wifi script applies to a 256 MB
+      # IPQ5018 (the MP_256 device-tree marker, board family ap-mp*):
+      #
+      #   extra_pbuf_core0 = (n2h_high_water_core0 - 11720) * 160
+      #
+      # where 11720 is the firmware's built-in pbuf count and 160 the pbuf
+      # size. The profile this script shipped before (3100000 / 30258 /
+      # 4096) was QSDK's IPQ807x ap-ac02 profile with a digit transposed
+      # in the high-water mark (30528), not an IPQ5018 profile at all.
+      #
+      # Each buffer the firmware holds costs the host a kmalloc-4k object
+      # (1984 payload + 64 pad + 320 skb_shared_info rounds to 4096 on
+      # 64-bit), so the counts matter more than they look:
+      #
+      #   n2h_wifi_pool_buf   payloads reserved for the Wi-Fi datapath,
+      #                       pulled from the host on demand and not given
+      #                       back. At 4096 a 256 MiB IPQ5018 with two
+      #                       radios OOM-kills the AP daemon on a single
+      #                       iperf3 run (Slab +18 MB, MemAvailable 0);
+      #                       2048 was measured to survive it. 0 is what
+      #                       QSDK uses here: the Wi-Fi rings draw from
+      #                       the general pool.
+      #   extra_pbuf_core0    pbuf descriptor pages handed to the firmware
+      #                       at init (kzalloc(PAGE_SIZE) each): 757 pages
+      #                       at 3100000, 196 at 800000.
+      #
+      # Measured on a TP-Link EX511 v2 (256 MiB, IPQ5018 + QCN6122),
+      # 2026-09-13: with these values one iperf3 run at ~850/740 Mbit/s
+      # over 5 GHz leaves 20 MB available and Slab at 52 MB; the same run
+      # bottomed at 2 MB available with 2048. If a 256 MB board does drop
+      # Wi-Fi frames under load, 2048 is the tested fallback.
     256 | 256m*)
-      extra_pbuf_core0=3100000 n2h_high_water_core0=30258 n2h_wifi_pool_buf=4096 apply_sysctl
+      extra_pbuf_core0=800000 n2h_high_water_core0=16336 n2h_wifi_pool_buf=0 apply_sysctl
       ;;
   esac
 }

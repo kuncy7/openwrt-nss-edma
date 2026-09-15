@@ -78,6 +78,15 @@ jobs:
           rm "$bb/sh"
           rmdir "$bb"
 
+      - name: Check the first-boot board table
+        run: |
+          python3 package/nss/nss-tools/tests/nss-dwmac-defaults.test.py
+          bb="$(mktemp -d)"
+          ln -s "$(command -v busybox)" "$bb/sh"
+          NSS_TEST_SH="$bb/sh" python3 package/nss/nss-tools/tests/nss-dwmac-defaults.test.py
+          rm "$bb/sh"
+          rmdir "$bb"
+
       - name: Run the suite
         run: bash package/nss/nss-tools/tests/nss-status.test.sh
 

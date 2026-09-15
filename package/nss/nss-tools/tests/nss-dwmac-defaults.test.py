@@ -1,0 +1,136 @@
+"""Run the first-boot board table against a disposable uci state."""
+from pathlib import Path
+import json
+import os
+import subprocess
+import tempfile
+
+source = Path(__file__).resolve().parents[4]
+shell = os.environ.get("NSS_TEST_SH", "sh")
+defaults = source / 'package/nss/nss-tools/files/nss-dwmac.defaults'
+text = defaults.read_text(encoding='utf-8')
+subprocess.run([shell, '-n', str(defaults)], check=True)
+assert text.count('. /lib/functions.sh') == 1
+
+# uci over a flat JSON map: 'network.cfg1.name' -> 'wan'. Anonymous sections
+# are named here the way config_load names them.
+uci = r'''#!/usr/bin/env python3
+import json, os, sys
+path = os.environ['UCI_STATE']
+state = json.load(open(path))
+args = [a for a in sys.argv[1:] if a != '-q']
+op, key = args[0], (args[1] if len(args) > 1 else '')
+if op == 'get':
+    if key not in state:
+        sys.exit(1)
+    print(state[key])
+    sys.exit(0)
+if op == 'set':
+    key, value = key.split('=', 1)
+    state[key] = value
+elif op == 'delete':
+    state.pop(key, None)
+elif op == 'add_list':
+    key, value = key.split('=', 1)
+    state[key] = (state.get(key, '') + ' ' + value).strip()
+elif op == 'sections':
+    print(' '.join(k.split('.')[1] for k, v in state.items()
+                   if k.count('.') == 1 and k.startswith(key + '.') and v == args[2]))
+    sys.exit(0)
+elif op != 'commit':
+    raise SystemExit('unexpected uci call: %r' % (args,))
+json.dump(state, open(path, 'w'))
+'''
+functions = r'''
+board_name() { printf '%s\n' "$TEST_BOARD"; }
+logger() { :; }
+config_load() { CONFIG_LOADED="$1"; }
+config_get() { eval "$1=\$(uci -q get $CONFIG_LOADED.$2.$3)"; }
+config_foreach() {
+	_fn="$1"; _type="$2"
+	for _s in $(uci sections "$CONFIG_LOADED" "$_type"); do "$_fn" "$_s"; done
+}
+'''
+
+# The RA74's config as board.d leaves it: DSA ports, a conduit per port.
+ra74 = {
+    'network.lan': 'interface', 'network.lan.device': 'br-lan',
+    'network.@device[0]': 'device', 'network.@device[0].name': 'br-lan',
+    'network.@device[0].ports': 'lan1 lan2 lan3',
+    'network.wan': 'interface', 'network.wan.device': 'wan',
+    'network.wan6': 'interface', 'network.wan6.device': 'wan',
+    'network.cfg1': 'device', 'network.cfg1.name': 'lan1', 'network.cfg1.conduit': 'eth1',
+    'network.cfg2': 'device', 'network.cfg2.name': 'wan', 'network.cfg2.conduit': 'eth0',
+}
+b3000 = {k: v for k, v in ra74.items() if not k.startswith('network.cfg')}
+b3000['network.@device[0].ports'] = 'lan1 lan2'
+
+with tempfile.TemporaryDirectory(prefix='nss-dwmac-defaults-') as directory:
+    tmp = Path(directory)
+    (tmp / 'uci').write_text(uci)
+    (tmp / 'uci').chmod(0o755)
+    (tmp / 'defaults.sh').write_text(text.replace('. /lib/functions.sh', functions))
+
+    def run(board, state):
+        state_file = tmp / 'state.json'
+        state_file.write_text(json.dumps(state))
+        env = dict(os.environ, TEST_BOARD=board, UCI_STATE=str(state_file),
+                   PATH=str(tmp) + ':' + os.environ['PATH'])
+        done = subprocess.run([shell, str(tmp / 'defaults.sh')], env=env,
+                              capture_output=True, text=True)
+        assert done.returncode == 0, (board, done.stderr)
+        return json.loads(state_file.read_text())
+
+    def check(result, expected, board):
+        for key, value in expected.items():
+            assert result.get(key) == value, (board, key, result.get(key), value)
+
+    # Fresh RA74: both CPU links, WAN on GMAC0, the wan conduit section follows.
+    r = run('xiaomi,redmi-ax5400', ra74)
+    check(r, {
+        'nss.general.fw_mask': '0x3', 'nss.general.trunk': 'eth1',
+        'nss.general.trunk_if': '1', 'nss.general.extra_ports': '0:eth0',
+        'nss.general.vtu': '1:6t,2u,3u,4u;2:5t,1u',
+        'nss.general.switch_args': 'cpu_port=6 ports=0x7e wake_phys=90000.mdio-1:00,'
+                                   '90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03,90000.mdio-1:04',
+        'nss.general.wifi_offload': '0', 'nss.general.topology': 'vlan-trunk',
+        'network.wan.device': 'eth0.2', 'network.wan6.device': 'eth0.2',
+        'network.@device[0].ports': 'eth1.1',
+        'network.cfg2.name': 'eth0.2', 'network.cfg1.name': 'lan1',
+        'network.cfg1.conduit': 'eth1',
+    }, 'ra74')
+    assert 'network.cfg2.conduit' not in r
+    assert run('xiaomi,redmi-ax5400', r) == r, 'second run must change nothing'
+
+    # An admin's Wi-Fi offload choice survives the board's host default.
+    r = run('xiaomi,redmi-ax5400', dict(ra74, **{'nss.general.wifi_offload': '1'}))
+    assert r['nss.general.wifi_offload'] == '1'
+
+    # A tagged ISP VLAN already on eth0 is kept, and the VTU follows it.
+    r = run('xiaomi,redmi-ax5400', dict(ra74, **{'network.wan.device': 'eth0.35',
+                                                  'network.wan6.device': 'eth0.35'}))
+    check(r, {'network.wan.device': 'eth0.35', 'nss.general.vtu': '1:6t,2u,3u,4u;35:5t,1u',
+              'network.cfg2.name': 'wan'}, 'ra74 vlan 35')
+
+    # No wan6 interface: none is created.
+    r = run('xiaomi,redmi-ax5400', {k: v for k, v in ra74.items() if not k.startswith('network.wan6')})
+    assert 'network.wan6.device' not in r
+
+    # A migrated config is left alone, single-link layout included.
+    single = dict(ra74, **{'nss.general.topology': 'vlan-trunk', 'network.wan.device': 'eth1.2'})
+    assert run('xiaomi,redmi-ax5400', single) == single
+
+    # GL-B3000 control: WAN on the trunk, a cloned MAC moves to eth0.2.
+    r = run('glinet,gl-b3000', dict(b3000, **{'network.cfg3': 'device', 'network.cfg3.name': 'wan',
+                                              'network.cfg3.macaddr': '02:00:00:00:00:01'}))
+    check(r, {'nss.general.fw_mask': '0x2', 'network.wan.device': 'eth0.2',
+              'network.@device[0].ports': 'eth0.1', 'network.cfg3.name': 'eth0.2',
+              'network.cfg3.macaddr': '02:00:00:00:00:01', 'nss.general.wifi_offload': '1'}, 'b3000')
+
+    # LAN-only trunk (Xunison D50): the WAN netdev stays.
+    r = run('xunison,exigo-hub-d50-5g', b3000)
+    check(r, {'network.wan.device': 'wan', 'network.@device[0].ports': 'eth1',
+              'nss.general.topology': 'lan-trunk', 'nss.general.extra_ports': '0:wan'}, 'd50')
+
+print('PASS: RA74 dual link, rerun, Wi-Fi choice kept, tagged WAN, no wan6, migrated config, '
+      'B3000 MAC clone, D50 LAN-only trunk')

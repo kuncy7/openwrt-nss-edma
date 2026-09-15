@@ -105,15 +105,22 @@ nss_dwmac_board_defaults() {
 		vtu=''
 		;;
 	xiaomi,redmi-ax5400)
-		# UNTESTED. Two CPU ports on the switch: port 5 -> GMAC0 (PHY-to-
-		# PHY) and port 6 -> GMAC1 (SGMII). The SGMII one is used, as on
-		# the Linksys boards: trunk = eth1 = phys_if 1, port 6 = CPU,
-		# 1 = wan, 2-4 = lan1-3; port 5 is left out of the fabric.
-		fw_mask='0x2'
+		# Run on the board (Yongzhao, PR #1, 2026-09-14), both CPU links in
+		# use: LAN rides port 6 -> GMAC1 (SGMII), the trunk eth1 = phys_if 1,
+		# 2-4 = lan1-3; WAN rides port 5 -> PHY 4 -> GMAC0 (PHY-to-PHY), as
+		# VLAN 2 on eth0 = phys_if 0, 1 = wan. Clean 4138fb5e87 build: both
+		# ports started, WAN download through eth0.2; on his build with
+		# local qca8337-nss checks, Ookla 914/856 wired. PHY 4 has to be
+		# woken for GMAC0's link. Wi-Fi stays on the host, as in every run
+		# on this board so far.
+		fw_mask='0x3'
 		trunk='eth1'
 		trunk_if='1'
-		switch_args='cpu_port=6 ports=0x5e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
-		vtu='1:6t,2u,3u,4u;2:6t,1u'
+		wan_trunk='eth0'
+		extra_ports='0:eth0'
+		wifi_offload='0'
+		switch_args='cpu_port=6 ports=0x7e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03,90000.mdio-1:04'
+		vtu='1:6t,2u,3u,4u;2:5t,1u'
 		;;
 	cmcc,pz-l8)
 		# UNTESTED. The AX5400's two CPU ports, with the SGMII one on port
@@ -217,10 +224,12 @@ fi
 # eth0.<their vid>, and rewriting that to eth0.2 takes their link down -
 # measured on an MX2000 whose ISP hands over tagged 35 (LS3434, forum #232).
 wan_vid=2
+cur_wan="$(uci -q get network.wan.device)"
 if [ "$known_board" = 1 ] && [ "${wan_on_trunk:-1}" = 1 ]; then
-	wan_trunk="$trunk"
+	# wan_trunk: the netdev the wan VLAN rides - the trunk, unless the board
+	# has a second link into the switch for it (Redmi AX5400: eth0).
+	[ -n "$wan_trunk" ] || wan_trunk="$trunk"
 	[ -n "$wan_trunk" ] || wan_trunk=eth0
-	cur_wan="$(uci -q get network.wan.device)"
 	case "$cur_wan" in
 	"$wan_trunk".*)
 		vid="${cur_wan##*.}"
@@ -268,8 +277,20 @@ if [ "$known_board" = 1 ]; then
 		# the WAN on another VLAN of the trunk, in which case theirs is
 		# kept and the VTU was rewritten to match.
 		if [ "${wan_vid:-2}" = 2 ]; then
-			[ -n "$(uci -q get network.wan)" ] && uci set network.wan.device="$trunk.2"
-			[ -n "$(uci -q get network.wan6)" ] && uci set network.wan6.device="$trunk.2"
+			[ -n "$(uci -q get network.wan)" ] && uci set network.wan.device="$wan_trunk.2"
+			[ -n "$(uci -q get network.wan6)" ] && uci set network.wan6.device="$wan_trunk.2"
+			# A device section for the old WAN netdev (a cloned MAC, an
+			# MTU) moves with it. The DSA conduit such a section carries
+			# on the AX5400 means nothing on a VLAN, so it goes.
+			wan_device_follow() {
+				local name
+				config_get name "$1" name
+				[ -n "$cur_wan" ] && [ "$name" = "$cur_wan" ] || return 0
+				uci set "network.$1.name=$wan_trunk.2"
+				uci -q delete "network.$1.conduit"
+			}
+			config_load network
+			config_foreach wan_device_follow device
 		else
 			logger -t nss "keeping the existing WAN device $cur_wan (VLAN $wan_vid on the trunk); the default VTU is being rewritten to match, but tagged-vs-untagged on the WAN port is yours to set in nss.general.vtu"
 		fi

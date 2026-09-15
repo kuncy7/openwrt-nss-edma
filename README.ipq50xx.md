@@ -221,11 +221,11 @@ migrates an existing DSA-style network config once (`br-lan` ports →
 |---|---|---|
 | `enabled` | `1` | `0` = stay on the host stack (same topology, no firmware) |
 | `wifi_offload` | `1` | load ath11k with `nss_offload=1`, after the arm. Needs ath11k built with NSS support (the service warns if it is not). `0` = Wi-Fi on the host path. |
-| `fw_mask` | `0x2` | bitmask of GMACs to hand to the firmware; bit N = GMAC N, and every bit needs a netdev (`trunk` / `extra_ports`). `0x3` arms both; two GMACs have run on the Linksys SPNMX56 and MX6200 and the Xunison D50 (see *Porting*). |
+| `fw_mask` | `0x2` | bitmask of GMACs to hand to the firmware; bit N = GMAC N, and every bit needs a netdev (`trunk` / `extra_ports`). `0x3` arms both; two GMACs have run on the Linksys SPNMX56 and MX6200, the Xunison D50 and the Redmi AX5400 (see *Porting*). |
 | `vtu` | *(B3000 wiring on the B3000, empty elsewhere)* | VTU program for `qca8337-nss`; empty = VTU off, the switch stays one untagged LAN. Needed when WAN shares the trunk, and for every further VLAN - an ISP's tagged VLAN, a VLAN per SSID - which the switch drops unless it is listed (examples in *Porting*) |
 | `trunk` | `eth0` | the switch trunk netdev. `eth1` on a board whose GMAC0 has a netdev of its own - a WAN PHY (Xunison D50, Zyxel SCR50AXE) or a second link into the switch (Redmi AX5400, CMCC PZ-L8); `lan` on the MX6200, which has no switch. |
 | `trunk_if` | `1` | which GMAC the trunk is = its NSS phys_if. `0` where the switch hangs off GMAC0 (SPNMX56, AX6000) or there is no switch (MX6200). |
-| `extra_ports` | *(empty)* | other GMACs in use, as `<if>:<netdev>` entries - the D50's ethernet WAN is `0:wan`, the SPNMX56's 2.5G PHY `1:wan`. Named here, armed by `fw_mask`. |
+| `extra_ports` | *(empty)* | other GMACs in use, as `<if>:<netdev>` entries - the D50's ethernet WAN is `0:wan`, the SPNMX56's 2.5G PHY `1:wan`, the Redmi AX5400's second link into the switch `0:eth0` (WAN on `eth0.2`, LAN on `eth1.1`). Named here, armed by `fw_mask`. |
 | `fabric` | `qca8337` | `none` on a board with no switch: skips the qca8k unbind and the fabric module. |
 | `switch_dev` | `90000.mdio-1:11` | the switch's MDIO device, unbound from `qca8k` before the re-arm. `90000.mdio-1:18` on the I-O DATA WN-DAX3000GR and the Elecom WRC-X3000GS2 / GST2. |
 | `switch_args` | *(empty)* | further `qca8337-nss` parameters, passed verbatim (`cpu_port=`, `ports=`, `wake_phys=`, `bus_via=`) |
@@ -306,12 +306,18 @@ The board side is small. The parts, in order of effort:
    (`nss-dwmac.defaults`, keyed on `board_name`, started by George
    Moussalem). Run on the board: GL-B3000, Linksys MX2000, SPNMX56 and
    MX6200, Xunison D50, CMCC MR3000D-CI (wired plane and 5 GHz offload on
-   the table entry as written). Straight from the DTS, untested: Linksys
-   MX5500 and MR5500 (the MR5500 wiring loads, but its DMA has not started
-   yet), Xiaomi AX6000 and Redmi AX5400, Zyxel SCR50AXE, CMCC PZ-L8, I-O
-   DATA WN-DAX3000GR, Elecom WRC-X3000GS2 / GST2, Yuncore AX830 and AX850.
-   On those the settings apply themselves on first boot. Anything else logs
-   a line telling you to set them by hand.
+   the table entry as written), Redmi AX5400 (both CPU links: LAN on
+   `eth1.1`, WAN on `eth0.2`, Wi-Fi on the host). Straight from the DTS,
+   untested: Linksys MX5500 and MR5500, Xiaomi AX6000, Zyxel SCR50AXE,
+   CMCC PZ-L8, I-O DATA WN-DAX3000GR, Elecom WRC-X3000GS2 / GST2, Yuncore
+   AX830 and AX850. On those the settings apply themselves on first boot.
+   Anything else logs a line telling you to set them by hand.
+
+   The table applies once, on a config that has no `nss.general.topology`
+   yet; a sysupgrade that keeps settings keeps the old layout. An AX5400
+   already on the single-link layout (WAN on `eth1.2`) moves by hand:
+   `fw_mask=0x3`, `extra_ports='0:eth0'`, `switch_args` and `vtu` as in
+   the table, `network.wan.device` / `wan6.device` = `eth0.2`, reboot.
 
 3. **The switch.** Find your MDIO device names with
    `ls /sys/bus/mdio_bus/devices/` and set `bus_via` / `wake_phys` from them;

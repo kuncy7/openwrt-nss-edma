@@ -451,16 +451,20 @@ run. What it needed, all in the branch and measured on the board (2026-09-13):
   `ipq5018.dtsi`. Stock reserves 8 MiB for the same MP firmware family; the
   driver reports whatever is there as `heap_ddr_size` and the core boots
   and runs at full throughput in it. 8 MiB back on `MemTotal`.
-- **`qca-nss-pbuf.init` 256MB profile = QSDK's MP_256 values**
-  (`extra_pbuf_core0=800000 n2h_high_water_core0=16336
-  n2h_wifi_pool_buf=0`). The profile shipped before was QSDK's IPQ807x
-  `ap-ac02` one with a transposed digit; its 4096-buffer Wi-Fi pool is what
-  produced the OOM. The counts matter more than they look: every payload
-  the firmware holds is `alloc_skb(1984 + 64)` on the host, and on 64-bit
-  that is 2368 bytes with `skb_shared_info`, which kmalloc rounds up to
-  4096 - twice what the 32-bit stock kernel pays per buffer. Watch
-  `drv_nss_skb_count` in `/sys/kernel/debug/qca-nss-drv/stats/drv`
-  (~3250 idle, ~4500 after a load run), not `Slab`.
+- **`qca-nss-pbuf.init` 256MB profile = QSDK's MP_256 values on an
+  IPQ5018** (`extra_pbuf_core0=800000 n2h_high_water_core0=16336
+  n2h_wifi_pool_buf=0`, gated on `qcom,ipq5018` in the device tree's
+  compatible list). The profile shipped before was QSDK's IPQ807x
+  `ap-ac02` one with two digits transposed; its 4096-buffer Wi-Fi pool is
+  what produced the OOM. The script ships with `kmod-ath11k` on every
+  qualcommax target and picks the profile from `MemTotal` alone, so a
+  256 MB IPQ807x or IPQ60xx board keeps those earlier values. The counts
+  matter more than they look: every payload the firmware holds is
+  `alloc_skb(1984 + 64)` on the host, and on 64-bit that is 2368 bytes
+  with `skb_shared_info`, which kmalloc rounds up to 4096 - twice what
+  the 32-bit stock kernel pays per buffer. Watch `drv_nss_skb_count` in
+  `/sys/kernel/debug/qca-nss-drv/stats/drv` (~3250 idle, ~4500 after a
+  load run), not `Slab`.
 - **`coherent_pool=512K`** in the board DTS instead of the 2M every other
   board passes - only safe together with patch `0828` below. 2M costs
   three pools of 2 MiB, one of which doubles itself: 8 MiB.

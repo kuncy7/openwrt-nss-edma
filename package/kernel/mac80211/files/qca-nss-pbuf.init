@@ -30,6 +30,12 @@ get_num_cpus() {
   echo "${num_cpus:-1}"
 }
 
+# The SoC, from the device tree's compatible list (NUL-separated strings;
+# the board's own compatible comes first, the SoC's last).
+soc_is_ipq5018() {
+  tr '\0' '\n' 2> /dev/null < /proc/device-tree/compatible | grep -qx 'qcom,ipq5018'
+}
+
 apply_sysctl() {
   [ "$(sysctl -n -e dev.nss.general.redirect)" -eq 0 ] && /etc/init.d/qca-nss-ecm start
 
@@ -126,15 +132,22 @@ apply_nss_config() {
       ;;
       # 256MB profile
       #
-      # These are the values QSDK's own wifi script applies to a 256 MB
-      # IPQ5018 (the MP_256 device-tree marker, board family ap-mp*):
+      # Two sets of values, chosen by SoC. The profile is picked from
+      # MemTotal alone, and this script ships with kmod-ath11k on every
+      # qualcommax target, so a 256 MB IPQ807x or IPQ60xx board lands here
+      # as well: those keep the values this script has always applied
+      # (3100000 / 30258 / 4096 - QSDK's IPQ807x ap-ac02 profile with two
+      # digits transposed in the high-water mark, 30528; left as it is,
+      # nobody has run the corrected value on such a board).
+      #
+      # On an IPQ5018 the values are the ones QSDK's own wifi script
+      # applies to a 256 MB board of that SoC (the MP_256 device-tree
+      # marker, board family ap-mp*):
       #
       #   extra_pbuf_core0 = (n2h_high_water_core0 - 11720) * 160
       #
       # where 11720 is the firmware's built-in pbuf count and 160 the pbuf
-      # size. The profile this script shipped before (3100000 / 30258 /
-      # 4096) was QSDK's IPQ807x ap-ac02 profile with a digit transposed
-      # in the high-water mark (30528), not an IPQ5018 profile at all.
+      # size.
       #
       # Each buffer the firmware holds costs the host a kmalloc-4k object
       # (1984 payload + 64 pad + 320 skb_shared_info rounds to 4096 on
@@ -158,7 +171,11 @@ apply_nss_config() {
       # bottomed at 2 MB available with 2048. If a 256 MB board does drop
       # Wi-Fi frames under load, 2048 is the tested fallback.
     256 | 256m*)
-      extra_pbuf_core0=800000 n2h_high_water_core0=16336 n2h_wifi_pool_buf=0 apply_sysctl
+      if soc_is_ipq5018; then
+        extra_pbuf_core0=800000 n2h_high_water_core0=16336 n2h_wifi_pool_buf=0 apply_sysctl
+      else
+        extra_pbuf_core0=3100000 n2h_high_water_core0=30258 n2h_wifi_pool_buf=4096 apply_sysctl
+      fi
       ;;
   esac
 }

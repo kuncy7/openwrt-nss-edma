@@ -203,9 +203,14 @@ reason for the waiting:
   for the existing `eth0.<vid>` netdevs, so ordering against netifd stops
   mattering.
 
-If the takeover fails, the script exits and the box keeps running on the host
-path **with the same topology**. Every failed experiment during this work ended
-with a reachable router; that property is worth more than it sounds.
+If firmware takeover fails after successful switch setup, the box keeps running
+on the host path **with the same topology**. A switch setup failure is different:
+`qca8337-nss` attempts to block the wired ports to protect VLAN isolation, and the
+service loads host Wi-Fi for recovery. Remote access then depends on an already
+configured Wi-Fi connection; a freshly flashed device without that fallback may
+be unreachable over the network and need local recovery. This blocked state does
+not mean the router is bricked. Check `dmesg` for the switch setup error and correct
+the board/VLAN settings before retrying.
 
 ### Topology
 

@@ -48,7 +48,7 @@ wifi_load() {
 
 # qca8k did the SerDes/uniphy bring-up at boot; take the switch away from
 # it and re-arm the fabric for the VLAN trunk. Safe to call when already
-# unbound (a service restart) - the unbind write just fails quietly.
+# unbound (a service restart): a successfully loaded helper is left in place.
 #
 # Board wiring comes from uci (all optional; defaults = GL-B3000):
 #   nss.general.switch_dev   the switch's mdio device, to unbind from qca8k
@@ -73,6 +73,7 @@ switch_to_trunk() {
 		logger -t nss "no switch fabric on this board (nss.general.fabric=none), trunk is a plain PHY port"
 		return 0
 	fi
+	[ ! -d /sys/module/qca8337_nss ] || return 0
 
 	dev="$(uci -q get nss.general.switch_dev)"
 	[ -n "$dev" ] || dev="90000.mdio-1:11"
@@ -84,17 +85,15 @@ switch_to_trunk() {
 	args="$(uci -q get nss.general.switch_args)"
 
 	if [ -e "/sys/bus/mdio_bus/drivers/qca8k/$dev" ]; then
-		echo "$dev" > /sys/bus/mdio_bus/drivers/qca8k/unbind 2>/dev/null
+		echo "$dev" > /sys/bus/mdio_bus/drivers/qca8k/unbind || return 1
 		sleep 2
 	fi
 	# kmodloader's modprobe drops module parameters - insmod passes them.
 	# shellcheck disable=SC2086
 	if [ -n "$vtu" ]; then
-		insmod "/lib/modules/$(uname -r)/qca8337-nss.ko" vlans="$vtu" $args 2>/dev/null ||
-			modprobe qca8337-nss 2>/dev/null
+		insmod "/lib/modules/$(uname -r)/qca8337-nss.ko" vlans="$vtu" $args || return 1
 	else
-		insmod "/lib/modules/$(uname -r)/qca8337-nss.ko" $args 2>/dev/null ||
-			modprobe qca8337-nss 2>/dev/null
+		insmod "/lib/modules/$(uname -r)/qca8337-nss.ko" $args || return 1
 	fi
 }
 
@@ -103,7 +102,11 @@ start_service() {
 
 	. /lib/nss/functions.sh
 
-	switch_to_trunk
+	if ! switch_to_trunk; then
+		logger -p user.err -t nss "switch setup failed; refusing NSS takeover"
+		wifi_load 0
+		return 1
+	fi
 
 	wifi_offload="$(uci -q get nss.general.wifi_offload)"
 	[ "$wifi_offload" = "1" ] || wifi_offload=0

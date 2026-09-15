@@ -71,6 +71,9 @@ static unsigned int ports = 0x0f;
 module_param(ports, uint, 0444);
 MODULE_PARM_DESC(ports, "Bitmask of switch ports to enable, CPU port included (default 0x0f = ports 0-3)");
 
+#define G8_MASK_CTRL		0x000
+#define   G8_DEVICE_ID		GENMASK(15, 8)
+#define   G8_ID_QCA8337		0x13
 #define G8_PORT_STATUS(i)	(0x07c + (i) * 4)
 #define G8_PORT_HDR_CTRL(i)	(0x9c + (i) * 4)
 #define G8_PORT_LOOKUP(i)	(0x660 + (i) * 0xc)
@@ -218,6 +221,18 @@ static int fixup_switch(void)
 		return -ENODEV;
 	bus = to_phy_device(d)->mdio.bus;
 
+	/* Identify the chip before any configuration or failure-path writes. */
+	status = g8_read(bus, G8_MASK_CTRL);
+	if (g8_error) {
+		ret = g8_error;
+		goto out;
+	}
+	pr_info("qca8337-nss: chip id reg0=0x%08x\n", status);
+	if (FIELD_GET(G8_DEVICE_ID, status) != G8_ID_QCA8337) {
+		ret = -ENODEV;
+		goto out;
+	}
+
 	/* qca8k's isolated topology remains until all ports are disabled. */
 	ret = g8_block_ports(bus);
 	if (ret)
@@ -254,23 +269,30 @@ static int fixup_switch(void)
 		 FIELD_PREP(GENMASK(22, 16), ports) |
 		 FIELD_PREP(GENMASK(14, 8), ports) |
 		 FIELD_PREP(GENMASK(6, 0), ports));
-	g8_write(bus, G8_ATU_FUNC, G8_ATU_BUSY | G8_ATU_CMD_FLUSH);
-	for (p = 0; p < 20 && (g8_read(bus, G8_ATU_FUNC) & G8_ATU_BUSY); p++)
-		usleep_range(100, 200);
-	if (g8_error || (g8_read(bus, G8_ATU_FUNC) & G8_ATU_BUSY)) {
-		ret = g8_error ? g8_error : -ETIMEDOUT;
-		goto failed;
-	}
+	status = g8_read(bus, G8_GLOBAL_FW_CTRL1);
 	if (g8_error) {
 		ret = g8_error;
 		goto failed;
 	}
+	pr_info("qca8337-nss: fw_ctrl1=0x%08x\n", status);
+	g8_write(bus, G8_ATU_FUNC, G8_ATU_BUSY | G8_ATU_CMD_FLUSH);
+	for (p = 0; p < 20 && (g8_read(bus, G8_ATU_FUNC) & G8_ATU_BUSY); p++)
+		usleep_range(100, 200);
+	status = g8_read(bus, G8_ATU_FUNC);
+	if (g8_error || (status & G8_ATU_BUSY)) {
+		ret = g8_error ? g8_error : -ETIMEDOUT;
+		pr_err("qca8337-nss: ARL flush failed (%d)\n", ret);
+		goto failed;
+	}
+	pr_info("qca8337-nss: ARL flushed\n");
 	ret = fixup_wake_phys();
 	if (ret)
 		goto failed;
 
 	/* The requested forwarding policy is installed before any MAC is enabled. */
 	for (p = 0; p < G8_NPORTS; p++) {
+		u32 lookup, header;
+
 		if (!(ports & BIT(p)))
 			continue;
 		status = BIT(2) | BIT(3);
@@ -281,6 +303,15 @@ static int fixup_switch(void)
 				(unsigned int)p == cpu_port ? BIT(2) | BIT(3) : BIT(9));
 		if (ret)
 			goto failed;
+		status = g8_read(bus, G8_PORT_STATUS(p));
+		lookup = g8_read(bus, G8_PORT_LOOKUP(p));
+		header = g8_read(bus, G8_PORT_HDR_CTRL(p));
+		if (g8_error) {
+			ret = g8_error;
+			goto failed;
+		}
+		pr_info("qca8337-nss: port%d status=0x%08x lookup=0x%08x hdr=0x%08x\n",
+			p, status, lookup, header);
 	}
 	pr_info("qca8337-nss: verified fabric enabled: cpu=%u ports=0x%02x\n",
 		cpu_port, ports);
@@ -290,6 +321,7 @@ failed:
 	/* MDIO failure can prevent blocking too; do not retry with defaults. */
 	g8_block_ports(bus);
 	pr_err("qca8337-nss: fabric setup failed (%d), port blocking attempted\n", ret);
+out:
 	put_device(d);
 	return ret;
 }
@@ -499,8 +531,7 @@ static int fixup_wake_phys(void)
 		d = bus_find_device_by_name(&mdio_bus_type, NULL, tok);
 		if (!d) {
 			pr_warn("qca8337-nss: wake: no mdio dev %s\n", tok);
-			ret = -ENODEV;
-			break;
+			continue;
 		}
 		phydev = to_phy_device(d);
 		bmcr = phy_read(phydev, MII_BMCR);
@@ -513,6 +544,13 @@ static int fixup_wake_phys(void)
 			(bmcr & BMCR_PDOWN) ? " (POWER-DOWN)" : "");
 		ret = phy_write(phydev, MII_BMCR,
 			  (bmcr & ~BMCR_PDOWN) | BMCR_ANENABLE | BMCR_ANRESTART);
+		if (ret >= 0) {
+			bmcr = phy_read(phydev, MII_BMCR);
+			if (bmcr < 0)
+				ret = bmcr;
+			else
+				pr_info("qca8337-nss: %s woken, BMCR=0x%04x\n", tok, bmcr);
+		}
 		put_device(d);
 		if (ret < 0)
 			break;

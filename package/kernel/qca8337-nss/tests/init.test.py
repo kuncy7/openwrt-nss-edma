@@ -14,12 +14,14 @@ shim = r'''
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <stdarg.h>
 typedef uint32_t u32;
 typedef uint16_t u16;
 typedef uint8_t u8;
 #define BIT(n) (1U << (n))
 #define GENMASK(h,l) ((~0U << (l)) & (~0U >> (31-(h))))
 #define FIELD_PREP(mask,val) (((u32)(val) << __builtin_ctz(mask)) & (mask))
+#define FIELD_GET(mask,val) (((u32)(val) & (mask)) >> __builtin_ctz(mask))
 #define module_param(...)
 #define MODULE_PARM_DESC(...)
 #define MODULE_LICENSE(...)
@@ -29,9 +31,17 @@ typedef uint8_t u8;
 #define __init
 #define __exit
 #define GFP_KERNEL 0
-#define pr_info(...) ((void)0)
-#define pr_warn(...) ((void)0)
-#define pr_err(...) ((void)0)
+static char messages[16384];
+static void test_log(const char *format, ...) {
+    va_list args;
+    va_start(args,format);
+    size_t used=strlen(messages);
+    vsnprintf(messages+used,sizeof(messages)-used,format,args);
+    va_end(args);
+}
+#define pr_info(...) test_log(__VA_ARGS__)
+#define pr_warn(...) test_log(__VA_ARGS__)
+#define pr_err(...) test_log(__VA_ARGS__)
 #define usleep_range(...) ((void)0)
 #define MII_BMCR 0
 #define BMCR_PDOWN BIT(11)
@@ -53,10 +63,12 @@ static void set32(unsigned reg,u32 value) { words[reg/2]=value; words[reg/2+1]=v
 static int fault(void) { return ++operations == fail_at; }
 static bool policy_ready(void);
 static int missing_device;
+static int config_writes, phy_reads, phy_writes;
 static int mdiobus_write(struct mii_bus *bus,int phy,int r,u16 value) {
     (void)bus;
     if(fault()) return -EIO;
     if(phy==0x18 && r==0) { page=value; return 0; }
+    config_writes++;
     unsigned addr=((unsigned)page<<9)|((phy&7)<<6)|(r<<1);
     if(drop_lookup && addr==0x66c && (value&0x7f)) return 0;
     assert(addr/2<4096); words[addr/2]=value;
@@ -88,8 +100,8 @@ static struct device *bus_find_device_by_name(void *a,void *b,const char *c) {
 }
 static struct phy_device *to_phy_device(struct device *d) { (void)d;return &fake_phy; }
 static void put_device(struct device *d) { (void)d; }
-static int phy_read(struct phy_device *p,int reg) { (void)p;(void)reg;return fault()?-EIO:0; }
-static int phy_write(struct phy_device *p,int reg,int val) { (void)p;(void)reg;(void)val;return fault()?-EIO:0; }
+static int phy_read(struct phy_device *p,int reg) { (void)p;(void)reg;phy_reads++;return fault()?-EIO:0; }
+static int phy_write(struct phy_device *p,int reg,int val) { (void)p;(void)reg;(void)val;phy_writes++;return fault()?-EIO:0; }
 static char *kstrdup(const char *s,int flags) { (void)flags;return ++allocations==alloc_fail?NULL:strdup(s); }
 #define kfree free
 static int kstrtouint(const char *s,unsigned base,unsigned *result) {
@@ -143,6 +155,8 @@ static bool policy_ready(void) {
 }
 static void reset(void) {
     memset(words,0,sizeof(words));memset(vtu,0,sizeof(vtu));
+    messages[0]=0;config_writes=phy_reads=phy_writes=0;
+    set32(0,0x00001302);
     fail_at=operations=alloc_fail=allocations=unsafe_enable=g8_error=page=0;
     stuck_vtu=full_vtu=stuck_atu=drop_lookup=drop_vtu=missing_device=0;
     ports=current->port_mask;cpu_port=current->cpu;switch_fixup=true;
@@ -159,8 +173,15 @@ int main(void) {
     for(unsigned layout=0;layout<sizeof(layouts)/sizeof(layouts[0]);layout++) {
         current=&layouts[layout];reset();
         assert(qca8337_nss_init()==0);assert(policy_ready());assert(!unsafe_enable);
+        assert(strstr(messages,"chip id reg0=0x00001302"));
+        assert(strstr(messages,"fw_ctrl1=0x"));assert(strstr(messages,"ARL flushed"));
+        assert(strstr(messages,"phy4 woken, BMCR=0x"));
         int count=operations;
         for(int p=0;p<7;p++) {
+            if(ports&BIT(p)) {
+                char port_log[32];snprintf(port_log,sizeof(port_log),"port%d status=0x",p);
+                assert(strstr(messages,port_log));
+            }
             if(!(ports&BIT(p))) assert(!(reg32(G8_PORT_STATUS(p))&(12|BIT(9))));
             else if((unsigned)p==cpu_port) assert((reg32(G8_PORT_STATUS(p))&0x4f)==0x4e);
             else assert(reg32(G8_PORT_STATUS(p))&BIT(9));
@@ -185,7 +206,22 @@ int main(void) {
         reset();vlans=(char *)bad[n];assert(qca8337_nss_init()<0);assert(!unsafe_enable);assert_blocked();
     }
     reset();missing_device=1;bus_via="missing";assert(qca8337_nss_init()==-ENODEV);assert(!operations);
-    reset();missing_device=1;wake_phys="missing";assert(qca8337_nss_init()==-ENODEV);assert_blocked();
+    /* Identification failure must not run even the port-blocking writes. */
+    const u32 wrong_ids[]={0,0x00001202,0xffffffff};
+    for(unsigned n=0;n<sizeof(wrong_ids)/sizeof(wrong_ids[0]);n++) {
+        reset();set32(0,wrong_ids[n]);set32(G8_PORT_STATUS(1),0xdeadbeef);
+        assert(qca8337_nss_init()==-ENODEV);assert(!config_writes);assert(!phy_writes);
+        assert(reg32(G8_PORT_STATUS(1))==0xdeadbeef);
+    }
+    for(int n=1;n<=3;n++) {
+        reset();fail_at=n;assert(qca8337_nss_init()==-EIO);assert(!config_writes);
+    }
+    reset();set32(0,0xabcd13ff);assert(qca8337_nss_init()==0);
+    reset();missing_device=1;wake_phys="missing,phy0";
+    assert(qca8337_nss_init()==0);assert(policy_ready());
+    assert(strstr(messages,"wake: no mdio dev missing"));
+    assert(strstr(messages,"phy0 woken, BMCR="));assert(phy_reads==2);assert(phy_writes==1);
+    reset();missing_device=1;wake_phys="missing";assert(qca8337_nss_init()==0);assert(policy_ready());
     reset();wake_phys="";assert(qca8337_nss_init()==0);assert(policy_ready());
     reset();ports&=~BIT(6);assert(qca8337_nss_init()==0);assert(policy_ready());
     reset();switch_fixup=false;assert(qca8337_nss_init()==0);assert_blocked();
@@ -199,7 +235,7 @@ int main(void) {
     assert(reg32(G8_PORT_LOOKUP(1))==0x14005c);
     assert(reg32(G8_PORT_LOOKUP(2))==0x140340);
     assert(reg32(G8_PORT_LOOKUP(6))==0x140304);
-    puts("PASS: table/readback faults, invalid maps, missing devices, empty wake list, CPU auto-inclusion, wake-only and partial maps");
+    puts("PASS: chip ID guard without configuration writes, missing PHY warning/continuation, diagnostics, table/readback faults, invalid maps and compatibility modes");
     return 0;
 }
 

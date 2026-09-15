@@ -229,6 +229,8 @@ static int fixup_switch(void)
 	}
 	pr_info("qca8337-nss: chip id reg0=0x%08x\n", status);
 	if (FIELD_GET(G8_DEVICE_ID, status) != G8_ID_QCA8337) {
+		pr_err("qca8337-nss: not a QCA8337 (id 0x%02x)\n",
+		       (unsigned int)FIELD_GET(G8_DEVICE_ID, status));
 		ret = -ENODEV;
 		goto out;
 	}

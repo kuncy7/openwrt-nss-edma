@@ -240,8 +240,16 @@ the user ports off, and `fw_mask` from what netifd brought up: the conduit
 plus any GMAC that is not a conduit and is up (a WAN PHY of its own), never a
 second CPU port DSA does not use or a GMAC nothing configured.
 `nss-dwmac-probe` prints that view; `trunk`, `trunk_if`, `extra_ports` and
-`fw_mask` in uci still override it if a board needs that. The VTU and the
-`qca8337-nss` parameters have no meaning here. A tagged ISP VLAN or a VLAN
+`fw_mask` in uci still override it if a board needs that. One thing first boot
+does change: a board table that splits the DSA ports across both CPU links
+(the Redmi AX5400 and the CMCC PZ-L8 put `lan1`-`lan3` on `eth1` and `wan` on
+`eth0`) is consolidated onto the link that carries most of them, because only
+the armed conduit's ports get a firmware VLAN interface - and on the AX5400
+the odd link is GMAC0 into switch port 5, whose RX is dead in mainline as well
+(openwrt#24696). A port left on the other link is not an error, it just stays
+on the host path; the service says which ports and where in the log at boot.
+An even split is left alone: nothing on the board says which link works.
+The VTU and the `qca8337-nss` parameters have no meaning here. A tagged ISP VLAN or a VLAN
 for an SSID is plain netifd (`wan.35`, `lan1.10`): the kernel installs it in
 the switch. To try it on a board that migrated to the trunk on another image:
 `uci set nss.general.topology='dsa'`, put the network config back on the DSA

@@ -63,6 +63,8 @@ ra74 = {
     'network.wan6': 'interface', 'network.wan6.device': 'wan',
     'network.cfg1': 'device', 'network.cfg1.name': 'lan1', 'network.cfg1.conduit': 'eth1',
     'network.cfg2': 'device', 'network.cfg2.name': 'wan', 'network.cfg2.conduit': 'eth0',
+    'network.cfg4': 'device', 'network.cfg4.name': 'lan2', 'network.cfg4.conduit': 'eth1',
+    'network.cfg5': 'device', 'network.cfg5.name': 'lan3', 'network.cfg5.conduit': 'eth1',
 }
 b3000 = {k: v for k, v in ra74.items() if not k.startswith('network.cfg')}
 b3000['network.@device[0].ports'] = 'lan1 lan2'
@@ -73,15 +75,30 @@ with tempfile.TemporaryDirectory(prefix='nss-dwmac-defaults-') as directory:
     (tmp / 'uci').chmod(0o755)
     (tmp / 'defaults.sh').write_text(text.replace('. /lib/functions.sh', functions))
 
-    def run(board, state):
+    # The dsa branch reads two sysfs trees: the switch drivers' device lists
+    # (a bound switch is the whole test) and the radios' firmware memory mode.
+    # Point both at this directory so the branch can be driven from here.
+    mdio = tmp / 'mdio' / 'qca8k'
+    mdio.mkdir(parents=True)
+    (mdio / '90000.mdio-1:11').touch()
+    (tmp / 'dt').mkdir()
+    (tmp / 'defaults-dsa.sh').write_text(
+        text.replace('. /lib/functions.sh', functions)
+            .replace('/sys/bus/mdio_bus/drivers/', str(tmp / 'mdio') + '/')
+            .replace('/sys/firmware/devicetree/base/', str(tmp / 'dt') + '/'))
+
+    def run(board, state, script='defaults.sh'):
         state_file = tmp / 'state.json'
         state_file.write_text(json.dumps(state))
         env = dict(os.environ, TEST_BOARD=board, UCI_STATE=str(state_file),
                    PATH=str(tmp) + ':' + os.environ['PATH'])
-        done = subprocess.run([shell, str(tmp / 'defaults.sh')], env=env,
+        done = subprocess.run([shell, str(tmp / script)], env=env,
                               capture_output=True, text=True)
         assert done.returncode == 0, (board, done.stderr)
         return json.loads(state_file.read_text())
+
+    def run_dsa(board, state):
+        return run(board, state, 'defaults-dsa.sh')
 
     def check(result, expected, board):
         for key, value in expected.items():
@@ -189,5 +206,39 @@ with tempfile.TemporaryDirectory(prefix='nss-dwmac-defaults-') as directory:
     assert 'network.port_wan.proto' in r
     assert not [k for k in r if k.startswith('network.wan')], ('ex511 no wan', 'wan reappeared')
 
+    # With the switch driver bound the dsa topology is picked and the trunk
+    # table never runs. On the AX5400 board.d splits the ports across both CPU
+    # links - lan1-3 on eth1, wan on eth0 - and this topology cannot keep that:
+    # only the armed conduit's ports reach the firmware, and on this board the
+    # odd link is the dead-RX GMAC0 (openwrt#24696). The WAN port follows the
+    # majority onto eth1; nothing else about the config is touched.
+    r = run_dsa('xiaomi,redmi-ax5400', ra74)
+    check(r, {'nss.general.topology': 'dsa', 'network.cfg2.conduit': 'eth1',
+              'network.cfg1.conduit': 'eth1', 'network.cfg4.conduit': 'eth1',
+              'network.cfg5.conduit': 'eth1', 'network.cfg2.name': 'wan',
+              'network.wan.device': 'wan', 'network.@device[0].ports': 'lan1 lan2 lan3'}, 'ra74 dsa')
+    for key in ('nss.general.vtu', 'nss.general.trunk', 'nss.general.switch_args',
+                'nss.general.fw_mask'):
+        assert key not in r, ('ra74 dsa', key, r[key])
+    assert run_dsa('xiaomi,redmi-ax5400', r) == r, 'second run must change nothing'
+
+    # A board with no conduit assignments at all (the GL-B3000): the branch
+    # leaves the network config exactly as netifd generated it.
+    r = run_dsa('glinet,gl-b3000', b3000)
+    check(r, {'nss.general.topology': 'dsa', 'network.@device[0].ports': 'lan1 lan2',
+              'network.wan.device': 'wan'}, 'b3000 dsa')
+    assert not [k for k in r if k.endswith('.conduit')], ('b3000 dsa', 'a conduit appeared')
+
+    # One port on each link: there is nothing here to say which link works, so
+    # both conduits are left as they are.
+    even = dict(b3000, **{'network.cfg1': 'device', 'network.cfg1.name': 'lan1',
+                          'network.cfg1.conduit': 'eth1',
+                          'network.cfg2': 'device', 'network.cfg2.name': 'wan',
+                          'network.cfg2.conduit': 'eth0'})
+    r = run_dsa('cmcc,pz-l8', even)
+    check(r, {'nss.general.topology': 'dsa', 'network.cfg1.conduit': 'eth1',
+              'network.cfg2.conduit': 'eth0'}, 'even split dsa')
+
 print('PASS: RA74 dual link, rerun, Wi-Fi choice kept, tagged WAN, no wan6, migrated config, '
-      'B3000 MAC clone, D50 LAN-only trunk, EX511 headerless switch')
+      'B3000 MAC clone, D50 LAN-only trunk, EX511 headerless switch, '
+      'dsa conduit consolidation (AX5400, B3000, even split)')

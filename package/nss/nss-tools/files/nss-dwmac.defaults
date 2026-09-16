@@ -274,6 +274,65 @@ if c3po_switch_bound; then
 		fi
 	fi
 	[ -n "$(uci -q get nss.general.fw_logbuf)" ] || uci set nss.general.fw_logbuf='256'
+	# board.d may split the DSA ports across two CPU links: the Redmi AX5400
+	# and the CMCC PZ-L8 put lan1-3 on eth1 and the WAN port on eth0. This
+	# topology cannot keep that split. The plane arms one conduit and
+	# qca-dsa-nss hangs a firmware VLAN interface off that conduit's
+	# interface number, so a port on the other link is host-only; on the
+	# AX5400 the odd link is also GMAC0 (PHY to PHY into port 5), whose RX
+	# is dead in mainline too (openwrt#24696, worked around there by
+	# dropping the same conduit assignments). Put every port that names a
+	# conduit on the one that already carries most of them - the same link
+	# nss_dsa_conduit() picks at boot. A tie is left alone: with one port on
+	# each link there is nothing here to say which of them works.
+	dsa_conduit_vote() {
+		local c
+		config_get c "$1" conduit
+		[ -n "$c" ] && conduit_votes="$conduit_votes $c"
+		return 0
+	}
+	dsa_conduit_move() {
+		local name c
+		config_get name "$1" name
+		config_get c "$1" conduit
+		[ -n "$c" ] && [ "$c" != "$main_conduit" ] || return 0
+		uci set "network.$1.conduit=$main_conduit"
+		logger -t nss "topology dsa: $name moves from conduit $c to $main_conduit - the plane arms one CPU link and only its ports reach the firmware"
+	}
+	conduit_votes=''
+	main_conduit=''
+	tied=0
+	config_load network
+	config_foreach dsa_conduit_vote device
+	if [ -n "$conduit_votes" ]; then
+		best=0
+		total=0
+		for c in $conduit_votes; do
+			total=$((total + 1))
+			n=0
+			for d in $conduit_votes; do
+				[ "$d" = "$c" ] && n=$((n + 1))
+			done
+			if [ "$n" -gt "$best" ]; then
+				best=$n
+				main_conduit="$c"
+				tied=0
+			elif [ "$n" = "$best" ] && [ "$c" != "$main_conduit" ]; then
+				tied=1
+			fi
+		done
+		if [ "$best" = "$total" ]; then
+			main_conduit=''
+		elif [ "$tied" = 1 ]; then
+			logger -t nss "topology dsa: the DSA ports are split evenly between two CPU links - leaving the conduits alone, set them by hand if only one link works"
+			main_conduit=''
+		fi
+	fi
+	if [ -n "$main_conduit" ]; then
+		config_load network
+		config_foreach dsa_conduit_move device
+	fi
+
 	uci set nss.general.topology='dsa'
 	uci commit nss
 	logger -t nss "topology dsa: a tag_8021q-capable switch found, the ports stay with DSA and the wiring is read off the board"

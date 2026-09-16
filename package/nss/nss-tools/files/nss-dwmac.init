@@ -111,7 +111,7 @@ switch_to_trunk() {
 # ports off (nss_dsa_conduit), and a board with no switch at all has
 # nothing to switch. nss.general.trunk still overrides the conduit.
 switch_to_8021q() {
-	local trunk tagging cur want
+	local trunk tagging cur want other stray port up
 
 	trunk="$(uci -q get nss.general.trunk)"
 	if [ -z "$trunk" ]; then
@@ -122,6 +122,24 @@ switch_to_8021q() {
 		logger -t nss "topology dsa: no DSA switch on this board - the GMACs go to the firmware as they are"
 		return 0
 	fi
+	# Ports left on another CPU link are invisible to the firmware:
+	# qca-dsa-nss hangs its VLAN interfaces off this conduit's interface
+	# number alone. The first-boot defaults put every port on one link, so
+	# this is about a board table that splits them (the AX5400 and the
+	# PZ-L8 do) on a config that predates that, or an admin's own split.
+	for other in /sys/class/net/*; do
+		[ -d "$other/dsa" ] || continue
+		other="${other##*/}"
+		[ "$other" != "$trunk" ] || continue
+		stray=''
+		for up in "/sys/class/net/$other"/upper_*; do
+			[ -e "$up" ] || continue
+			port="${up##*/upper_}"
+			[ -n "$(cat "/sys/class/net/$port/phys_switch_id" 2>/dev/null)" ] || continue
+			stray="$stray $port"
+		done
+		[ -n "$stray" ] && logger -t nss "topology dsa:$stray on conduit $other, not $trunk - those ports stay on the host path (set network.<device>.conduit=$trunk to move them)"
+	done
 	tagging="/sys/class/net/$trunk/dsa/tagging"
 	cur="$(cat "$tagging" 2>/dev/null)"
 	if [ -z "$cur" ]; then

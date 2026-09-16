@@ -206,7 +206,17 @@ define Device/linksys_mr5500
 		kmod-ath11k-pci \
 		ath11k-firmware-qcn9074 \
 		ipq-wifi-linksys_mr5500 \
-		kmod-usb-ledtrig-usbport
+		block-mount \
+		kmod-fs-exfat \
+		kmod-fs-ntfs3 \
+		kmod-fs-vfat \
+		kmod-nls-cp437 \
+		kmod-nls-iso8859-1 \
+		kmod-nls-utf8 \
+		kmod-usb-ledtrig-usbport \
+		kmod-usb-storage \
+		kmod-usb-storage-uas \
+		usbutils
 endef
 TARGET_DEVICES += linksys_mr5500
 
@@ -292,10 +302,24 @@ define Device/tplink_archer-ax55-v1
 	PAGESIZE := 2048
 	IMAGE_SIZE := 43008k
 	NAND_SIZE := 128m
+	# The USB socket is host-side only in DEFAULT_PACKAGES (kmod-usb3 and the
+	# dwc3 glue), which leaves an image where a stick enumerates and nothing
+	# can read it. This branch is built to be run on the board, so the
+	# storage half ships with it.
 	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		ipq-wifi-tplink_archer-ax55-v1 \
 		kmod-dsa-rtl8365mb \
-		kmod-usb-ledtrig-usbport
+		block-mount \
+		kmod-fs-exfat \
+		kmod-fs-ntfs3 \
+		kmod-fs-vfat \
+		kmod-nls-cp437 \
+		kmod-nls-iso8859-1 \
+		kmod-nls-utf8 \
+		kmod-usb-ledtrig-usbport \
+		kmod-usb-storage \
+		kmod-usb-storage-uas \
+		usbutils
 ifneq ($(CONFIG_TARGET_ROOTFS_INITRAMFS),)
 ifeq ($(IB),)
 	ARTIFACTS := initramfs-factory.ubi

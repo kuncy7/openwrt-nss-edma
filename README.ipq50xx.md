@@ -150,6 +150,13 @@ CONFIG_NSS_DRV_WIFIOFFLOAD_ENABLE=y
 CONFIG_NSS_DRV_WIFI_EXT_VDEV_ENABLE=y
 ```
 
+The two boards here with a USB socket - the TP-Link Archer AX55 v1 and the
+Linksys MR5500 - also carry the storage half of USB in their
+`DEVICE_PACKAGES` (`kmod-usb-storage`, `-uas`, vfat/exfat/ntfs3 with their
+code pages, `block-mount`, `usbutils`). The target's defaults only bring the
+host controller, which leaves an image where a stick enumerates and nothing
+on it can be read.
+
 Do **not** override the ath11k firmware with files from a stock image. The
 package's `WLAN.HK.2.7.0.1` is the one that runs stably here; the stock
 `2.9.r4` blob makes the internal 2.4 GHz radio's Q6 assert (`PHY0M3`) about

@@ -23,6 +23,12 @@ case "$FIRMWARE" in
 		ath11k_set_macflag
 		ath11k_remove_regdomain
 		;;
+	cudy,p5)
+		caldata_extract "0:art" 0x1000 0x20000
+		wlan_mac=$(get_mac_binary "$(find_mtd_chardev bdinfo)" 0xde00)
+		ath11k_patch_mac "$wlan_mac" 0
+		ath11k_set_macflag
+		;;
 	elecom,wrc-x3000gs2|\
 	elecom,wrc-x3000gst2|\
 	iodata,wn-dax3000gr|\
@@ -108,6 +114,12 @@ case "$FIRMWARE" in
 		wlan_mac=$(mtd_get_mac_binary 0:art 18)
 		ath11k_patch_mac $wlan_mac 0
 		ath11k_remove_regdomain
+		ath11k_set_macflag
+		;;
+	cudy,p5)
+		caldata_extract "0:art" 0x26800 0x20000
+		wlan_mac=$(get_mac_binary "$(find_mtd_chardev bdinfo)" 0xde00)
+		ath11k_patch_mac "$(macaddr_add "$wlan_mac" 2)" 0
 		ath11k_set_macflag
 		;;
 	elecom,wrc-x3000gs2|\

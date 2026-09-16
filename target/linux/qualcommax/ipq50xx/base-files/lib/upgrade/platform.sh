@@ -3,7 +3,7 @@
 PART_NAME=firmware
 REQUIRE_IMAGE_METADATA=1
 
-RAMFS_COPY_BIN='dumpimage fw_printenv fw_setenv head seq'
+RAMFS_COPY_BIN='cmp dumpimage fw_printenv fw_setenv head seq'
 RAMFS_COPY_DATA='/etc/fw_env.config /var/lock/fw_printenv.lock'
 
 xiaomi_initramfs_prepare() {
@@ -52,6 +52,81 @@ remove_oem_ubi_volume() {
 	fi
 }
 
+cudy_p5_set_bootslot() {
+	local bootconfig_idx
+	local bootconfig1_idx
+	local image="/tmp/cudy-p5-bootconfig.bin"
+	local verify="/tmp/cudy-p5-bootconfig.verify"
+	local idx
+
+	bootconfig_idx="$(find_mtd_index "0:bootconfig")"
+	bootconfig1_idx="$(find_mtd_index "0:bootconfig1")"
+
+	if [ -z "$bootconfig_idx" ] || [ -z "$bootconfig1_idx" ]; then
+		echo "cannot find Cudy P5 bootconfig partitions"
+		return 1
+	fi
+
+	# Preserve the complete 256 KiB partition, including any unknown data
+	# outside the 336-byte Qualcomm bootconfig structure.
+	dd if="/dev/mtd$bootconfig_idx" of="$image" bs=128k count=2 2>/dev/null || {
+		echo "failed to read bootconfig"
+		return 1
+	}
+
+	validate_bootconfig_magic "$image" || return 1
+	set_bootconfig_primaryboot "$image" rootfs 0 || return 1
+
+	if [ "$(get_bootconfig_primaryboot "$image" rootfs)" != "0" ]; then
+		echo "failed to prepare rootfs_1 boot selection"
+		return 1
+	fi
+
+	# Update and verify the redundant copy first, then the primary copy.
+	for idx in "$bootconfig1_idx" "$bootconfig_idx"; do
+		mtd write "$image" "/dev/mtd$idx" 2>/dev/null || {
+			echo "failed to write /dev/mtd$idx"
+			return 1
+		}
+
+		dd if="/dev/mtd$idx" of="$verify" bs=128k count=2 2>/dev/null || {
+			echo "failed to read back /dev/mtd$idx"
+			return 1
+		}
+
+		cmp -s "$image" "$verify" || {
+			echo "bootconfig verification failed for /dev/mtd$idx"
+			return 1
+		}
+	done
+
+	rm -f "$image" "$verify"
+	return 0
+}
+
+cudy_p5_do_upgrade() {
+	# The DTS exposes the physical rootfs_1 slot as "rootfs" because
+	# stock U-Boot hard-codes ubi.mtd=rootfs in the kernel command line.
+	CI_UBIPART="rootfs"
+
+	remove_oem_ubi_volume ubi_rootfs
+	sync
+
+	if ! nand_do_flash_file "$1"; then
+		echo "failed to write OpenWrt rootfs slot"
+		nand_do_upgrade_failed
+		return 1
+	fi
+
+	if ! cudy_p5_set_bootslot; then
+		echo "OpenWrt rootfs slot was written, but boot slot selection failed"
+		nand_do_upgrade_failed
+		return 1
+	fi
+
+	nand_do_upgrade_success
+}
+
 linksys_bootconfig_set_primaryboot() {
 	local partname=$1
 	local tempfile
@@ -66,7 +141,7 @@ linksys_bootconfig_set_primaryboot() {
 	# No need to cleanup as files in /tmp will be removed upon reboot
 	tempfile=/tmp/mtd"$mtdidx".bin
 	dd if=/dev/mtd"$mtdidx" of="$tempfile" bs=1 count=336 2>/dev/null
-	[ $? -ne 0 ] || [ ! -f "$tempfile" ]&& {
+	[ $? -ne 0 ] || [ ! -f "$tempfile" ] && {
 		echo "failed to create a temp copy of /dev/mtd$mtdidx"
 		return 1
 	}
@@ -76,7 +151,7 @@ linksys_bootconfig_set_primaryboot() {
 		echo "failed to toggle primaryboot on 0:HLOS part"
 		return 1
 	}
-	
+
 	set_bootconfig_primaryboot "$tempfile" "rootfs" $2
 	[ $? -ne 0 ] && {
 		echo "failed to toggle primaryboot for rootfs part"
@@ -271,7 +346,14 @@ linksys_mx_pre_upgrade() {
 }
 
 platform_check_image() {
-	return 0;
+	case "$(board_name)" in
+	cudy,p5)
+		nand_do_platform_check "$(board_name)" "$1"
+		;;
+	*)
+		return 0
+		;;
+	esac
 }
 
 platform_pre_upgrade() {
@@ -284,6 +366,9 @@ platform_pre_upgrade() {
 
 platform_do_upgrade() {
 	case "$(board_name)" in
+	cudy,p5)
+		cudy_p5_do_upgrade "$1"
+		;;
 	cmcc,mr3000d-ci|\
 	cmcc,pz-l8|\
 	cmcc,rax3000q|\

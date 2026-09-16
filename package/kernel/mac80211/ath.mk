@@ -427,7 +427,7 @@ define KernelPackage/ath11k/config
             # shared by every board in a multi-device image, so such a
             # build picks it by hand rather than losing RX descriptors
             # on its 512 MB members the moment a 256 MB board is ticked.
-            default ATH11K_MEM_PROFILE_256M if TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2
+            default ATH11K_MEM_PROFILE_256M if TARGET_qualcommax_ipq50xx_DEVICE_cudy_p5 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2
             default ATH11K_MEM_PROFILE_1G
             help
             	This option allows you to select the memory profile.

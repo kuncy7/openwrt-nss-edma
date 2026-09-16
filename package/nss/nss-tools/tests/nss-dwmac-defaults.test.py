@@ -121,6 +121,23 @@ with tempfile.TemporaryDirectory(prefix='nss-dwmac-defaults-') as directory:
     assert 'network.cfg2.conduit' not in r
     assert run('xiaomi,redmi-ax5400', r) == r, 'second run must change nothing'
 
+    # Cudy P5: the same two CPU links, but LAN uses ports 1-3 and WAN port 4.
+    r = run('cudy,p5', ra74)
+    check(r, {
+        'nss.general.fw_mask': '0x3', 'nss.general.trunk': 'eth1',
+        'nss.general.trunk_if': '1', 'nss.general.extra_ports': '0:eth0',
+        'nss.general.vtu': '1:6t,1u,2u,3u;2:5t,4u',
+        'nss.general.switch_args': 'cpu_port=6 ports=0x7e wake_phys=90000.mdio-1:00,'
+                                   '90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03,90000.mdio-1:04',
+        'nss.general.wifi_offload': '1', 'nss.general.topology': 'vlan-trunk',
+        'network.wan.device': 'eth0.2', 'network.wan6.device': 'eth0.2',
+        'network.@device[0].ports': 'eth1.1',
+        'network.cfg2.name': 'eth0.2', 'network.cfg1.name': 'lan1',
+        'network.cfg1.conduit': 'eth1',
+    }, 'cudy p5')
+    assert 'network.cfg2.conduit' not in r
+    assert run('cudy,p5', r) == r, 'Cudy P5 second run must change nothing'
+
     # An admin's Wi-Fi offload choice survives the board's host default.
     r = run('xiaomi,redmi-ax5400', dict(ra74, **{'nss.general.wifi_offload': '1'}))
     assert r['nss.general.wifi_offload'] == '1'
@@ -239,6 +256,6 @@ with tempfile.TemporaryDirectory(prefix='nss-dwmac-defaults-') as directory:
     check(r, {'nss.general.topology': 'dsa', 'network.cfg1.conduit': 'eth1',
               'network.cfg2.conduit': 'eth0'}, 'even split dsa')
 
-print('PASS: RA74 dual link, rerun, Wi-Fi choice kept, tagged WAN, no wan6, migrated config, '
-      'B3000 MAC clone, D50 LAN-only trunk, EX511 headerless switch, '
-      'dsa conduit consolidation (AX5400, B3000, even split)')
+print('PASS: RA74 and Cudy P5 dual link, rerun, Wi-Fi choice kept, tagged WAN, '
+      'no wan6, migrated config, B3000 MAC clone, D50 LAN-only trunk, '
+      'EX511 headerless switch, dsa conduit consolidation (AX5400, B3000, even split)')

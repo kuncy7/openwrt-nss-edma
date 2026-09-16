@@ -78,6 +78,35 @@ define Device/cmcc_rax3000q
 	NAND_SIZE := 128m
 endef
 TARGET_DEVICES += cmcc_rax3000q
+define Device/cudy_p5
+	$(call Device/FitImageLzma)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := Cudy
+	DEVICE_MODEL := P5
+	DEVICE_DTS := ipq5018-cudy-p5
+	DEVICE_DTS_CONFIG := config@mp03.3
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	IMAGE_SIZE := 36864k
+	NAND_SIZE := 128m
+	DEVICE_PACKAGES := \
+		ath11k-firmware-ipq5018-qcn6122 \
+		ipq-wifi-cudy_p5 \
+		zram-swap \
+		kmod-usb3 \
+		kmod-usb-serial-option \
+		kmod-usb-net-qmi-wwan \
+		kmod-usb-net-cdc-ether \
+		kmod-usb-net-cdc-mbim \
+		uqmi \
+		umbim \
+		kmod-mhi-pci-generic \
+		kmod-mhi-net \
+		kmod-mhi-wwan-ctrl \
+		kmod-mhi-wwan-mbim
+endef
+TARGET_DEVICES += cudy_p5
 
 define Device/elecom_wrc-x3000gs2
 	$(call Device/FitImageLzma)

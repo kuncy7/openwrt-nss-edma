@@ -1,0 +1,576 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/*
+ * Cudy P5 (IPQ5018/AP-MP03.3/R21)
+ *
+ * QPIC SPI-NAND with dual UBI firmware slots, QCA8337 Ethernet,
+ * integrated IPQ5018 2.4 GHz and external QCN6122 5 GHz radios.
+ */
+
+/dts-v1/;
+
+#include "ipq5018.dtsi"
+#include "ipq5018-ess.dtsi"
+#include "ipq5018-nss.dtsi"
+#include "ipq5018-qcn6122.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+	model = "Cudy P5";
+	compatible = "cudy,p5", "qcom,ipq5018";
+
+	aliases {
+		label-mac-device = &gmac1;
+		led-boot = &led_status_green;
+		led-failsafe = &led_status_red;
+		led-running = &led_status_green;
+		led-upgrade = &led_status_red;
+		serial0 = &blsp1_uart1;
+	};
+
+	chosen {
+		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=512K";
+		stdout-path = "serial0:115200n8";
+	};
+
+	keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&button_pins>;
+		pinctrl-names = "default";
+
+		button-reset {
+			label = "reset";
+			gpios = <&tlmm 33 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
+
+		button-wps {
+			label = "wps";
+			gpios = <&tlmm 24 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_WPS_BUTTON>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-0 = <&led_pins>;
+		pinctrl-names = "default";
+
+		led_status_blue: led-0 {
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_STATUS;
+			gpios = <&tlmm 28 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led_status_red: led-1 {
+			color = <LED_COLOR_ID_RED>;
+			function = LED_FUNCTION_STATUS;
+			gpios = <&tlmm 27 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led_status_green: led-2 {
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_STATUS;
+			gpios = <&tlmm 22 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led-3 {
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_WLAN;
+			gpios = <&tlmm 31 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led-4 {
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_MOBILE;
+			gpios = <&tlmm 25 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+
+		led-5 {
+			color = <LED_COLOR_ID_RED>;
+			function = LED_FUNCTION_MOBILE;
+			gpios = <&tlmm 23 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+
+	/*
+	 * The vendor DT uses GPIO35 as the active-low modem "5g-power" line
+	 * and also exports it as "pwr". Mainline has no qcom,5g-power binding,
+	 * so model it as a fixed supply consumed by PCI slot power control.
+	 *
+	 * Keep the supply enabled across the U-Boot -> Linux handoff. The startup
+	 * delay applies when the PCI slot power-control consumer enables the rail.
+	 */
+	modem_power: regulator-modem-power {
+		compatible = "regulator-fixed";
+		regulator-name = "modem-power";
+		gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
+		regulator-boot-on;
+		regulator-always-on;
+		startup-delay-us = <20000000>;
+	};
+
+	/*
+	 * GPIO30 is an active-high modem reset trigger.
+	 * Rising edge restarts the modem,
+	 * a falling edge causes no observed action.
+	 */
+	gpio-export {
+		compatible = "gpio-export";
+		#size-cells = <0>;
+
+		modem-reset {
+			gpio-export,name = "modem-reset";
+			gpio-export,output = <0>;
+			gpios = <&tlmm 30 GPIO_ACTIVE_HIGH>;
+		};
+	};
+};
+
+/*
+ * The NSS core uses this region for its firmware image and heap. The P5 has
+ * 256 MiB RAM, so use the MP_256 size validated on the TP-Link EX511 v2.
+ */
+&nss_region {
+	reg = <0x0 0x40000000 0x0 0x800000>;
+};
+
+&sleep_clk {
+	clock-frequency = <32000>;
+};
+
+&xo_board_clk {
+	clock-div = <4>;
+	clock-mult = <1>;
+};
+
+/* Board pinmux and electrical configuration. */
+&tlmm {
+	button_pins: button-state {
+		pins = "gpio24", "gpio33";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-up;
+	};
+
+	led_pins: led-state {
+		pins = "gpio22", "gpio23", "gpio25", "gpio27",
+		       "gpio28", "gpio31";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-down;
+	};
+
+	mdio1_pins: mdio-state {
+		mdc-pins {
+			pins = "gpio36";
+			function = "mdc";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+
+		mdio-pins {
+			pins = "gpio37";
+			function = "mdio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+
+	serial_0_pins: uart0-state {
+		pins = "gpio20", "gpio21";
+		function = "blsp0_uart0";
+		bias-disable;
+	};
+
+	qpic_pins: qpic-state {
+		clock-pins {
+			pins = "gpio9";
+			function = "qspi_clk";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		cs-pins {
+			pins = "gpio8";
+			function = "qspi_cs";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data-pins {
+			pins = "gpio4", "gpio5", "gpio6", "gpio7";
+			function = "qspi_data";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+};
+
+/* Console UART on GPIO20/21, matching the vendor MP03.3 pinmux. */
+&blsp1_uart1 {
+	pinctrl-0 = <&serial_0_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&prng {
+	status = "okay";
+};
+
+&qfprom {
+	status = "okay";
+};
+
+/*
+ * Requires the IPQ CMN PLL runtime-PM fix which keeps the block AHB/SYS
+ * clocks enabled after a successful probe.
+ */
+&cmn_pll {
+	status = "okay";
+};
+
+&qpic_bam {
+	status = "okay";
+};
+
+&qpic_nand {
+	pinctrl-0 = <&qpic_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	nand@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-rx-bus-width = <1>;
+		spi-tx-bus-width = <1>;
+		nand-ecc-engine = <&qpic_nand>;
+		nand-ecc-step-size = <512>;
+		nand-ecc-strength = <4>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "0:sbl1";
+				reg = <0x0000000 0x0080000>;
+				read-only;
+			};
+
+			partition@80000 {
+				label = "0:mibib";
+				reg = <0x0080000 0x0080000>;
+				read-only;
+			};
+
+			/* Qualcomm A/B metadata, updated after a successful sysupgrade. */
+			partition@100000 {
+				label = "0:bootconfig";
+				reg = <0x0100000 0x0040000>;
+			};
+
+			partition@140000 {
+				label = "0:bootconfig1";
+				reg = <0x0140000 0x0040000>;
+			};
+
+			partition@180000 {
+				label = "0:qsee";
+				reg = <0x0180000 0x0100000>;
+				read-only;
+			};
+
+			partition@280000 {
+				label = "0:devcfg";
+				reg = <0x0280000 0x0040000>;
+				read-only;
+			};
+
+			partition@2c0000 {
+				label = "0:cdt";
+				reg = <0x02c0000 0x0040000>;
+				read-only;
+			};
+
+			partition@300000 {
+				label = "0:appsblenv";
+				reg = <0x0300000 0x0080000>;
+				read-only;
+			};
+
+			partition@380000 {
+				label = "0:appsbl";
+				reg = <0x0380000 0x0140000>;
+				read-only;
+			};
+
+			partition@4c0000 {
+				label = "0:appsbl_1";
+				reg = <0x04c0000 0x0140000>;
+				read-only;
+			};
+
+			partition@600000 {
+				label = "0:art";
+				reg = <0x0600000 0x0100000>;
+				read-only;
+			};
+
+			partition@700000 {
+				label = "0:training";
+				reg = <0x0700000 0x0080000>;
+				read-only;
+			};
+
+			partition_bdinfo: partition@780000 {
+				label = "bdinfo";
+				reg = <0x0780000 0x0040000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					hw_mac_addr: mac-address@de00 {
+						compatible = "mac-base";
+						reg = <0xde00 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+
+			/*
+			 * U-Boot always passes ubi.mtd=rootfs. Expose the physical
+			 * rootfs_1 slot as "rootfs" to Linux so the selected OpenWrt
+			 * slot is attached as ubi0. The stock slot stays protected.
+			 */
+			partition@7c0000 {
+				label = "rootfs";
+				reg = <0x07c0000 0x2400000>;
+				linux,rootfs;
+			};
+
+			partition@2bc0000 {
+				label = "rootfs_1";
+				reg = <0x2bc0000 0x2400000>;
+				read-only;
+			};
+		};
+	};
+};
+
+/*
+ * ================================================================
+ *     _________________________         ________________________
+ *    |         IPQ5018         |       |         QCA8337        |
+ *    | +-------+   +--------+  |       | +--------+  +------+   |
+ *    | | GMAC0 |---| GE PHY |--+--MDI--+-|  PHY4  |--| MAC5 |   |
+ *    | +-------+   +--------+  |       | +--------+  +------+   |
+ *    | +-------+   +--------+  |       | +--------+  +------+   |
+ *    | | GMAC1 |---| UNIPHY0|--+-SGMII-+-| SerDes |--| MAC6 |   |
+ *    | +-------+   +--------+  |       | +--------+  +------+   |
+ *    |_________________________|       |________________________|
+ *
+ * The switch has two CPU conduits. GMAC0 reaches QCA8337 port 5 through
+ * the internal GE PHY, while GMAC1 reaches port 6 through UNIPHY0/SGMII.
+ * External jacks use ports 1 through 4.
+ * ================================================================
+ */
+
+&uniphy0 {
+	assigned-clocks = <&uniphy0 UNIPHY_CLK_REF>;
+	assigned-clock-rates = <UNIPHY_REFCLK_25MHZ>;
+	status = "okay";
+};
+
+&gmac0 {
+	nvmem-cells = <&hw_mac_addr 1>;
+	nvmem-cell-names = "mac-address";
+	status = "okay";
+};
+
+&gmac1 {
+	nvmem-cells = <&hw_mac_addr 0>;
+	nvmem-cell-names = "mac-address";
+	phy-mode = "sgmii";
+	status = "okay";
+
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
+};
+
+&mdio0 {
+	status = "okay";
+};
+
+&ge_phy {
+	qcom,dac-preset-short-cable;
+};
+
+&mdio1 {
+	pinctrl-0 = <&mdio1_pins>;
+	pinctrl-names = "default";
+	reset-gpios = <&tlmm 39 GPIO_ACTIVE_LOW>;
+	status = "okay";
+
+	qca8337_0: ethernet-phy@0 {
+		reg = <0>;
+	};
+
+	qca8337_1: ethernet-phy@1 {
+		reg = <1>;
+	};
+
+	qca8337_2: ethernet-phy@2 {
+		reg = <2>;
+	};
+
+	qca8337_3: ethernet-phy@3 {
+		reg = <3>;
+	};
+
+	qca8337_4: ethernet-phy@4 {
+		reg = <4>;
+	};
+
+	switch0: ethernet-switch@11 {
+		compatible = "qca,qca8337";
+		reg = <17>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@1 {
+				reg = <1>;
+				label = "lan1";
+				phy-handle = <&qca8337_0>;
+			};
+
+			port@2 {
+				reg = <2>;
+				label = "lan2";
+				phy-handle = <&qca8337_1>;
+			};
+
+			port@3 {
+				reg = <3>;
+				label = "lan3";
+				phy-handle = <&qca8337_2>;
+			};
+
+			port@4 {
+				reg = <4>;
+				label = "wan";
+				phy-handle = <&qca8337_3>;
+			};
+
+			/* Internal WAN conduit through the IPQ5018 GE PHY. */
+			port@5 {
+				reg = <5>;
+				phy-handle = <&qca8337_4>;
+				phy-mode = "gmii";
+				ethernet = <&gmac0>;
+			};
+
+			port@6 {
+				reg = <6>;
+				phy-mode = "sgmii";
+				ethernet = <&gmac1>;
+				qca,sgmii-enable-pll;
+
+				fixed-link {
+					speed = <1000>;
+					full-duplex;
+				};
+			};
+		};
+	};
+};
+
+&usbphy0 {
+	status = "okay";
+};
+
+&usb {
+	dr_mode = "host";
+	maximum-speed = "high-speed";
+	phys = <&usbphy0>;
+	phy-names = "usb2-phy";
+	qcom,select-utmi-as-pipe-clk;
+	status = "okay";
+};
+
+/*
+ * QCN6122 is managed by WCSS multi-PD firmware. Linux leaves PCIe0 at the
+ * disabled state inherited from ipq5018.dtsi; the M.2 modem uses PCIe1.
+ */
+&pcie1_phy {
+	status = "okay";
+};
+
+&pcie1 {
+	perst-gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
+	status = "okay";
+
+	/*
+	 * This is the PCIe root port already defined by ipq5018.dtsi.
+	 * Generic PCI slot power control keeps GPIO35 enabled and rescans the
+	 * bus. GPIO18 is the stock active-low PERST# line.
+	 * GPIO19 has no assignment in the stock DT and remains unclaimed.
+	 */
+	pcie@0 {
+		compatible = "pciclass,0604";
+		modem-power-supply = <&modem_power>;
+	};
+};
+
+&watchdog {
+	status = "okay";
+	timeout-sec = <30>;
+};
+
+/*
+ * The integrated radio uses user-PD1. QCN6122 uses user-PD2, with GPIO15
+ * passed to WCSS firmware as its reset line.
+ */
+&q6v5_wcss {
+	/* PCIe0, payload length 4, user-PD2, reset GPIO15. */
+	boot-args = <0x1 4 2 15 0 0>;
+	status = "okay";
+};
+
+&wifi {
+	qcom,rproc = <&q6_wcss_pd1>;
+	qcom,userpd-subsys-name = "q6v5_wcss_userpd1";
+	qcom,ath11k-calibration-variant = "Cudy-P5";
+	qcom,ath11k-fw-memory-mode = <2>;
+	qcom,bdf-addr = <0x4c400000>;
+	ieee80211-freq-limit = <2400000 2483000>;
+	status = "okay";
+};
+
+&wifi1 {
+	qcom,rproc = <&q6_wcss_pd2>;
+	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
+	qcom,ath11k-calibration-variant = "Cudy-P5";
+	qcom,ath11k-fw-memory-mode = <2>;
+	qcom,bdf-addr = <0x4d100000>;
+	qcom,m3-dump-addr = <0x4df00000>;
+	status = "okay";
+};

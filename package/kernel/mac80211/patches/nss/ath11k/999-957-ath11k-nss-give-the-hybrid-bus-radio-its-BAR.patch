@@ -25,8 +25,8 @@ Signed-off-by: Stefan <stefdo61@gmail.com>
 ---
 --- a/drivers/net/wireless/ath/ath11k/ahb.c
 +++ b/drivers/net/wireless/ath/ath11k/ahb.c
-@@ -829,6 +829,25 @@ static const struct ath11k_hif_ops ath11
- 	.ce_irq_disable = ath11k_pci_disable_ce_irqs_except_wake_irq,
+@@ -910,6 +910,25 @@ static const struct ath11k_hif_ops ath11
+ 	.ce_irq_disable = ath11k_ahb_ce_irq_disable_sync,
  };
  
 +/* The NSS firmware reaches this radio's ring registers through the same
@@ -51,17 +51,17 @@ Signed-off-by: Stefan <stefdo61@gmail.com>
  static const struct ath11k_hif_ops ath11k_ahb_hif_ops_qcn6122 = {
  	.start = ath11k_pcic_start,
  	.stop = ath11k_pcic_stop,
-@@ -845,6 +864,7 @@ static const struct ath11k_hif_ops ath11
+@@ -926,6 +945,7 @@ static const struct ath11k_hif_ops ath11
  	.ce_irq_enable = ath11k_pci_enable_ce_irqs_except_wake_irq,
  	.ce_irq_disable = ath11k_pci_disable_ce_irqs_except_wake_irq,
  	.config_static_window = ath11k_ahb_config_static_window_qcn6122,
 +	.get_window_offset = ath11k_ahb_get_window_offset_qcn6122,
  };
  
- static int ath11k_core_get_rproc(struct ath11k_base *ab)
+ static const struct ath11k_hif_ops ath11k_ahb_hif_ops_wcn6750 = {
 --- a/drivers/net/wireless/ath/ath11k/qmi.c
 +++ b/drivers/net/wireless/ath/ath11k/qmi.c
-@@ -2204,6 +2204,15 @@ static int ath11k_qmi_request_device_inf
+@@ -2242,6 +2242,15 @@ static int ath11k_qmi_request_device_inf
  
  	ab->mem = bar_addr_va;
  	ab->mem_len = resp.bar_size;

@@ -27,9 +27,9 @@ Signed-off-by: Manikanta Pubbisetty <mpubbise@codeaurora.org>
 +#define ATH11K_RX_RATE_TABLE_NUM 320
 +#define ATH11K_RX_RATE_TABLE_11AX_NUM 576
  
- #define	ATH11K_QCN6122_USERPD_2		1
- #define	ATH11K_QCN6122_USERPD_3		2
-@@ -433,6 +435,17 @@ struct ath11k_vif_iter {
+ /* SMBIOS type containing Board Data File Name Extension */
+ #define ATH11K_SMBIOS_BDF_EXT_TYPE 0xF8
+@@ -430,6 +432,17 @@ struct ath11k_vif_iter {
  	struct ath11k_vif *arvif;
  };
  
@@ -47,7 +47,7 @@ Signed-off-by: Manikanta Pubbisetty <mpubbise@codeaurora.org>
  struct ath11k_rx_peer_stats {
  	u64 num_msdu;
  	u64 num_mpdu_fcs_ok;
-@@ -444,10 +457,6 @@ struct ath11k_rx_peer_stats {
+@@ -441,10 +454,6 @@ struct ath11k_rx_peer_stats {
  	u64 non_ampdu_msdu_count;
  	u64 stbc_count;
  	u64 beamformed_count;
@@ -58,7 +58,7 @@ Signed-off-by: Manikanta Pubbisetty <mpubbise@codeaurora.org>
  	u64 coding_count[HAL_RX_SU_MU_CODING_MAX];
  	u64 tid_count[IEEE80211_NUM_TIDS + 1];
  	u64 pream_cnt[HAL_RX_PREAMBLE_MAX];
-@@ -455,6 +464,8 @@ struct ath11k_rx_peer_stats {
+@@ -452,6 +461,8 @@ struct ath11k_rx_peer_stats {
  	u64 rx_duration;
  	u64 dcm_count;
  	u64 ru_alloc_cnt[HAL_RX_RU_ALLOC_TYPE_MAX];
@@ -652,7 +652,7 @@ Signed-off-by: Manikanta Pubbisetty <mpubbise@codeaurora.org>
  #define ATH11K_TX_RING_MASK_0 BIT(0)
 --- a/drivers/net/wireless/ath/ath11k/hw.h
 +++ b/drivers/net/wireless/ath/ath11k/hw.h
-@@ -276,6 +276,7 @@ struct ath11k_hw_ops {
+@@ -284,6 +284,7 @@ struct ath11k_hw_ops {
  	bool (*rx_desc_mac_addr2_valid)(struct hal_rx_desc *desc);
  	u8* (*rx_desc_mpdu_start_addr2)(struct hal_rx_desc *desc);
  	u32 (*get_ring_selector)(struct sk_buff *skb);

@@ -1,4 +1,4 @@
-# NSS offload on IPQ5018 with the upstream ethernet stack (branch `ipq50xx-rebase`)
+# NSS offload on IPQ5018 with the upstream ethernet stack (branch `c3po-tag-8021q`)
 
 This branch runs the **NSS packet-processing core of the IPQ5018** on kernel
 **6.18** with OpenWrt main's **upstream `stmmac` / `dwmac-ipq5018` ethernet
@@ -14,12 +14,15 @@ routed NAT through the firmware at the ceiling of the single 1 GbE CPU port
 core-clock fix described below: both radios (internal 2.4 GHz + QCN6122),
 734/447 Mbit/s through the router over 5 GHz.
 
-> **Branch note.** Work moved to `ipq50xx-rebase` on 2026-09-07, when the
-> series was rebased onto Julius's current `nss-edma-rework`. The old
-> `ipq50xx-nss` branch (tree and feed) is kept as an archive and no longer
-> gets fixes - it is missing, among other things, the ath11k autoload fix
-> below. Use `ipq50xx-rebase` for both repositories or the two will not
-> match.
+> **Branch note.** `c3po-tag-8021q` is the branch, and the repository's
+> default since 2026-09-17. It carries everything `ipq50xx-rebase` had (the
+> series was rebased onto it on 2026-09-16, and PR #4 merged after) plus the
+> `dsa` topology described under *Topology*. `ipq50xx-rebase` set out to
+> answer one question - does the NSS core run on the IPQ5018 with the upstream
+> ethernet driver - and it does; that branch is frozen at `29f3da694f` and
+> takes no further changes or pull requests. `ipq50xx-nss` is the older
+> archive. The feed branch keeps its name: use `ipq50xx-rebase` of
+> `kuncy7/nss-packages` with this tree.
 
 Discussion and test reports: the
 [forum thread](https://forum.openwrt.org/t/ipq5018-nss-offload-on-kernel-6-18-with-the-upstream-ethernet-stack-gl-b3000/253014).
@@ -52,7 +55,7 @@ lets the stack build on ipq50xx, and four driver patches (`0120`, `0121`,
 ## Quick start
 
 ```sh
-git clone -b ipq50xx-rebase https://github.com/kuncy7/openwrt-nss-edma.git
+git clone -b c3po-tag-8021q https://github.com/kuncy7/openwrt-nss-edma.git
 cd openwrt-nss-edma
 
 cp feeds.conf.default feeds.conf

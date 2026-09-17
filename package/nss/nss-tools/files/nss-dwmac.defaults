@@ -57,6 +57,16 @@ nss_dwmac_board_defaults() {
 		switch_args='cpu_port=6 ports=0x7e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03,90000.mdio-1:04'
 		vtu='1:6t,1u,2u,3u,4u;2:6t,5u'
 		;;
+	tplink,archer-ax55-v1)
+		# port 6 = CPU (2500base-x), 0 = wan, 1-4 = lan. An
+		# RTL8367S-VB, so rtl8367s-nss re-arms it and carries its own
+		# VLAN and PVID program - switch_args and vtu stay empty.
+		fw_mask='0x2'
+		trunk='eth0'
+		fabric='none'
+		switch_args=''
+		vtu=''
+		;;
 	xunison,exigo-hub-d50-5g)
 		# WAN is GMAC0's own GE PHY (netdev 'wan'), so GMAC1 - the switch
 		# trunk - comes up as eth1 and carries LAN only: port 0 = CPU

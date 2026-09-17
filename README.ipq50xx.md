@@ -512,7 +512,8 @@ larger (2092 B) than the data frame size the host advertises (2048 B).
 Every IPQ5018 board on this branch has 512 MB except the TP-Link EX511 v2
 (IPQ5018 + QCN6122, 256 MB), and the defaults tuned for 512 MB do not fit
 in it: the first flashed build OOM-killed the AP daemon on a single iperf3
-run. What it needed, all in the branch and measured on the board (2026-09-13):
+run. What it needed, all in the branch and measured on the board
+(2026-09-13) - and what the next 256 MB board will need too:
 
 - **`nss_region` 8 MiB** in the board DTS, overriding the 16 MiB in
   `ipq5018.dtsi`. Stock reserves 8 MiB for the same MP firmware family; the
@@ -542,13 +543,32 @@ run. What it needed, all in the branch and measured on the board (2026-09-13):
   the *largest* rings; it now means the 512M profile plus smaller RXDMA
   rings (`DP_RXDMA_BUF_RING_SIZE` 512, which also sizes the NSS Wi-Fi RX
   descriptor pool), and 512M/1G builds are untouched by that. Both Kconfig
-  choices default to these values in a single-device build of the EX511
-  v2 (`CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2=y`), so no
-  menuconfig visit is needed there. A multi-device image shares one
-  profile across all its boards, so the defaults leave it alone: an image
-  that includes the EX511 next to 512 MB boards has to pick LOW / 256M
-  itself, and its other members pay for it in Wi-Fi RX descriptors and
-  connection-table size. The firmware version
+  choices default to these values in a single-device build of a board named
+  in their conditions, so no menuconfig visit is needed there. Two things
+  about that are easy to get wrong, and both cost real memory silently:
+
+  - The default keys on the **profile** symbol
+    (`CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2=y`), not on
+    the per-device checkbox of a multi-device image
+    (`CONFIG_TARGET_DEVICE_...`). A multi-device image shares one profile
+    across all its boards, so the defaults deliberately leave it alone: an
+    image that includes a 256 MB board next to 512 MB ones has to pick LOW
+    / 256M itself, and its other members then pay for it in Wi-Fi RX
+    descriptors and connection-table size.
+  - `ATH11K_MEM_PROFILE_256M` lives in `package/kernel/mac80211/ath.mk`,
+    which the package Makefile pulls in with `include`. The metadata scan
+    keys on the package's own `Makefile`, so editing `ath.mk` does **not**
+    invalidate `tmp/info/.packageinfo-kernel_mac80211`: `make defconfig`
+    then rebuilds `tmp/.packageinfo` from the stale cache, the new
+    `default ... if ...` line never reaches Kconfig, and the old profile is
+    selected with nothing in the output to say so. `rm -rf tmp/info` before
+    `make prepare-tmpinfo` after touching any included `.mk`, and check
+    that the cache file is newer than the file you edited.
+    `NSS_MEM_PROFILE_LOW` is not in this tree at all - it is a choice in
+    the `qca-nss-drv` package of the feed, so a board has to be named in
+    both places. The Cudy P5, the next 256 MB board in the queue, arrived
+    with the ath11k half in its own pull request and needed the feed half
+    added separately. The firmware version
   (`NSS_FIRMWARE_VERSION_12_2`) is still chosen by hand, as on every
   ipq50xx board. `qcom,ath11k-fw-memory-mode = <2>` on both radios is in
   the DTS.

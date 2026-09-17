@@ -357,38 +357,22 @@
 	};
 };
 
-/*
- * ath11k Wi-Fi consumes too large memory spaces and too few spaces are
- * available for users. To prevent OOM when using LuCI or other softwares,
- * disable Wi-Fi related peripherals at the moment.
- */
-&q6v5_wcss {
-	status = "disabled";
-
-	boot-args = <0x2 4 2 18 0 0>; /* pcie:1, len:4, updid:2, reset:gpio18 */
-};
-
 &wifi {
 	status = "disabled";
 
-	qcom,rproc = <&q6_wcss_pd1>;
-	qcom,userpd-subsys-name = "q6v5_wcss_userpd1";
+	qcom,rproc = <&q6v5_wcss>;
 	qcom,ath11k-calibration-variant = "ELECOM-WRC-X3000GS2";
 	qcom,ath11k-fw-memory-mode = <2>;
-	qcom,bdf-addr = <0x4c400000>;
 
 	ieee80211-freq-limit = <2400000 2483000>;
 };
 
-&wifi1 {
+&wifi2 {
 	status = "disabled";
 
-	qcom,rproc = <&q6_wcss_pd2>;
-	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
+	qcom,rproc = <&q6v5_wcss>;
 	qcom,ath11k-calibration-variant = "ELECOM-WRC-X3000GS2";
 	qcom,ath11k-fw-memory-mode = <2>;
-	qcom,bdf-addr = <0x4d100000>;
-	qcom,m3-dump-addr = <0x4df00000>;
 
 	ieee80211-freq-limit = <5150000 5730000>;
 };

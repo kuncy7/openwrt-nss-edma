@@ -20,67 +20,58 @@ Signed-off-by: George Moussalem <george.moussalem@outlook.com>
  int qcom_scm_pas_auth_and_reset(u32 peripheral);
  int qcom_scm_pas_shutdown(u32 peripheral);
  bool qcom_scm_pas_supported(u32 peripheral);
-+int qcom_scm_internal_wifi_powerup(u32 peripheral);
-+int qcom_scm_internal_wifi_shutdown(u32 peripheral);
-+int qcom_scm_pas_load_segment(u32 peripheral, int segment, dma_addr_t dma, int seg_cnt);
- int qcom_scm_msa_lock(u32 peripheral);
- int qcom_scm_msa_unlock(u32 peripheral);
++int qcom_scm_pas_set_wifi_power_mode(u32 peripheral, bool enable);
++int qcom_scm_pas_load_pil_segment(u32 peripheral, int segment, dma_addr_t dma,
++				  int seg_cnt);
  
+ int qcom_scm_io_readl(phys_addr_t addr, unsigned int *val);
+ int qcom_scm_io_writel(phys_addr_t addr, unsigned int val);
 --- a/drivers/firmware/qcom/qcom_scm.c
 +++ b/drivers/firmware/qcom/qcom_scm.c
-@@ -808,6 +808,85 @@ bool qcom_scm_pas_supported(u32 peripher
+@@ -807,6 +807,76 @@ bool qcom_scm_pas_supported(u32 peripher
+ }
  EXPORT_SYMBOL_GPL(qcom_scm_pas_supported);
  
- /**
-+ * qcom_scm_internal_wifi_powerup() - Bring up internal wifi
++/**
++ * qcom_scm_internal_wifi_control() - Control internal wifi
 + * @peripheral:	peripheral id
++ * @enable:	true to power up, false to shut down
 + *
 + * Return 0 on success.
 + */
-+int qcom_scm_internal_wifi_powerup(u32 peripheral)
++int qcom_scm_pas_set_wifi_power_mode(u32 peripheral, bool enable)
 +{
++	int ret;
 +	struct qcom_scm_desc desc = {
 +		.svc = QCOM_SCM_SVC_PIL,
-+		.cmd = QCOM_SCM_INTERNAL_WIFI_POWERUP,
++		.cmd = enable ? QCOM_SCM_PIL_PAS_WIFI_PWR_EN :
++		       QCOM_SCM_PIL_PAS_WIFI_PWR_DIS,
 +		.arginfo = QCOM_SCM_ARGS(1),
 +		.args[0] = peripheral,
 +		.owner = ARM_SMCCC_OWNER_SIP,
 +	};
 +	struct qcom_scm_res res;
-+	int ret;
++
++	ret = qcom_scm_clk_enable();
++	if (ret)
++		return ret;
++
++	ret = qcom_scm_bw_enable();
++	if (ret)
++		goto disable_clk;
 +
 +	ret = qcom_scm_call(__scm->dev, &desc, &res);
++	qcom_scm_bw_disable();
++
++disable_clk:
++	qcom_scm_clk_disable();
 +
 +	return ret ? : res.result[0];
 +}
-+EXPORT_SYMBOL(qcom_scm_internal_wifi_powerup);
++EXPORT_SYMBOL_GPL(qcom_scm_pas_set_wifi_power_mode);
 +
 +/**
-+ * qcom_scm_internal_wifi_shutdown() - Shut down internal wifi
-+ * @peripheral: peripheral id
-+ *
-+ * Returns 0 on success.
-+ */
-+int qcom_scm_internal_wifi_shutdown(u32 peripheral)
-+{
-+	struct qcom_scm_desc desc = {
-+		.svc = QCOM_SCM_SVC_PIL,
-+		.cmd = QCOM_SCM_INTERNAL_WIFI_SHUTDOWN,
-+		.arginfo = QCOM_SCM_ARGS(1),
-+		.args[0] = peripheral,
-+		.owner = ARM_SMCCC_OWNER_SIP,
-+	};
-+	struct qcom_scm_res res;
-+	int ret;
-+
-+	ret = qcom_scm_call(__scm->dev, &desc, &res);
-+
-+	return ret ? : res.result[0];
-+}
-+EXPORT_SYMBOL(qcom_scm_internal_wifi_shutdown);
-+
-+/**
-+ * qcom_scm_pas_load_segment() - copy userpd PIL segments data to dma blocks
++ * qcom_scm_pas_load_pil_segment() - copy userpd PIL segments data to dma blocks
 + * @peripheral:		peripheral id
 + * @segment:		segment id
 + * @dma:		handle of dma region
@@ -89,12 +80,14 @@ Signed-off-by: George Moussalem <george.moussalem@outlook.com>
 + * Returns 0 if trustzone successfully loads userpd PIL segments from dma
 + * blocks to DDR
 + */
-+int qcom_scm_pas_load_segment(u32 peripheral, int segment, dma_addr_t dma, int seg_cnt)
++int qcom_scm_pas_load_pil_segment(u32 peripheral, int segment, dma_addr_t dma, int seg_cnt)
 +{
++	int ret;
 +	struct qcom_scm_desc desc = {
 +		.svc = QCOM_SCM_SVC_PIL,
 +		.cmd = QCOM_SCM_PIL_PAS_LOAD_SEG,
-+		.arginfo = QCOM_SCM_ARGS(4, QCOM_SCM_VAL, QCOM_SCM_VAL, QCOM_SCM_RW, QCOM_SCM_VAL),
++		.arginfo = QCOM_SCM_ARGS(4, QCOM_SCM_VAL, QCOM_SCM_VAL,
++					 QCOM_SCM_RW, QCOM_SCM_VAL),
 +		.args[0] = peripheral,
 +		.args[1] = segment,
 +		.args[2] = dma,
@@ -102,27 +95,24 @@ Signed-off-by: George Moussalem <george.moussalem@outlook.com>
 +		.owner = ARM_SMCCC_OWNER_SIP,
 +	};
 +	struct qcom_scm_res res;
-+	int ret;
 +
 +	ret = qcom_scm_call(__scm->dev, &desc, &res);
 +
 +	return ret ? : res.result[0];
 +}
-+EXPORT_SYMBOL(qcom_scm_pas_load_segment);
++EXPORT_SYMBOL(qcom_scm_pas_load_pil_segment);
 +
-+/**
-  * qcom_scm_msa_lock() - Lock given peripheral firmware region as MSA
-  *
-  * @peripheral:	peripheral id
+ static int __qcom_scm_pas_mss_reset(struct device *dev, bool reset)
+ {
+ 	struct qcom_scm_desc desc = {
 --- a/drivers/firmware/qcom/qcom_scm.h
 +++ b/drivers/firmware/qcom/qcom_scm.h
 @@ -106,6 +106,9 @@ int qcom_scm_shm_bridge_enable(struct de
  #define QCOM_SCM_PIL_PAS_IS_SUPPORTED	0x07
  #define QCOM_SCM_PIL_PAS_MSS_RESET	0x0a
- #define QCOM_SCM_PIL_PAS_INIT_IMAGE_V2	0x1a
-+#define QCOM_SCM_INTERNAL_WIFI_POWERUP	0x17
-+#define QCOM_SCM_INTERNAL_WIFI_SHUTDOWN	0x18
++#define QCOM_SCM_PIL_PAS_WIFI_PWR_EN	0x17
++#define QCOM_SCM_PIL_PAS_WIFI_PWR_DIS	0x18
 +#define QCOM_SCM_PIL_PAS_LOAD_SEG	0x19
- #define QCOM_SCM_MSA_LOCK		0x24
- #define QCOM_SCM_MSA_UNLOCK		0x25
+ #define QCOM_SCM_PIL_PAS_INIT_IMAGE_V2	0x1a
  
+ #define QCOM_SCM_SVC_IO			0x05

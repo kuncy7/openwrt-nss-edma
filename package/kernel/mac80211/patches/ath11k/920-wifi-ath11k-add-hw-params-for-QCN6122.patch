@@ -1,31 +1,37 @@
+From 0887071a0d71730b253a5b62d80cebb351da1069 Mon Sep 17 00:00:00 2001
 From: George Moussalem <george.moussalem@outlook.com>
-Date: Wed, 27 Oct 2024 16:34:11 +0400
-Subject: [PATCH] wifi: ath11k: add hw params for QCN6122
+Date: Wed, 16 Sep 2026 07:29:43 +0400
+Subject: [PATCH ath-next 10/15] wifi: ath11k: add hw params for QCN6122
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+Message-Id: <20260916-ipq5018-qcn6122-mpd-v1-10-a4e47531e63f@outlook.com>
 
 Add QCN6122 platform support.
 
 QCN6122 is a PCIe based solution that is attached to and enumerated
 by the WPSS (Wireless Processor SubSystem) Q6 processor.
 
-Though it is a PCIe device, since it is not attached to APSS processor
-(Application Processor SubSystem), APSS will be unaware of such a decice
-and hence it is registered to the APSS processor as a platform device(AHB).
-Because of this hybrid nature, it is called as a hybrid bus device.
+Though it is a PCIe device, since it is not attached to APSS processor,
+APSS will be unaware of such a decice and hence it is registered to the
+APSS processor as a platform AHB device.
 
-As such, QCN6122 is a hybrid bus type device and follows the same codepath
-as for WCN6750.
+As such, QCN6122 is a hybrid bus type device and follows the same
+codepath as for WCN6750.
 
 This is a heavily simplified version of below downstream patch:
-Download from https://git.codelinaro.org/clo/qsdk/oss/system/feeds/wlan-open/-/blob/NHSS.QSDK.12.4.5.r2/mac80211/patches/232-ath11k-qcn6122-support.patch
+Link: https://git.codelinaro.org/clo/qsdk/oss/system/feeds/wlan-open/-/blob/NHSS.QSDK.12.4.5.r2/mac80211/patches/232-ath11k-qcn6122-support.patch
 
-Co-developed-by: George Moussalem <george.moussalem@outlook.com>
-Signed-off-by: Sowmiya Sree Elavalagan <ssreeela@codeaurora.org>
 Signed-off-by: George Moussalem <george.moussalem@outlook.com>
 ---
+ drivers/net/wireless/ath/ath11k/core.c | 61 ++++++++++++++++++++++++++++++++++
+ drivers/net/wireless/ath/ath11k/core.h |  1 +
+ drivers/net/wireless/ath/ath11k/qmi.h  |  3 +-
+ 3 files changed, 64 insertions(+), 1 deletion(-)
 
 --- a/drivers/net/wireless/ath/ath11k/core.c
 +++ b/drivers/net/wireless/ath/ath11k/core.c
-@@ -907,6 +907,67 @@ static struct ath11k_hw_params ath11k_hw
+@@ -917,6 +917,67 @@ static struct ath11k_hw_params ath11k_hw
  		.support_dual_stations = true,
  		.pdev_suspend = false,
  	},
@@ -36,6 +42,7 @@ Signed-off-by: George Moussalem <george.moussalem@outlook.com>
 +			.dir = "QCN6122/hw1.0",
 +			.board_size = 256 * 1024,
 +			.cal_offset = 128 * 1024,
++			.m3_loader = ath11k_m3_fw_loader_ahb,
 +		},
 +		.hal_params = &ath11k_hw_hal_params_ipq8074,
 +		.max_radios = MAX_RADIOS_5018,
@@ -54,7 +61,6 @@ Signed-off-by: George Moussalem <george.moussalem@outlook.com>
 +			.max_fft_bins = 1024,
 +		},
 +		.credit_flow = false,
-+		.max_tx_ring = 1,
 +		.supports_monitor = true,
 +		.supports_shadow_regs = false,
 +		.idle_ps = false,
@@ -76,7 +82,7 @@ Signed-off-by: George Moussalem <george.moussalem@outlook.com>
 +		.cbcal_restart_fw = true,
 +		.fix_l1ss = true,
 +		.alloc_cacheable_memory = true,
-+		.m3_fw_support = false,
++		.m3_fw_support = true,
 +		.fixed_bdf_addr = true,
 +		.fixed_mem_region = true,
 +		.static_window_map = true,

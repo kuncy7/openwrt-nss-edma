@@ -17,6 +17,16 @@ Validated on the **Xiaomi AX3600** (IPQ8071A, 512 MB, PPPoE uplink):
 | NAT + PPPoE routing @ ~310 Mbit/s | ~42 % of one core (softirq) | **99.7 % CPU idle** |
 | SQM shaping @ 285 Mbit | CPU-bound on this class of SoC | **99 % idle, 16 ms RTT under full load — no bufferbloat** |
 
+> **This branch is frozen.** It set out to answer one question - does the
+> NSS core run on the IPQ5018 with the upstream ethernet driver - and it does.
+> Work moved to
+> [`c3po-tag-8021q`](https://github.com/kuncy7/openwrt-nss-edma/tree/c3po-tag-8021q)
+> on 2026-09-17, which carries everything here (rebased 2026-09-16, PR #4
+> merged after) plus the `dsa` topology: the switch keeps its DSA driver and
+> the firmware is fed through tag_8021q. Build from that branch; the feed
+> branch keeps its name (`ipq50xx-rebase` of `kuncy7/nss-packages`). Nothing
+> here changes any more and pull requests against it are not taken.
+
 ## This branch: `ipq50xx-rebase`
 
 You are on the **IPQ50xx branch**. It layers the IPQ5018 port on top of the

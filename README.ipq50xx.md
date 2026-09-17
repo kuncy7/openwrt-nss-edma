@@ -1,5 +1,15 @@
 # NSS offload on IPQ5018 with the upstream ethernet stack (branch `ipq50xx-rebase`)
 
+> **This branch is frozen.** It set out to answer one question - does the
+> NSS core run on the IPQ5018 with the upstream ethernet driver - and it does.
+> Work moved to
+> [`c3po-tag-8021q`](https://github.com/kuncy7/openwrt-nss-edma/tree/c3po-tag-8021q)
+> on 2026-09-17, which carries everything here (rebased 2026-09-16, PR #4
+> merged after) plus the `dsa` topology: the switch keeps its DSA driver and
+> the firmware is fed through tag_8021q. Build from that branch; the feed
+> branch keeps its name (`ipq50xx-rebase` of `kuncy7/nss-packages`). Nothing
+> here changes any more and pull requests against it are not taken.
+
 This branch runs the **NSS packet-processing core of the IPQ5018** on kernel
 **6.18** with OpenWrt main's **upstream `stmmac` / `dwmac-ipq5018` ethernet
 driver** - no `qca-nss-dp`, no `qca-ssdk`. It is the IPQ50xx counterpart of the

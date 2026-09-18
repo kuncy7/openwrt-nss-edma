@@ -42,14 +42,16 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/include/net/dsa.h
 +++ b/include/net/dsa.h
-@@ -58,5 +58,6 @@ struct tc_action;
+@@ -57,6 +57,7 @@ struct tc_action;
+ #define DSA_TAG_PROTO_BRCM_LEGACY_FCS_VALUE	29
  #define DSA_TAG_PROTO_MXL862_VALUE		30
  #define DSA_TAG_PROTO_MXL862_8021Q_VALUE	31
 +#define DSA_TAG_PROTO_QCA_8021Q_VALUE		32
  
  enum dsa_tag_protocol {
  	DSA_TAG_PROTO_NONE		= DSA_TAG_PROTO_NONE_VALUE,
-@@ -92,5 +93,6 @@ enum dsa_tag_protocol {
+@@ -91,6 +92,7 @@ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_VSC73XX_8021Q	= DSA_TAG_PROTO_VSC73XX_8021Q_VALUE,
  	DSA_TAG_PROTO_MXL862		= DSA_TAG_PROTO_MXL862_VALUE,
  	DSA_TAG_PROTO_MXL862_8021Q	= DSA_TAG_PROTO_MXL862_8021Q_VALUE,
 +	DSA_TAG_PROTO_QCA_8021Q		= DSA_TAG_PROTO_QCA_8021Q_VALUE,
@@ -58,7 +60,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  struct dsa_switch;
 --- a/net/dsa/Kconfig
 +++ b/net/dsa/Kconfig
-@@ -160,6 +160,14 @@
+@@ -151,6 +151,14 @@ config NET_DSA_TAG_QCA
  	  Say Y or M if you want to enable support for tagging frames for
  	  the Qualcomm Atheros QCA8K switches.
  
@@ -75,9 +77,9 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	help
 --- a/net/dsa/Makefile
 +++ b/net/dsa/Makefile
-@@ -35,6 +35,7 @@
+@@ -34,6 +34,7 @@ obj-$(CONFIG_NET_DSA_TAG_NONE) += tag_no
+ obj-$(CONFIG_NET_DSA_TAG_OCELOT) += tag_ocelot.o
  obj-$(CONFIG_NET_DSA_TAG_OCELOT_8021Q) += tag_ocelot_8021q.o
- obj-$(CONFIG_NET_DSA_TAG_OOB) += tag_oob.o
  obj-$(CONFIG_NET_DSA_TAG_QCA) += tag_qca.o
 +obj-$(CONFIG_NET_DSA_TAG_QCA_8021Q) += tag_qca_8021q.o
  obj-$(CONFIG_NET_DSA_TAG_RTL4_A) += tag_rtl4_a.o
@@ -229,7 +231,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  #define QCA8K_REG_IPV4_PRI_BASE_ADDR			0x470
  #define QCA8K_REG_IPV4_PRI_ADDR_MASK			0x474
  
-@@ -469,6 +475,10 @@
+@@ -469,6 +475,10 @@ struct qca8k_priv {
  	struct qca8k_pcs pcs_port_6;
  	const struct qca8k_match_data *info;
  	struct qca8k_led ports_led[QCA8K_LED_COUNT];
@@ -240,7 +242,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  };
  
  struct qca8k_mib_desc {
-@@ -578,11 +588,15 @@
+@@ -578,11 +588,15 @@ void qca8k_port_mirror_del(struct dsa_sw
  			   struct dsa_mall_mirror_tc_entry *mirror);
  
  /* Common port VLAN function */
@@ -266,7 +268,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  #include "qca8k.h"
  #include "qca8k_leds.h"
-@@ -1880,7 +1881,11 @@
+@@ -1880,7 +1881,11 @@ qca8k_conduit_change(struct dsa_switch *
  	mutex_lock(&priv->mgmt_eth_data.mutex);
  	mutex_lock(&priv->mib_eth_data.mutex);
  
@@ -279,7 +281,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  	mutex_unlock(&priv->mib_eth_data.mutex);
  	mutex_unlock(&priv->mgmt_eth_data.mutex);
-@@ -1892,6 +1897,9 @@
+@@ -1892,6 +1897,9 @@ static int qca8k_connect_tag_protocol(st
  	struct qca_tagger_data *tagger_data;
  
  	switch (proto) {
@@ -289,7 +291,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	case DSA_TAG_PROTO_QCA:
  		tagger_data = ds->tagger_data;
  
-@@ -1906,6 +1914,160 @@
+@@ -1906,6 +1914,160 @@ static int qca8k_connect_tag_protocol(st
  	return 0;
  }
  
@@ -450,7 +452,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  static void qca8k_setup_hol_fixup(struct qca8k_priv *priv, int port)
  {
  	u32 mask;
-@@ -2110,6 +2272,13 @@
+@@ -2110,6 +2272,13 @@ qca8k_setup(struct dsa_switch *ds)
  	/* HW learn on CPU port is limited and require manual setting */
  	ds->assisted_learning_on_cpu_port = true;
  
@@ -464,7 +466,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	return 0;
  }
  
-@@ -2122,6 +2291,7 @@
+@@ -2122,6 +2291,7 @@ static const struct phylink_mac_ops qca8
  
  static const struct dsa_switch_ops qca8k_switch_ops = {
  	.get_tag_protocol	= qca8k_get_tag_protocol,
@@ -472,7 +474,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	.setup			= qca8k_setup,
  	.get_strings		= qca8k_get_strings,
  	.get_ethtool_stats	= qca8k_get_ethtool_stats,
-@@ -2151,6 +2321,8 @@
+@@ -2151,6 +2321,8 @@ static const struct dsa_switch_ops qca8k
  	.port_vlan_filtering	= qca8k_port_vlan_filtering,
  	.port_vlan_add		= qca8k_port_vlan_add,
  	.port_vlan_del		= qca8k_port_vlan_del,
@@ -492,7 +494,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  #include "qca8k.h"
  
-@@ -700,8 +702,21 @@
+@@ -700,8 +702,21 @@ int qca8k_port_bridge_join(struct dsa_sw
  			   struct netlink_ext_ack *extack)
  {
  	struct qca8k_priv *priv = ds->priv;
@@ -515,7 +517,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  }
  
  void qca8k_port_bridge_leave(struct dsa_switch *ds, int port,
-@@ -710,6 +725,9 @@
+@@ -710,6 +725,9 @@ void qca8k_port_bridge_leave(struct dsa_
  	struct qca8k_priv *priv = ds->priv;
  	int err;
  
@@ -525,7 +527,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	err = qca8k_update_port_member(priv, port, bridge.dev, false);
  	if (err)
  		dev_err(priv->dev,
-@@ -757,6 +775,14 @@
+@@ -757,6 +775,14 @@ int qca8k_port_enable(struct dsa_switch
  	if (dsa_is_user_port(ds, port))
  		phy_support_asym_pause(phy);
  
@@ -540,7 +542,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	return 0;
  }
  
-@@ -822,6 +848,25 @@
+@@ -822,6 +848,25 @@ int qca8k_port_fdb_insert(struct qca8k_p
  			     QCA8K_ATU_STATUS_STATIC);
  }
  
@@ -566,7 +568,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  int qca8k_port_fdb_add(struct dsa_switch *ds, int port,
  		       const unsigned char *addr, u16 vid,
  		       struct dsa_db db)
-@@ -840,7 +885,8 @@
+@@ -840,7 +885,8 @@ int qca8k_port_fdb_add(struct dsa_switch
  	if (dsa_is_cpu_port(ds, port) || dsa_is_dsa_port(ds, port))
  		return 0;
  
@@ -576,7 +578,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  }
  
  int qca8k_port_fdb_del(struct dsa_switch *ds, int port,
-@@ -853,6 +899,7 @@
+@@ -853,6 +899,7 @@ int qca8k_port_fdb_del(struct dsa_switch
  	if (dsa_is_cpu_port(ds, port) || dsa_is_dsa_port(ds, port))
  		return 0;
  
@@ -584,7 +586,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	if (!vid)
  		vid = QCA8K_PORT_VID_DEF;
  
-@@ -888,7 +935,7 @@
+@@ -888,7 +935,7 @@ int qca8k_port_mdb_add(struct dsa_switch
  {
  	struct qca8k_priv *priv = ds->priv;
  	const u8 *addr = mdb->addr;
@@ -593,7 +595,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  	if (!vid)
  		vid = QCA8K_PORT_VID_DEF;
-@@ -903,7 +950,7 @@
+@@ -903,7 +950,7 @@ int qca8k_port_mdb_del(struct dsa_switch
  {
  	struct qca8k_priv *priv = ds->priv;
  	const u8 *addr = mdb->addr;
@@ -602,7 +604,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  	if (!vid)
  		vid = QCA8K_PORT_VID_DEF;
-@@ -1002,6 +1049,21 @@
+@@ -1002,6 +1049,21 @@ err:
  	dev_err(priv->dev, "Failed to del mirror port from %d", port);
  }
  
@@ -624,7 +626,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  int qca8k_port_vlan_filtering(struct dsa_switch *ds, int port,
  			      bool vlan_filtering,
  			      struct netlink_ext_ack *extack)
-@@ -1009,6 +1071,20 @@
+@@ -1009,6 +1071,20 @@ int qca8k_port_vlan_filtering(struct dsa
  	struct qca8k_priv *priv = ds->priv;
  	int ret;
  
@@ -645,7 +647,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	if (vlan_filtering) {
  		ret = qca8k_rmw(priv, QCA8K_PORT_LOOKUP_CTRL(port),
  				QCA8K_PORT_LOOKUP_VLAN_MODE_MASK,
-@@ -1022,6 +1098,26 @@
+@@ -1022,6 +1098,26 @@ int qca8k_port_vlan_filtering(struct dsa
  	return ret;
  }
  
@@ -672,7 +674,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  int qca8k_port_vlan_add(struct dsa_switch *ds, int port,
  			const struct switchdev_obj_port_vlan *vlan,
  			struct netlink_ext_ack *extack)
-@@ -1031,24 +1127,80 @@
+@@ -1031,24 +1127,80 @@ int qca8k_port_vlan_add(struct dsa_switc
  	struct qca8k_priv *priv = ds->priv;
  	int ret;
  
@@ -762,7 +764,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	return ret;
  }
  
-@@ -1058,6 +1210,16 @@
+@@ -1058,6 +1210,16 @@ int qca8k_port_vlan_del(struct dsa_switc
  	struct qca8k_priv *priv = ds->priv;
  	int ret;
  

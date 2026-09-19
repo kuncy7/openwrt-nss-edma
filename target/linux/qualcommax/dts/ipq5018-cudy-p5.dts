@@ -103,19 +103,15 @@
 
 	/*
 	 * The vendor DT uses GPIO35 as the active-low modem "5g-power" line
-	 * and also exports it as "pwr". Mainline has no qcom,5g-power binding,
-	 * so model it as a fixed supply consumed by PCI slot power control.
-	 *
-	 * Keep the supply enabled across the U-Boot -> Linux handoff. The startup
-	 * delay applies when the PCI slot power-control consumer enables the rail.
+	 * and also exports it as "pwr". The PCI slot power controller enables
+	 * this supply before enumeration and can power-cycle it during recovery.
 	 */
 	modem_power: regulator-modem-power {
 		compatible = "regulator-fixed";
 		regulator-name = "modem-power";
 		gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
 		regulator-boot-on;
-		regulator-always-on;
-		startup-delay-us = <20000000>;
+		startup-delay-us = <1000000>;
 	};
 
 	/*
@@ -529,10 +525,9 @@
 	status = "okay";
 
 	/*
-	 * This is the PCIe root port already defined by ipq5018.dtsi.
-	 * Generic PCI slot power control keeps GPIO35 enabled and rescans the
-	 * bus. GPIO18 is the stock active-low PERST# line.
-	 * GPIO19 has no assignment in the stock DT and remains unclaimed.
+	 * This is the root port defined by ipq5018.dtsi. PCI slot power control
+	 * owns GPIO35 and rescans the bus after enabling the modem supply.
+	 * GPIO18 is the stock active-low PERST# line.
 	 */
 	pcie@0 {
 		compatible = "pciclass,0604";

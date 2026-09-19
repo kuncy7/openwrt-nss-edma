@@ -23,10 +23,10 @@
 
 	aliases {
 		label-mac-device = &gmac1;
-		led-boot = &led_status_green;
-		led-failsafe = &led_status_red;
-		led-running = &led_status_green;
-		led-upgrade = &led_status_red;
+		led-boot = &led_power_blue;
+		led-failsafe = &led_internet_red;
+		led-running = &led_power_blue;
+		led-upgrade = &led_internet_red;
 		serial0 = &blsp1_uart1;
 	};
 
@@ -58,29 +58,29 @@
 		pinctrl-0 = <&led_pins>;
 		pinctrl-names = "default";
 
-		led_status_blue: led-0 {
+		led_internet_blue: led-0 {
 			color = <LED_COLOR_ID_BLUE>;
-			function = LED_FUNCTION_STATUS;
+			function = LED_FUNCTION_WAN;
 			gpios = <&tlmm 28 GPIO_ACTIVE_HIGH>;
 			default-state = "off";
 		};
 
-		led_status_red: led-1 {
+		led_internet_red: led-1 {
 			color = <LED_COLOR_ID_RED>;
-			function = LED_FUNCTION_STATUS;
+			function = LED_FUNCTION_WAN;
 			gpios = <&tlmm 27 GPIO_ACTIVE_HIGH>;
 			default-state = "off";
 		};
 
-		led_status_green: led-2 {
-			color = <LED_COLOR_ID_GREEN>;
-			function = LED_FUNCTION_STATUS;
+		led_power_blue: led-2 {
+			color = <LED_COLOR_ID_BLUE>;
+			function = LED_FUNCTION_POWER;
 			gpios = <&tlmm 22 GPIO_ACTIVE_HIGH>;
 			default-state = "off";
 		};
 
 		led-3 {
-			color = <LED_COLOR_ID_GREEN>;
+			color = <LED_COLOR_ID_BLUE>;
 			function = LED_FUNCTION_WLAN;
 			gpios = <&tlmm 31 GPIO_ACTIVE_HIGH>;
 			default-state = "off";
@@ -103,19 +103,15 @@
 
 	/*
 	 * The vendor DT uses GPIO35 as the active-low modem "5g-power" line
-	 * and also exports it as "pwr". Mainline has no qcom,5g-power binding,
-	 * so model it as a fixed supply consumed by PCI slot power control.
-	 *
-	 * Keep the supply enabled across the U-Boot -> Linux handoff. The startup
-	 * delay applies when the PCI slot power-control consumer enables the rail.
+	 * and also exports it as "pwr". The modem needs 30 seconds after this
+	 * supply is enabled before PCIe enumeration.
 	 */
 	modem_power: regulator-modem-power {
 		compatible = "regulator-fixed";
 		regulator-name = "modem-power";
 		gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
 		regulator-boot-on;
-		regulator-always-on;
-		startup-delay-us = <20000000>;
+		startup-delay-us = <30000000>;
 	};
 
 	/*
@@ -529,10 +525,9 @@
 	status = "okay";
 
 	/*
-	 * This is the PCIe root port already defined by ipq5018.dtsi.
-	 * Generic PCI slot power control keeps GPIO35 enabled and rescans the
-	 * bus. GPIO18 is the stock active-low PERST# line.
-	 * GPIO19 has no assignment in the stock DT and remains unclaimed.
+	 * This is the root port defined by ipq5018.dtsi. PCI slot power control
+	 * owns GPIO35 and rescans the bus after enabling the modem supply.
+	 * GPIO18 is the stock active-low PERST# line.
 	 */
 	pcie@0 {
 		compatible = "pciclass,0604";

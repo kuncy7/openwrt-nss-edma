@@ -103,15 +103,15 @@
 
 	/*
 	 * The vendor DT uses GPIO35 as the active-low modem "5g-power" line
-	 * and also exports it as "pwr". The PCI slot power controller enables
-	 * this supply before enumeration and can power-cycle it during recovery.
+	 * and also exports it as "pwr". The modem needs 30 seconds after this
+	 * supply is enabled before PCIe enumeration.
 	 */
 	modem_power: regulator-modem-power {
 		compatible = "regulator-fixed";
 		regulator-name = "modem-power";
 		gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
 		regulator-boot-on;
-		startup-delay-us = <1000000>;
+		startup-delay-us = <30000000>;
 	};
 
 	/*

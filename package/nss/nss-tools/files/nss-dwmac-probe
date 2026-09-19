@@ -11,6 +11,15 @@ nss_dsa_fw_mask
 echo "board:          $(cat /tmp/sysinfo/board_name 2>/dev/null)"
 echo "topology:       $(uci -q get nss.general.topology)"
 echo "GMACs:          $(nss_gmac_netdevs | tr '\n' ' ')"
+# Firmware memory mode each radio asks for in the device tree. Mode 2 is what a
+# QCN6122 on a GL-B3000 was measured to need for wifili; boards running it on
+# mode 1 exist, so this is reported, not enforced.
+fw_mem_modes=
+for f in /sys/firmware/devicetree/base/soc*/wifi*/qcom,ath11k-fw-memory-mode; do
+	[ -e "$f" ] || continue
+	fw_mem_modes="$fw_mem_modes $(basename "$(dirname "$f")")=$(( 0x$(hexdump -v -e '1/1 "%02x"' "$f") ))"
+done
+[ -n "$fw_mem_modes" ] && echo "fw mem mode:   $fw_mem_modes (wifi_offload: $(uci -q get nss.general.wifi_offload || echo unset))"
 for e in $(nss_gmac_netdevs); do
 	n="${e#*:}"
 	printf '  %-6s phys_if %s  %s  flags %s  carrier %s  tagging %s\n' "$n" "${e%%:*}" \

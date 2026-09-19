@@ -263,11 +263,13 @@ c3po_switch_bound() {
 	done
 	return 1
 }
-# Wi-Fi offload (wifili) needs the radios' firmware in memory mode 2 - on
-# the QCN6122 measured by LS3434 (GL-B3000 DTS) and by gabonpivovich-web on
-# the Archer AX55 (forum #306), whose DTS still says 1. Read the mode off
-# the board: with a 1 anywhere the radios stay on the host until the DTS
-# is changed, and nss.general.wifi_offload=1 by hand overrides this.
+# Firmware memory mode 2 is what the QCN6122 on a GL-B3000 was measured to
+# need for wifili, but it is not a condition for the offload as such: an
+# AX6000 and an Archer AX55, both with mode 1 in their DTS, run the Wi-Fi
+# datapath in the firmware at full rate. This used to gate wifi_offload and
+# turned it off on the 13 of 17 IPQ5018 boards whose DTS says 1 - silently,
+# for anyone moving from the trunk topology, where the default has always
+# been on. It now only warns, and the mode is reported by nss-status.
 wifi_fw_memory_mode_2() {
 	local f
 	for f in /sys/firmware/devicetree/base/soc*/wifi*/qcom,ath11k-fw-memory-mode; do
@@ -280,12 +282,8 @@ if c3po_switch_bound; then
 	[ -x /etc/init.d/qca-nss-drv ] && /etc/init.d/qca-nss-drv disable
 	[ -n "$(uci -q get nss.general.enabled)" ] || uci set nss.general.enabled='1'
 	if [ -z "$(uci -q get nss.general.wifi_offload)" ]; then
-		if wifi_fw_memory_mode_2; then
-			uci set nss.general.wifi_offload='1'
-		else
-			uci set nss.general.wifi_offload='0'
-			logger -t nss "topology dsa: Wi-Fi stays on the host - the DTS asks for ath11k-fw-memory-mode 1 and wifili needs 2 (nss.general.wifi_offload=1 to try anyway)"
-		fi
+		uci set nss.general.wifi_offload='1'
+		wifi_fw_memory_mode_2 || logger -t nss "topology dsa: a radio asks for ath11k-fw-memory-mode 1 in the DTS; Wi-Fi offload is on anyway (measured working on mode 1) - set nss.general.wifi_offload=0 if a radio misbehaves"
 	fi
 	[ -n "$(uci -q get nss.general.fw_logbuf)" ] || uci set nss.general.fw_logbuf='256'
 	# board.d may split the DSA ports across two CPU links: the Redmi AX5400

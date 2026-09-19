@@ -118,6 +118,16 @@ bridge_mgr=$(mod qca_nss_bridge_mgr)
 pppoe_mgr=$(mod qca_nss_pppoe)
 
 wifi_offload=$(cat "$MOD/ath11k/parameters/nss_offload" 2>/dev/null || echo -1)
+# Firmware memory mode per radio, straight off the live device tree. Mode 2 is
+# what a QCN6122 on a GL-B3000 was measured to need; boards running wifili on
+# mode 1 exist, so this is reported, not enforced.
+fw_mem_modes=
+for f in /sys/firmware/devicetree/base/soc*/wifi*/qcom,ath11k-fw-memory-mode; do
+	[ -e "$f" ] || continue
+	radio=$(basename "$(dirname "$f")")
+	mode=$(hexdump -v -e '1/1 "%02x"' "$f" 2>/dev/null)
+	fw_mem_modes="$fw_mem_modes ${radio}=$(( 0x${mode:-0} ))"
+done
 
 nss_sqm_section
 sqm_sec=$NSS_SQM_SEC
@@ -388,6 +398,7 @@ case "$wifi_offload" in
 	    fi ;;
 	*)  echo "  Wi-Fi:       ath11k not loaded" ;;
 esac
+[ -n "$fw_mem_modes" ] && echo "  fw mem mode:$fw_mem_modes (from the device tree; 2 is what a QCN6122 on a GL-B3000 needed, 1 is measured working elsewhere)"
 if [ "$sqm_active" = 1 ]; then
 	igs_human=$(echo "$igs_ports" | sed 's/\([a-z0-9]*\):1/\1/g; s/\([a-z0-9]*\):0/\1(MISSING)/g')
 	echo "  SQM:         nsstbl shaper on $sqm_dev, upload IGS:${igs_human:- none}"

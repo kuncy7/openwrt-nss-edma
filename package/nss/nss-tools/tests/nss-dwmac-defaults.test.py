@@ -256,6 +256,21 @@ with tempfile.TemporaryDirectory(prefix='nss-dwmac-defaults-') as directory:
     check(r, {'nss.general.topology': 'dsa', 'network.cfg1.conduit': 'eth1',
               'network.cfg2.conduit': 'eth0'}, 'even split dsa')
 
+    # A radio asking for firmware memory mode 1 in its DTS does not turn the
+    # Wi-Fi offload off: 13 of the 17 IPQ5018 boards declare mode 1 and the
+    # ones measured (AX6000, Archer AX55) run wifili on it. The old code set
+    # wifi_offload=0 here, which cost an MR5500 owner 4x the throughput.
+    radio = tmp / 'dt' / 'soc@0' / 'wifi@c000000'
+    radio.mkdir(parents=True)
+    (radio / 'qcom,ath11k-fw-memory-mode').write_bytes(bytes([0, 0, 0, 1]))
+    r = run_dsa('glinet,gl-b3000', b3000)
+    check(r, {'nss.general.wifi_offload': '1'}, 'memory mode 1 keeps the offload on')
+
+    # A value set by hand still wins, in either direction.
+    r = run_dsa('glinet,gl-b3000', dict(b3000, **{'nss.general.wifi_offload': '0'}))
+    check(r, {'nss.general.wifi_offload': '0'}, 'hand-set wifi_offload=0 kept')
+
 print('PASS: RA74 and Cudy P5 dual link, rerun, Wi-Fi choice kept, tagged WAN, '
       'no wan6, migrated config, B3000 MAC clone, D50 LAN-only trunk, '
-      'EX511 headerless switch, dsa conduit consolidation (AX5400, B3000, even split)')
+      'EX511 headerless switch, dsa conduit consolidation (AX5400, B3000, even split), '
+      'Wi-Fi offload on with firmware memory mode 1')

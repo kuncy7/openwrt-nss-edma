@@ -58,14 +58,21 @@ nss_dwmac_board_defaults() {
 		vtu='1:6t,1u,2u,3u,4u;2:6t,5u'
 		;;
 	tplink,archer-ax55-v1)
-		# port 6 = CPU (2500base-x), 0 = wan, 1-4 = lan. An
-		# RTL8367S-VB, so rtl8367s-nss re-arms it and carries its own
-		# VLAN and PVID program - switch_args and vtu stay empty.
+		# RTL8367S-VB at MDIO address 29 on mdio1, driven by the rtl8365mb
+		# DSA driver. port 6 = CPU (2500base-x into GMAC1 = eth0), 0 = wan,
+		# 1-4 = lan1-4. Unlike the RTL8367D on the EX511 this one takes
+		# the unbind route: the SerDes keeps its setup across the unbind
+		# (measured by gabonpivovich-web), so rtl8365mb is unbound and
+		# rtl8367s-nss re-arms the fabric with the VTU below - the same
+		# program the module carries as its default; its port list, trunk
+		# port and PHY list default to this wiring, so switch_args stays
+		# empty.
 		fw_mask='0x2'
 		trunk='eth0'
-		fabric='none'
+		fabric='rtl8367s'
+		switch_dev='90000.mdio-1:1d'
 		switch_args=''
-		vtu=''
+		vtu='1:6t,1u,2u,3u,4u;2:6t,0u'
 		;;
 	xunison,exigo-hub-d50-5g)
 		# WAN is GMAC0's own GE PHY (netdev 'wan'), so GMAC1 - the switch

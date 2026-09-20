@@ -8,11 +8,12 @@
 # the data plane - the firmware cannot parse the 2-byte Atheros DSA tag, and
 # DSA user ports never get an NSS interface number, so ECM would not even
 # try to accelerate them. Port separation is done in the switch fabric
-# instead: qca8k is unbound after it has done the hard bring-up (SerDes,
-# clocks, uniphy) and the qca8337-nss module reprograms the fabric - MACs
-# on, Atheros header off, and the VTU split from nss.general.vtu (front
-# ports untagged in their VLANs, the CPU port carrying both tagged). The
-# trunk then carries plain 802.1q, which both the firmware (dynamic
+# instead: the DSA driver is unbound after it has done the hard bring-up
+# (SerDes, clocks, uniphy) and a fabric module reprograms the switch - MACs
+# on, CPU tag off, and the VTU split from nss.general.vtu (front ports
+# untagged in their VLANs, the CPU port carrying both tagged): qca8337-nss
+# after qca8k on a QCA8337, rtl8367s-nss after rtl8365mb on an RTL8367S-VB.
+# The trunk then carries plain 802.1q, which both the firmware (dynamic
 # interface type 17) and the host stack parse natively.
 #
 # The topology is therefore FIXED for both data paths: eth0 is the trunk,
@@ -46,37 +47,59 @@ wifi_load() {
 	modprobe ath11k_pci 2>/dev/null
 }
 
-# qca8k did the SerDes/uniphy bring-up at boot; take the switch away from
-# it and re-arm the fabric for the VLAN trunk. Safe to call when already
-# unbound (a service restart): a successfully loaded helper is left in place.
+# The DSA driver did the SerDes/uniphy bring-up at boot; take the switch
+# away from it and re-arm the fabric for the VLAN trunk. Safe to call when
+# already unbound (a service restart): a successfully loaded fabric module
+# is left in place.
 #
 # Board wiring comes from uci (all optional; defaults = GL-B3000):
-#   nss.general.switch_dev   the switch's mdio device, to unbind from qca8k
-#                            (default 90000.mdio-1:11 - QCA8337 at address 17
-#                            on mdio1, the usual placement)
-#   nss.general.vtu          VTU program (module parameter 'vlans')
-#   nss.general.switch_args  any further qca8337-nss parameters, verbatim,
+#   nss.general.fabric       the switch on the trunk: 'qca8337' (unbound
+#                            from qca8k, re-armed by qca8337-nss), 'rtl8367s'
+#                            (RTL8367S-VB, unbound from rtl8365mb, re-armed
+#                            by rtl8367s-nss) or 'none' (no switch, or one
+#                            whose DSA driver stays bound)
+#   nss.general.switch_dev   the switch's mdio device, to unbind from its
+#                            driver (default 90000.mdio-1:11 - QCA8337 at
+#                            address 17 on mdio1, the usual placement; the
+#                            RTL8367S sits at 29, 90000.mdio-1:1d)
+#   nss.general.vtu          VTU program (module parameter 'vlans', the same
+#                            syntax for both modules)
+#   nss.general.switch_args  any further fabric module parameters, verbatim,
 #                            e.g. 'cpu_port=6 ports=0x7c wake_phys=...'
-#                            for a board with the CPU port on port 6
+#                            for a QCA8337 with the CPU port on port 6
 . /lib/functions.sh
 
 switch_to_trunk() {
-	local dev vtu args fabric
+	local dev vtu args fabric driver
 
-	# A board with no switch at all (Linksys MX6200: GMAC0 is the LAN PHY,
-	# GMAC1 the WAN PHY) has nothing to re-arm; qca8337-nss loaded there
-	# would poke the B3000's switch registers at an MDIO address that
-	# answers with whatever sits at it.
 	fabric="$(uci -q get nss.general.fabric)"
 	[ -n "$fabric" ] || fabric=qca8337
-	if [ "$fabric" = "none" ]; then
+	dev="$(uci -q get nss.general.switch_dev)"
+	case "$fabric" in
+	none)
+		# A board with no switch at all (Linksys MX6200: GMAC0 is the
+		# LAN PHY, GMAC1 the WAN PHY) has nothing to re-arm; qca8337-nss
+		# loaded there would poke the B3000's switch registers at an
+		# MDIO address that answers with whatever sits at it.
 		logger -t nss "no switch fabric on this board (nss.general.fabric=none), trunk is a plain PHY port"
 		return 0
-	fi
-	[ ! -d /sys/module/qca8337_nss ] || return 0
+		;;
+	qca8337)
+		driver=qca8k
+		[ -n "$dev" ] || dev="90000.mdio-1:11"
+		;;
+	rtl8367s)
+		driver=rtl8365mb-mdio
+		[ -n "$dev" ] || dev="90000.mdio-1:1d"
+		;;
+	*)
+		logger -p user.err -t nss "unknown switch fabric '$fabric' - nss.general.fabric is qca8337, rtl8367s or none"
+		return 1
+		;;
+	esac
+	# The fabric module stays loaded once it has re-armed the switch.
+	[ ! -d "/sys/module/${fabric}_nss" ] || return 0
 
-	dev="$(uci -q get nss.general.switch_dev)"
-	[ -n "$dev" ] || dev="90000.mdio-1:11"
 	vtu="$(uci -q get nss.general.vtu)"
 	# The built-in VTU program is the GL-B3000's wiring. It used to be the
 	# fallback for every board, which split a LAN-only switch (Xunison D50)
@@ -84,16 +107,16 @@ switch_to_trunk() {
 	[ -n "$vtu" ] || [ "$(board_name)" != "glinet,gl-b3000" ] || vtu="1:0t,2u,3u;2:0t,1u"
 	args="$(uci -q get nss.general.switch_args)"
 
-	if [ -e "/sys/bus/mdio_bus/drivers/qca8k/$dev" ]; then
-		echo "$dev" > /sys/bus/mdio_bus/drivers/qca8k/unbind || return 1
+	if [ -e "/sys/bus/mdio_bus/drivers/$driver/$dev" ]; then
+		echo "$dev" > "/sys/bus/mdio_bus/drivers/$driver/unbind" || return 1
 		sleep 2
 	fi
 	# kmodloader's modprobe drops module parameters - insmod passes them.
 	# shellcheck disable=SC2086
 	if [ -n "$vtu" ]; then
-		insmod "/lib/modules/$(uname -r)/qca8337-nss.ko" vlans="$vtu" $args || return 1
+		insmod "/lib/modules/$(uname -r)/$fabric-nss.ko" vlans="$vtu" $args || return 1
 	else
-		insmod "/lib/modules/$(uname -r)/qca8337-nss.ko" $args || return 1
+		insmod "/lib/modules/$(uname -r)/$fabric-nss.ko" $args || return 1
 	fi
 }
 

@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=nss-tools
-PKG_RELEASE:=7
+PKG_RELEASE:=8
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -45,7 +45,7 @@ define Package/nss-tools-dwmac
   TITLE:=NSS offload runtime for ipq50xx (qca-dwmac-nss glue)
   DEPENDS:=@(TARGET_qualcommax_ipq50xx) +kmod-qca-dwmac-nss +kmod-qca-nss-drv \
 	+kmod-qca-nss-ecm +kmod-qca-nss-drv-vlan-mgr +kmod-qca8337-nss \
-	+kmod-qca-dsa-nss +ip-full
+	+kmod-rtl8367s-nss +kmod-qca-dsa-nss +ip-full
   CONFLICTS:=nss-tools
   PKGARCH:=all
 endef
@@ -53,8 +53,8 @@ endef
 define Package/nss-tools-dwmac/description
  The ipq50xx flavour of the NSS bring-up: the port model here is the
  reverse of ipq807x (phys_if N = GMAC N, the netdev is the switch trunk),
- so the DSA switch is rearmed as a plain VLAN fabric (qca8337-nss, VTU
- from nss.general.vtu) and netifd runs the lan/wan VLANs on the eth0
+ so the DSA switch is rearmed as a plain VLAN fabric (qca8337-nss or
+ rtl8367s-nss, VTU from nss.general.vtu) and netifd runs the lan/wan VLANs on the eth0
  trunk. The 'nss' service arms the wired firmware plane before netifd and
  /usr/sbin/nss-dwmac-up layers ECM acceleration on top once the topology
  exists. Wi-Fi runs on the NSS path by default (ath11k built with NSS

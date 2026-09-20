@@ -41,6 +41,7 @@ them:
 | `qualcommax: ipq5018: add the NSS core node and reserved memory` | `ipq5018-nss.dtsi`: the `nss0` node with its clocks and interrupts, plus the reserved-memory region for the firmware. |
 | `package: add qca-dwmac-nss, the NSS data-plane glue for IPQ5018` | `kmod-qca-dwmac-nss`: the counterpart of `qca-ppe-nss` for this SoC. Implements the `nss-dp` API `qca-nss-drv` expects on top of the stmmac claim. Arms at runtime through debugfs, never at probe. |
 | `package: add qca8337-nss, the switch fabric driver for the NSS trunk` | `kmod-qca8337-nss`: re-arms the QCA8337 as a plain 802.1Q fabric after `qca8k` is unbound, for the trunk topology (see *Why DSA has to go*). |
+| `kernel: add rtl8367s-nss, the Realtek counterpart to qca8337-nss` | `kmod-rtl8367s-nss` (gabonpivovich-web, PR #9): the same job on an RTL8367S-VB after `rtl8365mb` is unbound, for the trunk topology - trunk force word, CPU tag off, VLAN table and PVIDs, egress mode, learning limit, front PHYs. Refuses any other chip ID. |
 | `package: nss-tools: add the ipq50xx bring-up service` | `nss-tools-dwmac`: the `nss` service, the ordering that makes the arm work, the one-shot network-config migration. |
 | `qualcommax: ipq5018: enable the NSS core on the GL-B3000` | One line in the board DTS: `#include "ipq5018-nss.dtsi"`. |
 | `mac80211: ath11k: NSS fixes found while porting wifili to IPQ5018` | Six real bugs met on the way (REO register layout, ring topology, init flags, L2 update frame padding, non-cacheable rings, and one that matters with the offload *off*: a QCN6122 radio no longer disappears because `ath11k_nss_setup()` returns `-ENOTSUPP` for it). |
@@ -430,9 +431,9 @@ topology alone.
 | `trunk` | `eth0` | the switch trunk netdev. `eth1` on a board whose GMAC0 has a netdev of its own - a WAN PHY (Xunison D50, Zyxel SCR50AXE) or a second link into the switch (Redmi AX5400, CMCC PZ-L8); `lan` on the MX6200, which has no switch. |
 | `trunk_if` | `1` | which GMAC the trunk is = its NSS phys_if. `0` where the switch hangs off GMAC0 (SPNMX56, AX6000) or there is no switch (MX6200). |
 | `extra_ports` | *(empty)* | other GMACs in use, as `<if>:<netdev>` entries - the D50's ethernet WAN is `0:wan`, the SPNMX56's 2.5G PHY `1:wan`, the Redmi AX5400's second link into the switch `0:eth0` (WAN on `eth0.2`, LAN on `eth1.1`). Named here, armed by `fw_mask`. |
-| `fabric` | `qca8337` | `none` on a board with no switch: skips the qca8k unbind and the fabric module. |
-| `switch_dev` | `90000.mdio-1:11` | the switch's MDIO device, unbound from `qca8k` before the re-arm. `90000.mdio-1:18` on the I-O DATA WN-DAX3000GR and the Elecom WRC-X3000GS2 / GST2. |
-| `switch_args` | *(empty)* | further `qca8337-nss` parameters, passed verbatim (`cpu_port=`, `ports=`, `wake_phys=`, `bus_via=`) |
+| `fabric` | `qca8337` | which switch the trunk goes through: `qca8337` (unbind `qca8k`, re-arm with `qca8337-nss`), `rtl8367s` (an RTL8367S-VB: unbind `rtl8365mb`, re-arm with `rtl8367s-nss` - the Archer AX55 v1), or `none` on a board with no switch, or one whose DSA driver stays bound (EX511 v2): skips the unbind and the fabric module. |
+| `switch_dev` | `90000.mdio-1:11` | the switch's MDIO device, unbound from its DSA driver before the re-arm. `90000.mdio-1:18` on the I-O DATA WN-DAX3000GR and the Elecom WRC-X3000GS2 / GST2; `90000.mdio-1:1d` (address 29) for the RTL8367S on the Archer AX55 v1. |
+| `switch_args` | *(empty)* | further fabric module parameters, passed verbatim. `qca8337-nss`: `cpu_port=`, `ports=`, `wake_phys=`, `bus_via=`; `rtl8367s-nss`: `trunk_port=`, `ports=`, `phys=`, `force_val=`, `pvids=` (its defaults are the AX55 wiring). |
 | `meminfo` | *(empty; GMAC1's rings in SDRAM on the Redmi AX5400, MR5500 and AX6000)* | where the firmware keeps the GMAC descriptor rings, written to `qca-nss-drv`'s `meminfo_user_config` before the core boots, e.g. `<0, gmac_tx_desc_1, SDRAM>, <0, gmac_rx_desc_1, SDRAM>`. With GMAC1's rings in the default `UTCM_SHARED` the port never starts on those three boards (`rs=0 ts=0`, `rx_fw=0`) - worth trying on any other board with that symptom. `default` keeps the firmware's placement on them. `grep gmac /sys/kernel/debug/qca-nss-drv/meminfo/core0` shows where they ended up. |
 | `fw_logbuf` | `256` | firmware log ring size, read at `/sys/kernel/debug/qca-nss-drv/logs` |
 
@@ -597,10 +598,10 @@ The board side is small. The parts, in order of effort:
    | Dumb AP: lan3 is a tagged uplink with VLANs 10-13 and 40; lan1, lan2 and the WAN jack are untagged ports in VLAN 10 | CMCC MR3000D-CI (csharper2005) - ports 1-3 = lan3/lan2/lan1, 4 = wan, 6 = CPU | `10:6t,1t,2u,3u,4u;11:6t,1t;12:6t,1t;13:6t,1t;40:6t,1t` | `eth1.10` … `eth1.40` in their bridges |
 
    **A Realtek switch (RTL8367D/S) takes a different route.** `qca8337-nss`
-   does not apply, and the unbind trick does not work either: the RTL8367D's
-   CPU port is a phylink-managed SGMII PCS, so unbinding the driver takes
-   the link down and the fabric goes quiet however correctly it was
-   programmed. On the TP-Link EX511 v2 the switch stays on its DSA driver
+   does not apply, and on the RTL8367D the unbind trick does not work
+   either: its CPU port is a phylink-managed SGMII PCS, so unbinding the
+   driver takes the link down and the fabric goes quiet however correctly
+   it was programmed. On the TP-Link EX511 v2 the switch stays on its DSA driver
    (`rtl8365mb`, with the RTL8367D family patch in this branch) and the CPU
    tag is turned off instead: `realtek,headerless-cpu-port` in the switch
    node selects `DSA_TAG_PROTO_NONE` and clears `CPU_CTRL_EN`, so `eth0`
@@ -617,11 +618,15 @@ The board side is small. The parts, in order of effort:
    `wan6` - and `bridge-vlan` does not work (it moves dead DSA ports into
    `br-lan` and drops `eth0` out of it, which cuts every connection
    including SSH). VLANs on a Realtek switch under this plane are an open
-   item on this route. The Archer AX55 v1 has the same switch and takes
-   the other one: unbind `rtl8365mb` and re-arm the fabric from a module,
-   which does give it VLANs (gabonpivovich-web, forum #306); on the EX511
-   that left the fabric quiet. On either route the table entry is
-   `fabric='none'`.
+   item on this route. The Archer AX55 v1 (an RTL8367S-VB) takes the other
+   one: its SerDes keeps its setup across the unbind, so the service unbinds
+   `rtl8365mb` and `rtl8367s-nss` (gabonpivovich-web, PR #9) re-arms the
+   fabric the way `qca8337-nss` does - force word on the trunk port, CPU
+   tag off, VLAN table and PVIDs from `vtu`, egress mode, learning limit,
+   front PHYs - which gives it VLANs like any QCA8337 board; on the EX511
+   that route left the fabric quiet. The table entries: `fabric='none'` for
+   the EX511, `fabric='rtl8367s'` with `switch_dev='90000.mdio-1:1d'` and
+   `vtu='1:6t,1u,2u,3u,4u;2:6t,0u'` for the AX55.
 
 Also: a board whose WAN is on the internal GE PHY (GMAC0), like the D50, needs
 no VTU at all - the switch only carries LANs, `vlans` can stay empty - and the

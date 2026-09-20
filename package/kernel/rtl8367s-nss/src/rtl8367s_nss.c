@@ -46,7 +46,8 @@
  * leaves every port in STP disabled and fails the load, so a half-programmed
  * fabric never forwards - the VLAN split is what keeps WAN and LAN apart
  * here. The dump modes (mib_dump, l2_dump) and dry_run change nothing and
- * return -EAGAIN instead of staying loaded.
+ * return -EAGAIN instead of staying loaded; identify=1 only checks the chip
+ * ID, for the service to ask before it unbinds the DSA driver.
  *
  * Register reads on this chip only return the addressed register's contents
  * shortly after a write; otherwise the data register keeps its previous
@@ -260,6 +261,17 @@ MODULE_PARM_DESC(pvids, "per-port PVID override, e.g. 0:2,1:1 (default: each por
 
 #define RTL_NPORTS			11
 static u16 rtl_pvid[RTL_NPORTS];
+
+/* The nss service asks this before it unbinds rtl8365mb: there are Archer
+ * AX55 v1 boards with a family C RTL8367S, and a refusal that only comes
+ * after the unbind leaves the board with no switch driver and no fabric.
+ * The chip ID read is safe next to the bound driver - every access sequence
+ * here and in realtek-mdio runs under the bus's mdio_lock.
+ */
+static bool identify;
+module_param(identify, bool, 0444);
+MODULE_PARM_DESC(identify,
+		 "only check the chip: loads (rmmod it) if it is an RTL8367S-VB, -ENODEV if not; nothing else is read or written");
 
 static bool dry_run;
 module_param(dry_run, bool, 0444);
@@ -956,6 +968,12 @@ static int __init rtl_nss_init(void)
 	}
 	pr_info("rtl8367s-nss: RTL8367S-VB, chip id 0x%04X ver 0x%04X\n",
 		chip_id, chip_ver);
+
+	if (identify) {
+		put_device(&rbus->dev);
+		rbus = NULL;
+		return 0;
+	}
 
 	if (l2_dump) {
 		rtl_l2_show();

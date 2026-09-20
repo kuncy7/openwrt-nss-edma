@@ -624,7 +624,11 @@ The board side is small. The parts, in order of effort:
    fabric the way `qca8337-nss` does - force word on the trunk port, CPU
    tag off, VLAN table and PVIDs from `vtu`, egress mode, learning limit,
    front PHYs - which gives it VLANs like any QCA8337 board; on the EX511
-   that route left the fabric quiet. The table entries: `fabric='none'` for
+   that route left the fabric quiet. The module only knows family D (chip
+   ID `0x6642`); an AX55 v1 with a family C RTL8367S exists too, so the
+   service asks the module to identify the chip *before* the unbind and
+   leaves `rtl8365mb` bound on a refusal - that board stays on the `dsa`
+   topology, which works on both. The table entries: `fabric='none'` for
    the EX511, `fabric='rtl8367s'` with `switch_dev='90000.mdio-1:1d'` and
    `vtu='1:6t,1u,2u,3u,4u;2:6t,0u'` for the AX55.
 

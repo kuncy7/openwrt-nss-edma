@@ -100,6 +100,19 @@ switch_to_trunk() {
 	# The fabric module stays loaded once it has re-armed the switch.
 	[ ! -d "/sys/module/${fabric}_nss" ] || return 0
 
+	# rtl8367s-nss only knows family D (RTL8367S-VB, chip ID 0x6642), and
+	# there are Archer AX55 v1 boards with a family C RTL8367S. Ask before
+	# the unbind: a refusal after it would leave the board with neither a
+	# switch driver nor a fabric. qca8337-nss checks its chip too, but
+	# every qca8k board here has the one chip.
+	if [ "$fabric" = "rtl8367s" ]; then
+		if ! insmod "/lib/modules/$(uname -r)/rtl8367s-nss.ko" identify=1; then
+			logger -p user.err -t nss "the switch is not an RTL8367S-VB (a family C RTL8367S?) - rtl8367s-nss cannot re-arm it, rtl8365mb stays bound; use nss.general.topology='dsa' on this board"
+			return 1
+		fi
+		rmmod rtl8367s_nss
+	fi
+
 	vtu="$(uci -q get nss.general.vtu)"
 	# The built-in VTU program is the GL-B3000's wiring. It used to be the
 	# fallback for every board, which split a LAN-only switch (Xunison D50)

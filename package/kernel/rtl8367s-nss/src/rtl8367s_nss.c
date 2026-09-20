@@ -39,9 +39,14 @@
  *   phys:      the front PHYs sit behind the indirect OCP window and
  *              phy_detach leaves them in BMCR power-down.
  *
- * It does all of that in one pass and then refuses to load, so a rerun needs
- * no rmmod first and nothing is left holding the bus. What the switch keeps
- * is what was written to it.
+ * It does all of that once at load and then stays resident, like qca8337-nss:
+ * the nss service takes /sys/module/rtl8367s_nss as "the fabric is re-armed"
+ * and a rerun is rmmod + insmod. Nothing is held while loaded; the switch
+ * keeps what was written to it. A bus or table error anywhere in the pass
+ * leaves every port in STP disabled and fails the load, so a half-programmed
+ * fabric never forwards - the VLAN split is what keeps WAN and LAN apart
+ * here. The dump modes (mib_dump, l2_dump) and dry_run change nothing and
+ * return -EAGAIN instead of staying loaded.
  *
  * Register reads on this chip only return the addressed register's contents
  * shortly after a write; otherwise the data register keeps its previous
@@ -54,8 +59,6 @@
 #include <linux/phy.h>
 #include <linux/slab.h>
 #include <linux/string.h>
-#include <linux/workqueue.h>
-#include <linux/fs.h>
 #include <linux/array_size.h>
 
 #define REALTEK_MDIO_CTRL0_REG		31
@@ -246,12 +249,17 @@ static char *vlans = "1:1u,2u,3u,4u,6t;2:0u,6t";
 module_param(vlans, charp, 0444);
 MODULE_PARM_DESC(vlans, "VLAN program, e.g. 1:0u,1u,2u,3u,6t;2:4u,6t");
 
-/* PVID per front port, "port:vid,..." - what an untagged ingress frame
- * gets tagged with.
+/* PVID per front port - what an untagged ingress frame gets tagged with.
+ * By default a port's PVID is the VLAN it is an untagged member of in the
+ * program above (the qca8337-nss convention, so nss.general.vtu means the
+ * same thing on both switches); "port:vid,..." here overrides that.
  */
-static char *pvids = "1:1,2:1,3:1,4:1,0:2";
+static char *pvids = "";
 module_param(pvids, charp, 0444);
-MODULE_PARM_DESC(pvids, "per-port PVID, e.g. 0:1,1:1,2:1,3:1,4:2");
+MODULE_PARM_DESC(pvids, "per-port PVID override, e.g. 0:2,1:1 (default: each port's untagged VLAN)");
+
+#define RTL_NPORTS			11
+static u16 rtl_pvid[RTL_NPORTS];
 
 static bool dry_run;
 module_param(dry_run, bool, 0444);
@@ -266,14 +274,32 @@ MODULE_PARM_DESC(verbose, "log every register access, not just the changes");
 
 static struct mii_bus *rbus;
 
+/* Init is single-threaded. Keep the first bus or table failure so the load
+ * can fail on it once the pass is over, with the ports blocked - the same
+ * shape as qca8337-nss.
+ */
+static int rtl_error;
+
+static void rtl_fail(int ret)
+{
+	if (ret < 0 && !rtl_error)
+		rtl_error = ret;
+}
+
 static void rtl_write(u16 reg, u16 val)
 {
+	int ret;
+
 	mutex_lock(&rbus->mdio_lock);
-	rbus->write(rbus, sw_addr, REALTEK_MDIO_CTRL0_REG, REALTEK_MDIO_ADDR_OP);
-	rbus->write(rbus, sw_addr, REALTEK_MDIO_ADDRESS_REG, reg);
-	rbus->write(rbus, sw_addr, REALTEK_MDIO_DATA_WRITE_REG, val);
-	rbus->write(rbus, sw_addr, REALTEK_MDIO_CTRL1_REG, REALTEK_MDIO_WRITE_OP);
+	ret = rbus->write(rbus, sw_addr, REALTEK_MDIO_CTRL0_REG, REALTEK_MDIO_ADDR_OP);
+	if (ret >= 0)
+		ret = rbus->write(rbus, sw_addr, REALTEK_MDIO_ADDRESS_REG, reg);
+	if (ret >= 0)
+		ret = rbus->write(rbus, sw_addr, REALTEK_MDIO_DATA_WRITE_REG, val);
+	if (ret >= 0)
+		ret = rbus->write(rbus, sw_addr, REALTEK_MDIO_CTRL1_REG, REALTEK_MDIO_WRITE_OP);
 	mutex_unlock(&rbus->mdio_lock);
+	rtl_fail(ret);
 }
 
 static int rtl_read(u16 reg, u16 *val)
@@ -292,8 +318,10 @@ static int rtl_read(u16 reg, u16 *val)
 	ret = rbus->read(rbus, sw_addr, REALTEK_MDIO_DATA_READ_REG);
 	mutex_unlock(&rbus->mdio_lock);
 
-	if (ret < 0)
+	if (ret < 0) {
+		rtl_fail(ret);
 		return ret;
+	}
 
 	*val = ret;
 	return 0;
@@ -350,17 +378,14 @@ static int rtl_read_raw(u16 reg, u16 *val)
 	ret = rbus->read(rbus, sw_addr, REALTEK_MDIO_DATA_READ_REG);
 	mutex_unlock(&rbus->mdio_lock);
 
-	if (ret < 0)
+	if (ret < 0) {
+		rtl_fail(ret);
 		return ret;
+	}
 
 	*val = ret;
 	return 0;
 }
-
-/* Set while the LED poll runs: it touches registers four times a second
- * and must not narrate.
- */
-static bool rtl_quiet;
 
 static int rtl_update(u16 reg, u16 mask, u16 val)
 {
@@ -373,7 +398,7 @@ static int rtl_update(u16 reg, u16 mask, u16 val)
 
 	new = (old & ~mask) | (val & mask);
 	if (new == old) {
-		if (verbose && !rtl_quiet)
+		if (verbose)
 			pr_info("rtl8367s-nss: 0x%04X already 0x%04X\n",
 				reg, old);
 		return 0;
@@ -387,7 +412,7 @@ static int rtl_update(u16 reg, u16 mask, u16 val)
 
 	rtl_write(reg, new);
 	ret = rtl_read(reg, &old);
-	if (!rtl_quiet && (verbose || old != new))
+	if (verbose || old != new)
 		pr_info("rtl8367s-nss: 0x%04X set to 0x%04X, reads back 0x%04X\n",
 			reg, new, old);
 
@@ -409,6 +434,7 @@ static int rtl_ia_wait(void)
 		usleep_range(10, 20);
 	}
 
+	rtl_fail(-ETIMEDOUT);
 	return -ETIMEDOUT;
 }
 
@@ -558,6 +584,16 @@ static void rtl_port_forward(int port)
 		   RTL_PORT_ISOLATION_MASK);
 }
 
+/* What teardown left: STP disabled, no isolation peers. Best effort - the
+ * bus that failed may fail here too, which is why the ports were only ever
+ * opened after everything else had gone through.
+ */
+static void rtl_port_block(int port)
+{
+	rtl_update(RTL_MSTI_CTRL_REG(port), RTL_MSTI_STATE_MASK(port), 0);
+	rtl_update(RTL_PORT_ISOLATION_REG(port), RTL_PORT_ISOLATION_MASK, 0);
+}
+
 /* ===== VLAN ===== */
 
 static int rtl_table_wait(void)
@@ -573,6 +609,7 @@ static int rtl_table_wait(void)
 		usleep_range(10, 20);
 	}
 
+	rtl_fail(-ETIMEDOUT);
 	return -ETIMEDOUT;
 }
 
@@ -679,17 +716,20 @@ static void rtl_vlan_one(char *spec)
 		mode = tok[n - 1];
 		tok[n - 1] = '\0';
 
-		if (kstrtoint(tok, 0, &port) || port < 0 || port > 10) {
+		if (kstrtoint(tok, 0, &port) || port < 0 || port >= RTL_NPORTS) {
 			pr_warn("rtl8367s-nss: bad port '%s'\n", tok);
 			continue;
 		}
 
-		member |= BIT(port);
-		if (mode == 'u' || mode == 'U')
+		if (mode == 'u' || mode == 'U') {
 			untag |= BIT(port);
-		else if (mode != 't' && mode != 'T')
+			rtl_pvid[port] = vid;
+		} else if (mode != 't' && mode != 'T') {
 			pr_warn("rtl8367s-nss: bad mode '%c' for port %d\n",
 				mode, port);
+			continue;
+		}
+		member |= BIT(port);
 	}
 
 	rtl_cvlan_write(vid, member, untag, 0);
@@ -716,10 +756,26 @@ static void rtl_vlan_program(void)
 	kfree(list);
 }
 
+static void rtl_pvid_set(int port, int vid)
+{
+	rtl_update(RTL_D_PVID_REG(port), RTL_D_PVID_MASK, vid);
+	/* Accept any frame type: 0 in the two-bit field. Untagged ingress is
+	 * what the PVID is for.
+	 */
+	rtl_update(RTL_ACCEPT_FRAME_REG(port), RTL_ACCEPT_FRAME_MASK(port), 0);
+}
+
 static void rtl_pvid_program(void)
 {
 	char *list, *tok, *p, *colon;
 	int port, vid;
+
+	if (!*pvids) {
+		for (port = 0; port < RTL_NPORTS; port++)
+			if (rtl_pvid[port])
+				rtl_pvid_set(port, rtl_pvid[port]);
+		return;
+	}
 
 	list = kstrdup(pvids, GFP_KERNEL);
 	if (!list)
@@ -735,15 +791,10 @@ static void rtl_pvid_program(void)
 		*colon = '\0';
 		if (kstrtoint(tok, 0, &port) || kstrtoint(colon + 1, 0, &vid))
 			continue;
-		if (port < 0 || port > 10 || vid < 1 || vid > 4095)
+		if (port < 0 || port >= RTL_NPORTS || vid < 1 || vid > 4095)
 			continue;
 
-		rtl_update(RTL_D_PVID_REG(port), RTL_D_PVID_MASK, vid);
-		/* Accept any frame type: 0 in the two-bit field. Untagged
-		 * ingress is what the PVID is for.
-		 */
-		rtl_update(RTL_ACCEPT_FRAME_REG(port),
-			   RTL_ACCEPT_FRAME_MASK(port), 0);
+		rtl_pvid_set(port, vid);
 	}
 
 	kfree(list);
@@ -931,31 +982,54 @@ static int __init rtl_nss_init(void)
 			   RTL_CPU_CTRL_EN_MASK | RTL_CPU_CTRL_INSERTMODE_MASK,
 			   0);
 
-	/* 3. forwarding state and isolation masks teardown stripped */
-	rtl_for_each(ports, 10, rtl_port_forward);
-
-	/* 4. the VLAN table and PVIDs DSA removed on the way out */
+	/* 3. the VLAN table and PVIDs DSA removed on the way out, the egress
+	 *    mode and the learning limit - all of it while the ports are
+	 *    still in STP disabled from the teardown, so nothing forwards
+	 *    through a half-programmed fabric
+	 */
 	rtl_vlan_program();
 	rtl_pvid_program();
-	rtl_for_each(ports, 10, rtl_egress_original);
-	rtl_for_each(ports, 10, rtl_port_learning);
+	rtl_for_each(ports, RTL_NPORTS - 1, rtl_egress_original);
+	rtl_for_each(ports, RTL_NPORTS - 1, rtl_port_learning);
 
-	/* 5. the front PHYs phy_detach parked */
+	/* 4. the front PHYs phy_detach parked */
 	rtl_for_each(phys, 7, rtl_wake_phy);
 
-	pr_info("rtl8367s-nss: switch re-armed: trunk port %d forced 0x%04X, VLANs %s\n",
-		trunk_port, force_val, vlans);
+	/* 5. forwarding state and isolation masks teardown stripped - last,
+	 *    and only if everything above went through
+	 */
+	if (!rtl_error)
+		rtl_for_each(ports, RTL_NPORTS - 1, rtl_port_forward);
+
+	if (rtl_error) {
+		pr_err("rtl8367s-nss: re-arm failed (%d), ports left blocked\n",
+		       rtl_error);
+		rtl_for_each(ports, RTL_NPORTS - 1, rtl_port_block);
+		put_device(&rbus->dev);
+		rbus = NULL;
+		return rtl_error;
+	}
+
+	pr_info("rtl8367s-nss: switch re-armed: trunk port %d forced 0x%04X, VLANs %s%s\n",
+		trunk_port, force_val, vlans, dry_run ? " (dry run, nothing written)" : "");
 
 	put_device(&rbus->dev);
 	rbus = NULL;
 
 	/* Nothing is left to hold: the switch keeps what was written to it.
-	 * Refusing to load means a rerun needs no rmmod first.
+	 * The module stays loaded as the service's record that the fabric has
+	 * been re-armed (a restart skips the unbind and the reload). A dry run
+	 * wrote nothing, so it has nothing to record.
 	 */
-	return -EAGAIN;
+	return dry_run ? -EAGAIN : 0;
+}
+
+static void __exit rtl_nss_exit(void)
+{
 }
 
 module_init(rtl_nss_init);
+module_exit(rtl_nss_exit);
 
 MODULE_DESCRIPTION("Re-arm RTL8367S-VB after rtl8365mb teardown");
 MODULE_LICENSE("GPL");

@@ -13,7 +13,7 @@ define KernelPackage/rtl8367s-nss
   SUBMENU:=Network Devices
   TITLE:=RTL8367S-VB fabric re-arm after rtl8365mb teardown
   DEPENDS:=@TARGET_qualcommax_ipq50xx
-  FILES:=$(PKG_BUILD_DIR)/rtl8367s_nss.ko
+  FILES:=$(PKG_BUILD_DIR)/rtl8367s-nss.ko
 endef
 
 define KernelPackage/rtl8367s-nss/description

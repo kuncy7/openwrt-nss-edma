@@ -138,7 +138,7 @@ switch_to_8021q() {
 			[ -n "$(cat "/sys/class/net/$port/phys_switch_id" 2>/dev/null)" ] || continue
 			stray="$stray $port"
 		done
-		[ -n "$stray" ] && logger -t nss "topology dsa:$stray on conduit $other, not $trunk - those ports stay on the host path (set network.<device>.conduit=$trunk to move them)"
+		[ -n "$stray" ] && logger -t nss "topology dsa:$stray on conduit $other, not $trunk - those ports stay on the host path (a 'config device' section with option name <port> and option conduit $trunk moves one; board.d's split is in /etc/board.json, not in /etc/config/network)"
 	done
 	tagging="/sys/class/net/$trunk/dsa/tagging"
 	cur="$(cat "$tagging" 2>/dev/null)"

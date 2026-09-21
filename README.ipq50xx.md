@@ -252,13 +252,34 @@ second CPU port DSA does not use or a GMAC nothing configured.
 `nss-dwmac-probe` prints that view; `trunk`, `trunk_if`, `extra_ports` and
 `fw_mask` in uci still override it if a board needs that. One thing first boot
 does change: a board table that splits the DSA ports across both CPU links
-(the Redmi AX5400 and the CMCC PZ-L8 put `lan1`-`lan3` on `eth1` and `wan` on
-`eth0`) is consolidated onto the link that carries most of them, because only
-the armed conduit's ports get a firmware VLAN interface - and on the AX5400
-the odd link is GMAC0 into switch port 5, whose RX is dead in mainline as well
-(openwrt#24696). A port left on the other link is not an error, it just stays
-on the host path; the service says which ports and where in the log at boot.
-An even split is left alone: nothing on the board says which link works.
+(the Redmi AX5400, the Cudy P5 and the CMCC PZ-L8 put `lan1`-`lan3` on `eth1`
+and `wan` on `eth0`) is consolidated onto the link that carries most of them,
+because only the armed conduit's ports get a firmware VLAN interface - and on
+the AX5400 the odd link is GMAC0 into switch port 5, whose RX is dead in
+mainline as well (openwrt#24696). The split is read where `board.d` puts it,
+`/etc/board.json` (`network_device.<port>.conduit`, applied by netifd - there
+is no `config device` section for it in `/etc/config/network`), with any such
+section LuCI or an admin added taking precedence; the moved port gets its
+conduit in the section that names it, or in a new one. A port left on the
+other link is not an error, it just stays on the host path; the service says
+which ports and where in the log at boot. An even split is left alone: nothing
+on the board says which link works.
+
+A board of these three set up on the `dsa` topology before 21 September 2026
+kept the split - the first-boot script read only `/etc/config/network` then,
+found no conduit there and moved nothing, so `wan` stayed on `eth0` and off
+the firmware. First boot does not run again on its own; the fix by hand is
+what the script now writes (if `uci show network | grep "name='wan'"` already
+finds a `config device` for `wan` - a MAC override, say - set the conduit in
+that one instead; two sections for one device do not mix):
+
+```
+uci add network device
+uci set network.@device[-1].name='wan'
+uci set network.@device[-1].conduit='eth1'
+uci commit network
+reboot
+```
 The VTU and the `qca8337-nss` parameters have no meaning here. A tagged ISP VLAN or a VLAN
 for an SSID is plain netifd (`wan.35`, `lan1.10`): the kernel installs it in
 the switch. To try it on a board that migrated to the trunk on another image:

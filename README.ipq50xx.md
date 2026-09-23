@@ -29,16 +29,18 @@ Discussion and test reports: the
 
 ## What is in the branch
 
-Forty-two commits on top of `nss-edma-rework` (base `7e3a860b70`), the ten
-below first and the rest of the work on top, in build order:
+The branch sits on Julius's `nss-edma-rework`, merged with OpenWrt main (last
+on 19 September 2026). These are the commits the work started from, in build
+order; everything since - the `dsa` topology, the boards, the fixes - builds on
+them:
 
 | Commit | What |
 |---|---|
-| `qualcommax: ipq50xx: keep the CMN PLL bus clocks enabled on 6.18` | Without this, 6.18 does not boot on IPQ5018 at all - the SoC dies within milliseconds of the CMN PLL probe. Merged into openwrt/main as [86b584bd0994](https://github.com/openwrt/openwrt/commit/86b584bd09949f14231d373c46563cc9); still carried here until the base catches up. |
+| `qualcommax: ipq50xx: keep the CMN PLL bus clocks enabled on 6.18` | Without this, 6.18 does not boot on IPQ5018 at all - the SoC dies within milliseconds of the CMN PLL probe. Merged into openwrt/main as [86b584bd0994](https://github.com/openwrt/openwrt/commit/86b584bd09949f14231d373c46563cc9); the branch now takes it from main. |
 | `qualcommax: stmmac: add a data-plane claim API for the NSS firmware` | Patch `0956`: lets a module take the data path of a GMAC away from stmmac (TX drained, NAPI off, DMA stopped, `ndo_start_xmit` redirected) and hand it back. phylink, MDIO and the netdev stay with the host. |
 | `qualcommax: ipq5018: add the NSS core node and reserved memory` | `ipq5018-nss.dtsi`: the `nss0` node with its clocks and interrupts, plus the reserved-memory region for the firmware. |
 | `package: add qca-dwmac-nss, the NSS data-plane glue for IPQ5018` | `kmod-qca-dwmac-nss`: the counterpart of `qca-ppe-nss` for this SoC. Implements the `nss-dp` API `qca-nss-drv` expects on top of the stmmac claim. Arms at runtime through debugfs, never at probe. |
-| `package: add qca8337-nss, the switch fabric driver for the NSS trunk` | `kmod-qca8337-nss`: re-arms the QCA8337 as a plain 802.1Q fabric after `qca8k` is unbound (see *Why DSA has to go*). |
+| `package: add qca8337-nss, the switch fabric driver for the NSS trunk` | `kmod-qca8337-nss`: re-arms the QCA8337 as a plain 802.1Q fabric after `qca8k` is unbound, for the trunk topology (see *Why DSA has to go*). |
 | `package: nss-tools: add the ipq50xx bring-up service` | `nss-tools-dwmac`: the `nss` service, the ordering that makes the arm work, the one-shot network-config migration. |
 | `qualcommax: ipq5018: enable the NSS core on the GL-B3000` | One line in the board DTS: `#include "ipq5018-nss.dtsi"`. |
 | `mac80211: ath11k: NSS fixes found while porting wifili to IPQ5018` | Six real bugs met on the way (REO register layout, ring topology, init flags, L2 update frame padding, non-cacheable rings, and one that matters with the offload *off*: a QCN6122 radio no longer disappears because `ath11k_nss_setup()` returns `-ENOTSUPP` for it). |
@@ -46,11 +48,13 @@ below first and the rest of the work on top, in build order:
 | `qualcommax: ipq50xx: debug aids for NSS bring-up work` | `MAGIC_SYSRQ_SERIAL`, `DEVMEM` with `STRICT_DEVMEM` off. **Revert this commit for a build meant to be deployed** - it is one commit precisely so that is easy. |
 
 The companion feed is **[kuncy7/nss-packages](https://github.com/kuncy7/nss-packages/tree/ipq50xx-rebase)**,
-branch `ipq50xx-rebase`: Julius's feed at `e621a63` plus his twelve `qca-nss-drv`
-hardening commits (cherry-picked, authorship preserved) plus five of ours - the
-12.2 firmware line as a selectable version, the per-target package split that
-lets the stack build on ipq50xx, and four driver patches (`0120`, `0121`,
-`0136`, `0137`; see the feed README).
+branch `ipq50xx-rebase`: Julius's `nss-packages` (last synced on 21 September
+2026) with the ipq50xx work on top - the 12.2 firmware line as a selectable
+version, the per-target package split that lets the stack build on ipq50xx,
+the ECM patch for DSA ports (`0046`), the 256 MB memory profile for the boards
+that need it, and the driver fixes met during bring-up (core boot and clocks,
+N2H bounds, offloaded-traffic counters, CPU-load reporting; see the feed
+README).
 
 ## Quick start
 
@@ -140,7 +144,7 @@ CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_glinet_gl-b3000=y
 # kmod-qca-nss-ecm, kmod-qca-nss-drv-vlan-mgr, kmod-qca8337-nss
 CONFIG_PACKAGE_nss-tools-dwmac=y
 
-# firmware: 12.2-156 is the one that works on IPQ5018 (see below)
+# firmware: 12.2-156, the one validated on IPQ5018 (see below)
 CONFIG_PACKAGE_nss-firmware=y
 CONFIG_NSS_FIRMWARE_VERSION_12_2=y
 CONFIG_NSS_MEM_PROFILE_MEDIUM=y
@@ -181,12 +185,16 @@ thirteen minutes after the BSS comes up, on this driver, every time.
 
 `NSS_FIRMWARE_VERSION_12_2` selects `NSS.FW.12.2-156-MP.R` from the same
 tarball the feed already uses. It is the newest firmware published for IPQ5018
-(May 2025, nine months after 12.5) and the only line that works here:
+(May 2025, nine months after 12.5) and the one every measurement in this file
+was taken on. The feed defaults to 12.5 on every target, so pick 12.2 by hand.
 
-- **12.5-210-MP** ignores the host's TX checksum-generation flags - ICMP works,
-  every TCP handshake leaves the wire with a bad checksum - and does not answer
-  dynamic-interface (VAP) allocation. The glue's `fw_csum` parameter defaults
-  to off because of this; leave it.
+- **12.5-210-MP** runs too: on a GL-B3000 (23 September 2026) it brought both
+  radios up on the offload, carried routed and Wi-Fi<->LAN TCP through the
+  firmware and came through a cold boot. It ignores the host's TX
+  checksum-generation flags, though - with the glue's `fw_csum` on, ICMP works
+  and every TCP handshake leaves the wire with a bad checksum - so `fw_csum`
+  defaults to off; leave it. An earlier note here that 12.5 refuses VAP
+  allocation did not hold up.
 - **11.4-6** refuses VAP allocation.
 
 ## How the plane comes up
@@ -194,19 +202,24 @@ tarball the feed already uses. It is the newest firmware published for IPQ5018
 A plain reboot is stock OpenWrt on the host stack. The `nss` service
 (`START=19`, before netifd) then does, in this order:
 
-1. **Switch to trunk.** `qca8k` has done the hard bring-up (SerDes, clocks,
-   uniphy) at boot; the service unbinds it and loads `qca8337-nss` with the VTU
-   map from `nss.general.vtu`. From here the CPU port carries plain 802.1Q.
+1. **Makes the CPU port speak plain 802.1Q.** On the `dsa` topology (the
+   default, see *Topology*) the switch keeps its DSA driver and the service
+   switches the conduit's tag protocol to the switch's tag_8021q tagger
+   (`qca-8021q`, `rtl8365mb-8021q`). On the trunk topology `qca8k` has done
+   the hard bring-up (SerDes, clocks, uniphy) at boot; the service unbinds it
+   and loads `qca8337-nss` with the VTU map from `nss.general.vtu`.
 2. Loads `qca-dwmac-nss` and `qca-nss-drv`. Both are inert at this point:
    `qca-nss-drv`'s probe defers until a port is armed.
 3. With `nss.general.wifi_offload=0`, loads ath11k on the host path. With the
    default `1` it leaves ath11k to `nss-dwmac-up`, which loads it after the arm.
 4. Starts `/usr/sbin/nss-dwmac-up` alongside netifd. That script waits until
-   `eth0` is up, the `lan` interface is up *in netifd's own view*, and the
-   bridge has set the promiscuous flag on the trunk; then it arms the firmware
-   (`fw_mask` in debugfs), waits for `phys_if 1: started`, loads
-   `qca-nss-vlan`, waits for the bridge, loads ECM with `front_end_selection=1`
-   and sets `accel_delay_pkts=1`.
+   the trunk - the DSA conduit on `dsa` - is up and the `lan` interface is up
+   *in netifd's own view*, on the trunk topology also until the bridge has set
+   the promiscuous flag on the trunk; then it arms the firmware (`fw_mask` in
+   debugfs), waits for the port to show `started`, loads `qca-nss-vlan` and,
+   on `dsa`, `qca-dsa-nss`, which gives the DSA ports their firmware VLAN
+   interfaces; last, ECM with `front_end_selection=1` and
+   `accel_delay_pkts=1`.
 
 Three orderings that fail *silently* - each measured, each cost days - are the
 reason for the waiting:
@@ -226,7 +239,8 @@ reason for the waiting:
   mattering.
 
 If firmware takeover fails after successful switch setup, the box keeps running
-on the host path **with the same topology**. A switch setup failure is different:
+on the host path **with the same topology**. A switch setup failure on the
+trunk topology is different:
 `qca8337-nss` attempts to block the wired ports to protect VLAN isolation, and the
 service loads host Wi-Fi for recovery. Remote access then depends on an already
 configured Wi-Fi connection; a freshly flashed device without that fallback may
@@ -236,15 +250,10 @@ the board/VLAN settings before retrying.
 
 ### Topology
 
-Fixed for both data paths: `eth0` is the switch trunk, netifd builds
-`eth0.1` (lan) and `eth0.2` (wan) on it. On first boot a uci-defaults script
-migrates an existing DSA-style network config once (`br-lan` ports →
-`eth0.1`, `wan`/`wan6` device → `eth0.2`) and leaves a marker
-(`nss.general.topology='vlan-trunk'`) so it never runs again.
-
-**`nss.general.topology='dsa'`** (C-3PO) keeps the switch driver bound and
-the ports as they are on a stock image - `lan1`/`lan2`/`wan`, `br-lan` on the
-lan ports, `wan` (or `wan.35` for a PPPoE ISP) as the WAN device. The service
+**`nss.general.topology='dsa'`** (C-3PO), the default on this branch, keeps
+the switch driver bound and the ports as they are on a stock image -
+`lan1`/`lan2`/`wan`, `br-lan` on the lan ports, `wan` (or `wan.35` for a
+PPPoE ISP) as the WAN device. The service
 switches the conduit's tag protocol to the switch's tag_8021q tagger before
 netifd runs - `qca-8021q` for `qca8k` (QCA8337), `rtl8365mb-8021q` for
 `rtl8365mb` (RTL8367S) - so the switch talks to the CPU in plain 802.1Q,
@@ -252,7 +261,7 @@ which the firmware parses, and after the arm `qca-dsa-nss` gives every port,
 bridge and 802.1Q upper of a port a firmware VLAN interface so ECM can write
 rules for them.
 
-On this branch a board whose switch is driven by `qca8k` or `rtl8365mb` gets the `dsa`
+A board whose switch is driven by `qca8k` or `rtl8365mb` gets the `dsa`
 topology on first boot, and **nothing about the wiring is configured**: the
 switch stays with its driver, so ports, CPU port and VLANs are the kernel's,
 and the rest is read off the board at every boot - the GMACs from the nodes
@@ -301,11 +310,22 @@ the same plane (5 GHz → NAT → WAN 597/570/631 up, 650/642/629 down Mbit/s
 at 1-6 % CPU), and PPPoE over `wan.35` accelerated (see below). On the
 TP-Link Archer AX55 v1 (RTL8367S), with nothing in uci but the defaults and
 `wifi_offload`: 5 GHz → NAT → WAN 532/502/457 up, 582/693/597 down Mbit/s at
-4-6 % CPU. Wi-Fi offload defaults to off when the DTS asks for
-`qcom,ath11k-fw-memory-mode = <1>`, as the AX55 DTS does; wifili came up in
-that mode on the AX55 all the same, so `uci set nss.general.wifi_offload=1`
-turns it on there. Not yet: VLAN-aware bridges (refused by both taggers) and
+4-6 % CPU. Wi-Fi offload is on by default here as well, also where the DTS
+asks for `qcom,ath11k-fw-memory-mode = <1>` (the AX55, the Xiaomi AX6000 and
+others): wifili runs in that mode - measured on the AX55 and on two AX6000s -
+and the service only logs a warning; `nss.general.wifi_offload=0` keeps the
+radios on the host. Not yet: VLAN-aware bridges (refused by both taggers) and
 switches other than these two.
+
+**The trunk (`vlan-trunk`, `lan-trunk`)** stays supported next to it. A board
+with no such switch gets it on first boot from the board table (see
+*Porting*), and a board that migrated on an earlier image keeps it: `eth0` is
+the switch trunk, netifd builds `eth0.1` (lan) and `eth0.2` (wan) on it. That
+migration rewrote a DSA-style network config once (`br-lan` ports → `eth0.1`,
+`wan`/`wan6` device → `eth0.2`) and left a marker
+(`nss.general.topology='vlan-trunk'`) so it never runs again. The VTU and the
+`qca8337-nss` parameters belong to this topology alone; see *Why DSA has to
+go*.
 
 ### `uci` knobs (`/etc/config/nss`, section `general`)
 
@@ -336,14 +356,15 @@ plane across reboots; returning to the host path needs a reboot.
 
 ```sh
 cat /sys/kernel/debug/qca-dwmac-nss/status        # phys_if 1: started dev=eth0 ...
-logread -e nss                                    # "NSS wired plane + ECM up (Wi-Fi on the host path)"
+logread -e nss                                    # "NSS wired plane + ECM up (Wi-Fi on the NSS path)"
 cat /sys/kernel/debug/ecm/ecm_nss_ipv4/tcp_accelerated_count   # > 0 under traffic
 grep -m1 ipv4_rx_pkts /sys/kernel/debug/qca-nss-drv/stats/ipv4  # climbing under traffic
 ```
 
-Two things that mislead: the `eth0.1` / `eth0.2` **counters do not see
-accelerated traffic** - they show the first packet of each flow and then stop
-- and `ipv4_rx_byts` in the firmware stats counts **both directions** of a
+Two things that mislead: on the trunk topology the `eth0.1` / `eth0.2`
+**counters do not see accelerated traffic** - they show the first packet of
+each flow and then stop (on `dsa` the port counters come from the switch's
+MIB and do) - and `ipv4_rx_byts` in the firmware stats counts **both directions** of a
 flow, so read it as roughly double the useful throughput. `top` is the honest
 gauge: idle stays above 90 % under a full-rate flow, softirq stays flat.
 
@@ -356,8 +377,9 @@ DSA's `tag_qca` puts where the ethertype should be; and DSA user ports never
 get an NSS interface number, so ECM would not try to accelerate them anyway.
 On IPQ5018, **DSA user ports and ECM acceleration are mutually exclusive** -
 with the Atheros header. They are not with the `qca-8021q` tagger, which puts
-the source port in a VLAN tag instead; that is the `dsa` topology above, and
-this section describes the trunk topology that remains the default.
+the source port in a VLAN tag instead; that is the `dsa` topology above, the
+default, and this section describes the trunk topology that stays supported
+next to it.
 
 If you are seeing `eth_rx_unknown_l3_protocol` counting most of your frames,
 with `iface_count=0` and `accelerated_count=0`, on a QCA8337 board: this is
@@ -410,11 +432,16 @@ The board side is small. The parts, in order of effort:
    MX6200, Xunison D50, CMCC MR3000D-CI (wired plane and 5 GHz offload on
    the table entry as written), Redmi AX5400 (both CPU links: LAN on
    `eth1.1`, WAN on `eth0.2`, Wi-Fi on the host), TP-Link EX511 v2
-   (RTL8367D, both radios, see the switch note below). Straight from the
-   DTS, untested: Linksys MX5500 and MR5500, Xiaomi AX6000, Zyxel SCR50AXE,
-   CMCC PZ-L8, I-O DATA WN-DAX3000GR, Elecom WRC-X3000GS2 / GST2, Yuncore
-   AX830 and AX850. On those the settings apply themselves on first boot.
-   Anything else logs a line telling you to set them by hand.
+   (RTL8367D, both radios, see the switch note below), Xiaomi AX6000.
+   Straight from the DTS, untested on the trunk: Linksys MX5500 and MR5500,
+   Zyxel SCR50AXE, CMCC PZ-L8, I-O DATA WN-DAX3000GR, Elecom WRC-X3000GS2 /
+   GST2, Yuncore AX830 and AX850. On those the settings apply themselves on
+   first boot. Anything else logs a line telling you to set them by hand.
+
+   The `dsa` topology needs no table entry. Besides the GL-B3000 it has run
+   at testers' on the Linksys MX2000 and MR5500, the Xiaomi AX6000, the
+   Zyxel SCR50AXE, the Redmi AX5400, the Cudy P5 and the TP-Link Archer AX55
+   v1.
 
    The table applies once, on a config that has no `nss.general.topology`
    yet; a sysupgrade that keeps settings keeps the old layout. An AX5400
@@ -542,10 +569,10 @@ larger (2092 B) than the data frame size the host advertises (2048 B).
 
 ## 256 MB boards
 
-Every IPQ5018 board on this branch has 512 MB except the TP-Link EX511 v2
-(IPQ5018 + QCN6122, 256 MB), and the defaults tuned for 512 MB do not fit
-in it: the first flashed build OOM-killed the AP daemon on a single iperf3
-run. What it needed, all in the branch and measured on the board
+Two IPQ5018 boards on this branch have 256 MB - the TP-Link EX511 v2
+(IPQ5018 + QCN6122) and the Cudy P5 - and the rest 512 MB. The defaults
+tuned for 512 MB do not fit in 256: on the EX511 the first flashed build
+OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the branch and measured on the board
 (2026-09-13) - and what the next 256 MB board will need too:
 
 - **`nss_region` 8 MiB** in the board DTS, overriding the 16 MiB in
@@ -599,9 +626,8 @@ run. What it needed, all in the branch and measured on the board
     that the cache file is newer than the file you edited.
     `NSS_MEM_PROFILE_LOW` is not in this tree at all - it is a choice in
     the `qca-nss-drv` package of the feed, so a board has to be named in
-    both places. The Cudy P5, the next 256 MB board in the queue, arrived
-    with the ath11k half in its own pull request and needed the feed half
-    added separately. The firmware version
+    both places - the EX511 v2 and the Cudy P5 are, in both. The firmware
+    version
   (`NSS_FIRMWARE_VERSION_12_2`) is still chosen by hand, as on every
   ipq50xx board. `qcom,ath11k-fw-memory-mode = <2>` on both radios is in
   the DTS.

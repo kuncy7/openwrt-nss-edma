@@ -67,13 +67,14 @@ make -j$(nproc)
 
 `feeds.conf.default` already names the companion feed (`nss`, branch
 `ipq50xx-rebase`). A `feeds.conf` of your own takes precedence over it, so
-if you keep one, it needs that same line. Another NSS feed - Julius's
-`nss-packages` included - builds `qca-nss-ecm` with the same package version
-but without `0046`, the patch that lets ECM send a flow through a DSA port.
-That image boots, answers ping, and passes LAN<->LAN and Wi-Fi<->Wi-Fi
-traffic; every TCP flow between a switch port (LAN or WAN) and anything the
-firmware carries stalls the moment ECM accelerates it. The version string
-does not tell the two apart; this does, on the router:
+if you keep one, it needs that same line. Any other NSS feed builds
+`qca-nss-ecm` without `0046`, the patch that lets ECM send a flow through a
+DSA port: Julius's `nss-packages` at the very same package version, the
+archived `ipq50xx-nss` branch of ours at an older one. That image boots,
+answers ping, and passes LAN<->LAN and Wi-Fi<->Wi-Fi traffic; every TCP flow
+between a switch port (LAN or WAN) and anything the firmware carries stalls
+the moment ECM accelerates it. The version string does not always tell them
+apart; this does, on the router:
 
 ```sh
 grep -c dsa_port_from_netdev /lib/modules/$(uname -r)/ecm.ko   # 1 = patched, 0 = not

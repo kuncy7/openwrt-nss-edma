@@ -58,14 +58,25 @@ lets the stack build on ipq50xx, and four driver patches (`0120`, `0121`,
 git clone -b c3po-tag-8021q https://github.com/kuncy7/openwrt-nss-edma.git
 cd openwrt-nss-edma
 
-cp feeds.conf.default feeds.conf
-echo "src-git nss https://github.com/kuncy7/nss-packages.git;ipq50xx-rebase" >> feeds.conf
-
 ./scripts/feeds update -a && ./scripts/feeds install -a
 ./scripts/feeds list -r nss | grep -q qca-nss-drv && echo "nss feed OK"
 
 make menuconfig
 make -j$(nproc)
+```
+
+`feeds.conf.default` already names the companion feed (`nss`, branch
+`ipq50xx-rebase`). A `feeds.conf` of your own takes precedence over it, so
+if you keep one, it needs that same line. Another NSS feed - Julius's
+`nss-packages` included - builds `qca-nss-ecm` with the same package version
+but without `0046`, the patch that lets ECM send a flow through a DSA port.
+That image boots, answers ping, and passes LAN<->LAN and Wi-Fi<->Wi-Fi
+traffic; every TCP flow between a switch port (LAN or WAN) and anything the
+firmware carries stalls the moment ECM accelerates it. The version string
+does not tell the two apart; this does, on the router:
+
+```sh
+grep -c dsa_port_from_netdev /lib/modules/$(uname -r)/ecm.ko   # 1 = patched, 0 = not
 ```
 
 **Select `nss-tools-dwmac` in menuconfig, as `<*>` and not `<M>`**

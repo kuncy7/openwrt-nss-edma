@@ -3,7 +3,7 @@
 This branch runs the **NSS packet-processing core of the IPQ5018** on kernel
 **6.18** with OpenWrt main's **upstream `stmmac` / `dwmac-ipq5018` ethernet
 driver** - no `qca-nss-dp`, no `qca-ssdk`. It is the IPQ50xx counterpart of the
-[IPQ807x work](README.md) this tree is layered on: same idea (keep the upstream
+[IPQ807x work](/README.md) this tree is layered on: same idea (keep the upstream
 driver, attach the firmware through a small glue module), different silicon,
 different glue.
 
@@ -519,7 +519,7 @@ CPU sat at 90-100 %, against 4 % with both armed. After changing it, read
 
 ## What is accelerated
 
-Legend as in the [IPQ807x README](README.md): ✅ offloaded & validated ·
+Legend as in the [IPQ807x README](/README.md): ✅ offloaded & validated ·
 🟨 in code, not validated here · ⬜ not carried · ❌ not available.
 
 | Feature | IPQ5018 | Notes |

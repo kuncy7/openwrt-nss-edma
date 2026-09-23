@@ -30,7 +30,7 @@ Discussion and test reports: the
 ## What is in the branch
 
 The branch sits on Julius's `nss-edma-rework`, merged with OpenWrt main (last
-on 19 September 2026). These are the commits the work started from, in build
+on 22 September 2026). These are the commits the work started from, in build
 order; everything since - the `dsa` topology, the boards, the fixes - builds on
 them:
 

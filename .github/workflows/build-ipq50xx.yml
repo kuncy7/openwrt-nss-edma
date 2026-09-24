@@ -1,0 +1,345 @@
+name: Build ipq50xx
+
+# Builds the sysupgrade images for every qualcommax/ipq50xx board, in two memory groups,
+# and publishes them together with the build's own kernel module repository:
+#   draft release -> build std + build 256m -> kmod repositories (gh-pages) -> publish -> prune
+#
+# Images go to a GitHub release tagged ipq50xx-YYYY.MM.DD. Sysupgrade only: a board is
+# expected to run OpenWrt already.
+#
+# Kernel modules: a kmod depends on kernel=<version>~<vermagic>, so it can only be installed on
+# an image from the same build. Each build's bin/targets/.../packages/ is therefore published on
+# the gh-pages branch under <tag>/<group>/, and the image lists exactly that directory in
+# /etc/apk/repositories.d/distfeeds.list. The official target and kmods feeds are left out on
+# purpose: their kernel is a different build and nothing in them installs here.
+#
+# Board lists and memory profiles: .github/ci/ipq50xx/*.config.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (empty = ipq50xx-YYYY.MM.DD, UTC date)"
+        required: false
+        type: string
+
+concurrency:
+  group: build-ipq50xx
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TARGET: qualcommax/ipq50xx
+  RELEASE_PREFIX: ipq50xx
+  KEEP: "2"                      # releases and kmod directories to keep: current and previous
+  # What counts as one of these builds when pruning. Anchored, so older releases whose tag also
+  # starts with "ipq50xx-" (ipq50xx-b3000-2026.09.07) are never touched.
+  TAG_RE: '^ipq50xx-[0-9]{4}\.[0-9]{2}\.[0-9]{2}(-[0-9]+)?$'
+  CI_DIR: .github/ci/ipq50xx
+  PAGES_BASE: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+
+jobs:
+  release:
+    name: Create draft release
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUT_TAG: ${{ inputs.tag }}
+    outputs:
+      tag: ${{ steps.draft.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: draft
+        run: |
+          set -euo pipefail
+          tag="$INPUT_TAG"
+          if [[ -z "$tag" ]]; then
+            base="${RELEASE_PREFIX}-$(date -u +%Y.%m.%d)"
+            tag="$base"; n=2
+            # a second build on the same day gets a suffix: ipq50xx-2026.09.24-2
+            while gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+                  || git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; do
+              tag="${base}-${n}"; n=$((n+1))
+            done
+          fi
+          boards() { grep -oE 'DEVICE_[a-z0-9_-]+=y' "${CI_DIR}/$1.config" | sed 's/^DEVICE_//;s/=y$//' | tr '\n' ' '; }
+          {
+            echo "NSS offload for IPQ5018 boards (\`qualcommax/ipq50xx\`), built from \`${GITHUB_SHA::12}\`."
+            echo "What is in it and how the plane comes up: README.ipq50xx.md in the repository."
+            echo
+            echo "**Sysupgrade images only.** Flash \`openwrt-qualcommax-ipq50xx-<device>-squashfs-sysupgrade.bin\`"
+            echo "over a running OpenWrt; there is no factory image. A board that is not in official"
+            echo "OpenWrt needs a plain OpenWrt image built from this tree first."
+            echo
+            echo "**Extra kernel modules** (wireguard, tun, SQM/cake, USB storage and USB network,"
+            echo "filesystems, GRE/VXLAN/L2TP, bonding, nft extras) are not in the image."
+            echo "\`apk update && apk add kmod-<name>\` fetches them from this build's own repository,"
+            echo "which the image already lists: \`${PAGES_BASE}/${tag}/<group>/packages.adb\`."
+            echo "Kernel modules only install on an image from the same build, so a repository stays"
+            echo "online as long as its release does (the newest ${KEEP} builds)."
+            echo
+            echo "| group | memory | boards |"
+            echo "|---|---|---|"
+            echo "| std | 512 MB / 1 GB | $(boards std)|"
+            echo "| 256m | 256 MB | $(boards 256m)|"
+          } >release_notes.md
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+            --title "$tag" --notes-file release_notes.md >&2
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.group }}
+    needs: release
+    runs-on: ubuntu-26.04
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # One group = one ath11k/nss-drv memory profile, which is image-wide.
+        group: [std, 256m]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GROUP: ${{ matrix.group }}
+      TAG: ${{ needs.release.outputs.tag }}
+    steps:
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          # A full group needs about 26 GB (build_dir, dl, staging_dir, toolchain).
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          df -h / | tail -1
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update || true
+          sudo apt-get install -y bzip2 g++ gawk gcc git glibc-source libncurses-dev make rsync
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0          # scripts/getver.sh derives the revision from history
+
+      - name: Feeds
+        run: |
+          set -euo pipefail
+          # feeds.conf.default already names the nss feed (kuncy7/nss-packages;ipq50xx-rebase)
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Package repositories for the image
+        run: |
+          set -euo pipefail
+          # The files/ overlay wins over the list FeedSourcesAppendAPK generates.
+          mkdir -p files/etc/apk/repositories.d
+          {
+            echo "${PAGES_BASE}/${TAG}/${GROUP}/packages.adb"
+            for f in base luci packages routing telephony video; do
+              echo "https://downloads.openwrt.org/snapshots/packages/aarch64_cortex-a53/${f}/packages.adb"
+            done
+          } >files/etc/apk/repositories.d/distfeeds.list
+          cat files/etc/apk/repositories.d/distfeeds.list
+
+      - name: Assemble .config
+        run: |
+          set -euo pipefail
+          frags=("${CI_DIR}/common.config" "${CI_DIR}/${GROUP}.config" "${CI_DIR}/kmods-extra.config")
+          cat "${frags[@]}" >.config
+          make defconfig
+          # defconfig drops a symbol it cannot select without a word; here that is an error
+          dropped=()
+          while IFS= read -r req; do
+            grep -qxF "$req" .config || dropped+=("$req")
+          done < <(cat "${frags[@]}" | grep -E '^CONFIG_[A-Za-z0-9_-]+=' | sort -u)
+          if [[ ${#dropped[@]} -gt 0 ]]; then
+            printf '::error::defconfig dropped %s\n' "${dropped[@]}"
+            exit 1
+          fi
+          ./scripts/diffconfig.sh >"diffconfig-${GROUP}.txt"
+
+      - name: Download sources
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            make download -j"$(nproc)" && break
+            echo "download attempt $attempt failed"; sleep 5
+          done
+
+      # The ccache key covers the toolchain tree and the host compiler; a change there starts
+      # from an empty cache (the same scheme as JuliusBairaktaris/Qualcommax_NSS_Builder).
+      - name: Compute ccache key
+        id: ccache
+        run: |
+          set -euo pipefail
+          tree=$(git rev-parse HEAD:toolchain)
+          sum=$({ echo "$tree"; grep -E '^CONFIG_(BINUTILS|GCC|LIBC|MUSL)_' .config; gcc --version; as --version; } \
+                | sha256sum | cut -c1-16)
+          echo "prefix=ccache-ipq50xx-${GROUP}-${sum}-" >>"$GITHUB_OUTPUT"
+
+      - name: Restore ccache
+        uses: actions/cache@v6
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.prefix }}${{ github.run_id }}
+          restore-keys: ${{ steps.ccache.outputs.prefix }}
+
+      - name: Build
+        env:
+          CCACHE_COMPILERCHECK: content
+          CCACHE_MAXSIZE: 4G
+        run: |
+          set -euo pipefail
+          if ! make -j"$(nproc)"; then
+            # the parallel log interleaves; a serial pass over what is left shows the failure
+            make -j1 V=s 2>&1 | tail -300
+            exit 1
+          fi
+          staging_dir/host/bin/ccache -s || true
+          df -h / | tail -1
+
+      - name: Check the output
+        run: |
+          set -euo pipefail
+          out="bin/targets/${TARGET}"
+          n_img=$(find "$out" -maxdepth 1 -name 'openwrt-*-squashfs-sysupgrade.bin' | wc -l)
+          n_dev=$(grep -c '^CONFIG_TARGET_DEVICE_.*=y' .config)
+          echo "sysupgrade images: $n_img of $n_dev boards"
+          [[ "$n_img" -eq "$n_dev" ]] || { echo "::error::$n_img images for $n_dev boards"; exit 1; }
+          [[ -f "$out/packages/packages.adb" ]] || { echo "::error::no package index"; exit 1; }
+          compgen -G "$out/packages/kmod-wireguard-*.apk" >/dev/null \
+            || { echo "::error::kmod-wireguard missing from the repository"; exit 1; }
+          kernel=$(find "$out/packages" -maxdepth 1 -name 'kernel-*.apk' -printf '%f\n')
+          echo "repository: $(find "$out/packages" -maxdepth 1 -name '*.apk' | wc -l) packages, ${kernel}"
+
+      - name: Upload images to the draft release
+        run: |
+          set -euo pipefail
+          out="bin/targets/${TARGET}"
+          mapfile -t assets < <(find "$out" -maxdepth 1 -type f -name 'openwrt-*-squashfs-sysupgrade.bin')
+          grep 'sysupgrade.bin' "$out/sha256sums" >"sha256sums-${GROUP}.txt"
+          cp "$out/config.buildinfo" "config-${GROUP}.buildinfo"
+          for attempt in 1 2 3; do
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+              "${assets[@]}" "sha256sums-${GROUP}.txt" "config-${GROUP}.buildinfo" "diffconfig-${GROUP}.txt" && break
+            [[ $attempt -lt 3 ]] || { echo "::error::upload failed after $attempt attempts"; exit 1; }
+            sleep 15
+          done
+          {
+            echo "## ${GROUP}"
+            echo "- images: ${#assets[@]}"
+            echo "- repository: $(find "$out/packages" -maxdepth 1 -name '*.apk' | wc -l) packages"
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the package repository for the pages job
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.group }}
+          path: bin/targets/${{ env.TARGET }}/packages/
+          retention-days: 3
+          if-no-files-found: error
+
+  pages:
+    name: Publish kmod repositories
+    needs: [release, build]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.release.outputs.tag }}
+    steps:
+      - name: Check out gh-pages
+        run: |
+          set -euo pipefail
+          git init -q site
+          cd site
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth=1 origin gh-pages 2>/dev/null; then
+            git checkout -q -b gh-pages FETCH_HEAD
+          else
+            git checkout -q --orphan gh-pages
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: site/${{ needs.release.outputs.tag }}
+
+      - name: Arrange, prune, push
+        run: |
+          set -euo pipefail
+          cd site
+          for d in "${TAG}"/packages-*; do mv "$d" "${TAG}/${d##*/packages-}"; done
+          for g in std 256m; do
+            [[ -f "${TAG}/${g}/packages.adb" ]] || { echo "::error::${TAG}/${g} has no package index"; exit 1; }
+          done
+          # keep the newest KEEP build directories; the tag is a date, so name order is time order
+          mapfile -t dirs < <(find . -maxdepth 1 -type d -printf '%f\n' | grep -E "$TAG_RE" | sort -r)
+          for old in "${dirs[@]:${KEEP}}"; do
+            echo "prune $old"
+            rm -rf "$old"
+          done
+          {
+            echo "# Kernel module repositories"
+            echo
+            echo "One directory per build of \`${GITHUB_REPOSITORY}\`, one subdirectory per memory group."
+            echo "An image lists its own; kernel modules only install on an image from the same build."
+            echo
+            for t in $(find . -maxdepth 1 -type d -printf '%f\n' | grep -E "$TAG_RE" | sort -r); do
+              echo "- ${t}: [std](${t}/std/packages.adb), [256m](${t}/256m/packages.adb)," \
+                "[release](https://github.com/${GITHUB_REPOSITORY}/releases/tag/${t})"
+            done
+          } >index.md
+          touch .nojekyll
+          # one commit per build: the branch holds binaries, its history is of no use
+          git checkout -q --orphan gh-pages-new
+          git add -A
+          git -c user.name=github-actions -c user.email=github-actions@github.com \
+            commit -qm "kernel module repositories, newest ${TAG}"
+          git push -q --force origin gh-pages-new:gh-pages
+
+  publish:
+    name: Publish release
+    needs: [release, build, pages]
+    if: always() && needs.release.result == 'success'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.release.outputs.tag }}
+      BUILD_RESULT: ${{ needs.build.result }}
+      PAGES_RESULT: ${{ needs.pages.result }}
+    steps:
+      - name: Publish or discard
+        run: |
+          set -euo pipefail
+          if [[ "$BUILD_RESULT" != "success" || "$PAGES_RESULT" != "success" ]]; then
+            # a release missing a group, or without its kmod repository, is worse than none
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+            echo "::error::build=$BUILD_RESULT pages=$PAGES_RESULT; draft release discarded"
+            exit 1
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+      - name: Prune old releases
+        run: |
+          set -euo pipefail
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --exclude-drafts --json tagName,publishedAt \
+            | jq -r --arg re "$TAG_RE" --argjson keep "$KEEP" \
+                '[.[] | select(.tagName | test($re))] | sort_by(.publishedAt) | reverse | .[$keep:][] | .tagName' \
+            | while read -r old; do
+                echo "delete release $old"
+                gh release delete "$old" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+              done

@@ -298,6 +298,15 @@ fi
 # through the accelerated path.
 echo 1 > /sys/kernel/debug/ecm/ecm_db/defunct_all 2>/dev/null
 
+# An nft flowtable (firewall.@defaults[0].flow_offloading) forwards an
+# established flow from its ingress hook, ahead of the hooks ECM classifies
+# from: ECM never sees the flow and the firmware exceptions every packet of it.
+# 98-nss-offload clears the option on the first boot; this catches it being
+# turned back on later.
+if [ "$(nft list flowtables 2>/dev/null | grep -c '^[[:space:]]*flowtable ')" -gt 0 ]; then
+  echo "WARN: an nft flowtable is active - it takes established flows before ECM sees them; set firewall.@defaults[0].flow_offloading='0' (and _hw) and reload the firewall"
+fi
+
 if [ -e /sys/kernel/debug/ecm/ecm_nss_ipv4 ]; then
   echo "NSS wired plane + ECM up (Wi-Fi on the $( [ "$(cat /sys/module/ath11k/parameters/nss_offload 2>/dev/null)" = 1 ] && echo NSS || echo host ) path)"
 else

@@ -11,10 +11,20 @@ uci -q batch << EOI
 # it at its default, and the default also produced n2h_rx_queue drops (158 and
 # 83) where disabling it produced none. See 12-nss-networking.conf.
 #
-# Kernel flow offloading must also stay off - ECM owns acceleration - but that
-# lives in firewall.@defaults[0].flow_offloading{,_hw} and OpenWrt already ships
-# it off, so there is nothing to write here.
+# Kernel flow offloading must be off as well: ECM owns acceleration. OpenWrt
+# ships it off, but a config carried over from another build (sysupgrade keeps
+# settings, and turning it on is the usual advice for a router without a
+# hardware fast path) brings it along, and then the nft flowtable forwards
+# every established TCP flow from its ingress hook before the netfilter hooks
+# ECM classifies from. ECM never sees the flow, the firmware exceptions every
+# packet of it to the host, and nothing in the logs says why. Measured on an
+# Archer AX55 v1 moved over from a plain build: 2 rules for 138 connections,
+# 32-64 % CPU on a Wi-Fi to WAN iperf3; the same flows at 3-8 % once it was
+# off. uci-defaults run after the restored config is in place, so this is the
+# right moment to clear it.
 set network.globals.packet_steering='0'
+set firewall.@defaults[0].flow_offloading='0'
+set firewall.@defaults[0].flow_offloading_hw='0'
 EOI
 
 exit 0

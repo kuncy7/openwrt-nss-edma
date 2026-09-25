@@ -422,6 +422,18 @@ MIB and do) - and `ipv4_rx_byts` in the firmware stats counts **both directions*
 flow, so read it as roughly double the useful throughput. `top` is the honest
 gauge: idle stays above 90 % under a full-rate flow, softirq stays flat.
 
+A third one comes with a config carried over from another build: **kernel flow
+offloading** (`firewall.@defaults[0].flow_offloading`, the usual advice for a
+router without a hardware fast path). Its nft flowtable forwards every
+established TCP flow from its ingress hook, before the netfilter hooks ECM
+classifies from, so ECM never sees the flow and the firmware exceptions every
+packet of it to the host - the plane reports armed, `tcp_accelerated_count`
+stays put, `ipv4_tcp_no_icme` climbs and a Wi-Fi to WAN flow costs 30-60 %
+CPU instead of 3-5 %. The first boot clears the option (`98-nss-offload`) and
+`nss-dwmac-up` warns in the log if a flowtable is back; `nft list flowtables`
+must print nothing. A pinned IRQ layout in `/etc/rc.local` from the old build
+belongs in the same clean-up: `nss-irq-affinity` sets its own.
+
 ## Why DSA has to go
 
 The port model on this SoC is the reverse of ipq807x: the NSS `phys_if` is the

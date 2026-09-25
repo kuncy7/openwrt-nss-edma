@@ -56,6 +56,60 @@ that need it, and the driver fixes met during bring-up (core boot and clocks,
 N2H bounds, offloaded-traffic counters, CPU-load reporting; see the feed
 README).
 
+## Releases and the kernel module repository
+
+Ready images are on the [Releases page](https://github.com/kuncy7/openwrt-nss-edma/releases),
+one release per build, tagged `ipq50xx-YYYY.MM.DD` (a second build on the same day
+gets `-2`). The newest two are kept; older ones go away together with their
+kernel module repository, see below.
+
+**Sysupgrade images only.** Flash `openwrt-qualcommax-ipq50xx-<device>-squashfs-sysupgrade.bin`
+over a running OpenWrt, from LuCI or with `sysupgrade`. There is no factory
+image: a board that is not in official OpenWrt needs a plain OpenWrt image
+built from this tree first (Quick start below), and a board that is gets the
+official one. `sha256sums-<group>.txt` next to the images has the checksums.
+
+Every image is built with the whole plane in: `nss-tools-dwmac`, firmware
+12.2-156, VLAN and PPPoE managers, ath11k with the NSS patches, plus `ip-full`
+and `iperf3` for checking it. Boards come in two groups, because the ath11k and
+NSS memory profiles are a build-time choice for the whole image:
+
+| group | boards | memory profile |
+|---|---|---|
+| `std` | 512 MB and 1 GB boards (the release notes list them) | ath11k 1G, NSS medium |
+| `256m` | Cudy P5, TP-Link EX511 v2 | ath11k 256M, NSS low |
+
+The exact configuration of each group is in `.github/ci/ipq50xx/` (`common.config`
++ `<group>.config` + `kmods-extra.config`) and, for a given release, in the
+attached `config-<group>.buildinfo`.
+
+### Kernel modules that are not in the image
+
+Wireguard, tun, SQM/cake, USB storage and USB network adapters, extra
+filesystems, GRE/VXLAN/L2TP, bonding, nft extras and the like are built as
+packages, not into the image. The image already lists the repository they
+live in, so on the router it is just:
+
+```sh
+apk update
+apk add kmod-wireguard wireguard-tools luci-proto-wireguard
+```
+
+The kernel modules come from this build's own repository on GitHub Pages
+(`https://kuncy7.github.io/openwrt-nss-edma/<tag>/<group>/`), everything else
+from the regular OpenWrt snapshot feeds, which the image lists as well. The
+full list of modules is `.github/ci/ipq50xx/kmods-extra.config`; if you need
+one that is not there, open an issue or a pull request adding it to that
+file, and it is in the next build.
+
+Why a repository per build: a kernel module only installs on the kernel it
+was built for - `apk` checks `kernel=<version>~<vermagic>` - and the kernel in
+these images is not the official one, so the official `kmods` feed cannot
+serve them (`apk` says "no such package"). After a sysupgrade to a newer
+release, run `apk update` and install the modules again; they come from the
+new release's repository, which the new image already lists. A repository
+stays online as long as its release does.
+
 ## Quick start
 
 ```sh

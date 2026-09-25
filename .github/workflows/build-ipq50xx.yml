@@ -203,7 +203,7 @@ jobs:
             make -j1 V=s 2>&1 | tail -300
             exit 1
           fi
-          staging_dir/host/bin/ccache -s || true
+          CCACHE_DIR="$PWD/.ccache" staging_dir/host/bin/ccache -s || true
           df -h / | tail -1
 
       - name: Check the output

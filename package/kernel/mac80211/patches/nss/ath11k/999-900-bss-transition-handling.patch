@@ -1,6 +1,6 @@
 --- a/drivers/net/wireless/ath/ath11k/core.c
 +++ b/drivers/net/wireless/ath/ath11k/core.c
-@@ -2526,10 +2526,10 @@ void ath11k_core_pre_reconfigure_recover
+@@ -2568,10 +2568,10 @@ void ath11k_core_pre_reconfigure_recover
  		ar->monitor_vdev_id = -1;
  		clear_bit(ATH11K_FLAG_MONITOR_STARTED, &ar->monitor_flags);
  		clear_bit(ATH11K_FLAG_MONITOR_VDEV_CREATED, &ar->monitor_flags);
@@ -12,7 +12,7 @@
  
  	reinit_completion(&ab->driver_recovery);
  }
-@@ -2880,7 +2880,6 @@ struct ath11k_base *ath11k_core_alloc(st
+@@ -2922,7 +2922,6 @@ struct ath11k_base *ath11k_core_alloc(st
  		goto err_free_wq;
  
  	mutex_init(&ab->core_lock);
@@ -20,7 +20,7 @@
  	mutex_init(&ab->base_ast_lock);
  	spin_lock_init(&ab->base_lock);
  	mutex_init(&ab->vdev_id_11d_lock);
-@@ -2888,8 +2887,6 @@ struct ath11k_base *ath11k_core_alloc(st
+@@ -2930,8 +2929,6 @@ struct ath11k_base *ath11k_core_alloc(st
  	init_completion(&ab->reconfigure_complete);
  	init_completion(&ab->recovery_start);
  
@@ -31,7 +31,7 @@
  	INIT_WORK(&ab->restart_work, ath11k_core_restart);
 --- a/drivers/net/wireless/ath/ath11k/core.h
 +++ b/drivers/net/wireless/ath/ath11k/core.h
-@@ -756,9 +756,22 @@ struct ath11k {
+@@ -753,9 +753,22 @@ struct ath11k {
  			iftype[NUM_NL80211_BANDS][NUM_NL80211_IFTYPES];
  	} mac;
  
@@ -54,7 +54,7 @@
  	u32 min_tx_power;
  	u32 max_tx_power;
  	u32 txpower_limit_2g;
-@@ -839,6 +852,9 @@ struct ath11k {
+@@ -836,6 +849,9 @@ struct ath11k {
  	struct work_struct wmi_mgmt_tx_work;
  	struct sk_buff_head wmi_mgmt_tx_queue;
  
@@ -64,7 +64,7 @@
  	struct ath11k_wow wow;
  	struct completion target_suspend;
  	bool target_suspend_ack;
-@@ -1051,19 +1067,7 @@ struct ath11k_base {
+@@ -1048,19 +1064,7 @@ struct ath11k_base {
  	struct ath11k_hal_reg_capabilities_ext hal_reg_cap[MAX_RADIOS];
  	unsigned long long free_vdev_map;
  
@@ -82,9 +82,9 @@
 -	struct list_head peers;
 -	wait_queue_head_t peer_mapping_wq;
  	u8 mac_addr[ETH_ALEN];
- 	int userpd_id;
  	int irq_num[ATH11K_IRQ_NUM_MAX];
-@@ -1462,4 +1466,36 @@ static inline const char *ath11k_bus_str
+ 	struct ath11k_ext_irq_grp ext_irq_grp[ATH11K_EXT_IRQ_GRP_NUM_MAX];
+@@ -1458,4 +1462,36 @@ static inline const char *ath11k_bus_str
  
  void ath11k_core_pm_notifier_unregister(struct ath11k_base *ab);
  
@@ -963,7 +963,7 @@
  		init_completion(&ar->vdev_delete_done);
 --- a/drivers/net/wireless/ath/ath11k/nss.c
 +++ b/drivers/net/wireless/ath/ath11k/nss.c
-@@ -143,7 +143,7 @@ static void ath11k_nss_get_peer_stats(st
+@@ -144,7 +144,7 @@ static void ath11k_nss_get_peer_stats(st
  {
  	struct ath11k_peer *peer;
  	struct nss_wifili_peer_ctrl_stats *pstats = NULL;
@@ -972,7 +972,7 @@
  	u64 tx_packets, tx_bytes, tx_dropped = 0;
  	u64 rx_packets, rx_bytes, rx_dropped;
  
-@@ -156,7 +156,13 @@ static void ath11k_nss_get_peer_stats(st
+@@ -157,7 +157,13 @@ static void ath11k_nss_get_peer_stats(st
  		rcu_read_lock();
  		spin_lock_bh(&ab->base_lock);
  
@@ -987,7 +987,7 @@
  		if (!peer || !peer->sta) {
  			ath11k_dbg(ab, ATH11K_DBG_NSS, "nss wifili: unable to find peer %d\n", pstats->peer_id);
  			spin_unlock_bh(&ab->base_lock);
-@@ -278,28 +284,28 @@ static void ath11k_nss_tx_encap_raw(stru
+@@ -279,28 +285,28 @@ static void ath11k_nss_tx_encap_raw(stru
  static void ath11k_nss_peer_mem_free(struct ath11k_base *ab, u32 peer_id)
  {
  	struct ath11k_peer *peer;
@@ -1032,7 +1032,7 @@
  	spin_unlock_bh(&ab->base_lock);
  
  	ath11k_dbg(ab, ATH11K_DBG_NSS, "nss peer %d mem freed\n", peer_id);
-@@ -420,6 +426,7 @@ void ath11k_nss_wifili_event_receive(str
+@@ -421,6 +427,7 @@ void ath11k_nss_wifili_event_receive(str
  void ath11k_nss_process_mic_error(struct ath11k_base *ab, struct sk_buff *skb)
  {
  	struct ath11k_vif *arvif;
@@ -1040,7 +1040,7 @@
  	struct ath11k_peer *peer = NULL;
  	struct hal_rx_desc *desc = (struct hal_rx_desc *)skb->data;
  	struct wireless_dev *wdev;
-@@ -427,6 +434,7 @@ void ath11k_nss_process_mic_error(struct
+@@ -428,6 +435,7 @@ void ath11k_nss_process_mic_error(struct
  	u8 peer_addr[ETH_ALEN];
  	u8 ucast_keyidx, mcast_keyidx;
  	bool is_mcbc;
@@ -1048,7 +1048,7 @@
  
  	if (!ath11k_dp_rx_h_msdu_end_first_msdu(ab, desc))
  		goto fail;
-@@ -435,7 +443,13 @@ void ath11k_nss_process_mic_error(struct
+@@ -436,7 +444,13 @@ void ath11k_nss_process_mic_error(struct
  	peer_id = ath11k_dp_rx_h_mpdu_start_peer_id(ab, desc);
  
  	spin_lock_bh(&ab->base_lock);
@@ -1063,7 +1063,7 @@
  	if (!peer) {
  		ath11k_info(ab, "ath11k_nss:peer not found");
  		spin_unlock_bh(&ab->base_lock);
-@@ -604,7 +618,7 @@ static int ath11k_nss_undecap_raw(struct
+@@ -605,7 +619,7 @@ static int ath11k_nss_undecap_raw(struct
  
  	spin_lock_bh(&ab->base_lock);
  
@@ -1072,7 +1072,7 @@
  	if (!peer) {
  		ath11k_warn(ab, "peer not found for raw/nwifi undecap, drop this packet\n");
  		spin_unlock_bh(&ab->base_lock);
-@@ -646,16 +660,48 @@ static int ath11k_nss_undecap_nwifi(stru
+@@ -647,16 +661,48 @@ static int ath11k_nss_undecap_nwifi(stru
  	return 0;
  }
  
@@ -1123,7 +1123,7 @@
  
  	if (!ta_peer) {
  		spin_unlock_bh(&ab->base_lock);
-@@ -666,7 +712,32 @@ static void ath11k_nss_wds_type_rx(struc
+@@ -667,7 +713,32 @@ static void ath11k_nss_wds_type_rx(struc
  		   ta_peer->addr);
  
  	if (addr4_valid) {
@@ -1157,7 +1157,7 @@
  		if (!is_sa_valid) {
  			ath11k_peer_add_ast(ar, ta_peer, src_mac,
  					    ATH11K_AST_TYPE_WDS);
-@@ -749,7 +820,7 @@ static void ath11k_nss_vdev_spl_receive_
+@@ -750,7 +821,7 @@ static void ath11k_nss_vdev_spl_receive_
  
  	switch (wds_type) {
  		case NSS_WIFI_VDEV_WDS_TYPE_RX:
@@ -1166,7 +1166,7 @@
  					       addr4_valid, peer_id);
  			break;
  		case NSS_WIFI_VDEV_WDS_TYPE_MEC:
-@@ -774,7 +845,7 @@ static bool ath11k_nss_vdev_data_receive
+@@ -775,7 +846,7 @@ static bool ath11k_nss_vdev_data_receive
  		   src_mac);
  
  	spin_lock_bh(&ab->base_lock);
@@ -1175,7 +1175,7 @@
  
  	if (ast_entry && ast_entry->type == ATH11K_AST_TYPE_MEC) {
  		spin_unlock_bh(&ab->base_lock);
-@@ -880,7 +951,7 @@ ath11k_nss_vdev_special_data_receive(str
+@@ -881,7 +952,7 @@ ath11k_nss_vdev_special_data_receive(str
  			addr4_metadata = &wifi_metadata->metadata.addr4_metadata;
  
  			spin_lock_bh(&ab->base_lock);
@@ -1184,7 +1184,7 @@
  			if (!ta_peer) {
  				spin_unlock_bh(&ab->base_lock);
  				dev_kfree_skb_any(skb);
-@@ -3488,7 +3559,7 @@ void ath11k_nss_update_sta_stats(struct
+@@ -3489,7 +3560,7 @@ void ath11k_nss_update_sta_stats(struct
  		return;
  
  	spin_lock_bh(&ab->base_lock);
@@ -1193,7 +1193,7 @@
  	if (!peer) {
  		ath11k_dbg(ab, ATH11K_DBG_NSS, "sta stats: unable to find peer %pM\n",
  					sta->addr);
-@@ -3645,7 +3716,7 @@ void ath11k_nss_update_sta_rxrate(struct
+@@ -3646,7 +3717,7 @@ void ath11k_nss_update_sta_rxrate(struct
  	peer->nss.nss_stats->rxrate.bw = ath11k_mac_bw_to_mac80211_bw(ppdu_info->bw);
  }
  
@@ -1202,7 +1202,7 @@
  {
  	struct nss_wifili_peer_msg *peer_msg;
  	struct nss_wifili_msg *wlmsg = NULL;
-@@ -3654,29 +3725,29 @@ int ath11k_nss_peer_delete(struct ath11k
+@@ -3655,29 +3726,29 @@ int ath11k_nss_peer_delete(struct ath11k
  	nss_tx_status_t status;
  	int ret;
  
@@ -1240,7 +1240,7 @@
  		ret = -ENOMEM;
  		goto free_peer;
  	}
-@@ -3688,27 +3759,27 @@ int ath11k_nss_peer_delete(struct ath11k
+@@ -3689,27 +3760,27 @@ int ath11k_nss_peer_delete(struct ath11k
  
  	msg_cb = (nss_wifili_msg_callback_t)ath11k_nss_wifili_event_receive;
  
@@ -1273,7 +1273,7 @@
  
  	kfree(wlmsg);
  
-@@ -3718,20 +3789,20 @@ int ath11k_nss_peer_delete(struct ath11k
+@@ -3719,20 +3790,20 @@ int ath11k_nss_peer_delete(struct ath11k
  	 */
  	ret = wait_for_completion_timeout(&peer->nss.complete,
  					  msecs_to_jiffies(ATH11K_NSS_MSG_TIMEOUT_MS));
@@ -1298,7 +1298,7 @@
  	return ret;
  }
  
-@@ -4470,10 +4541,11 @@ static int ath11k_nss_init(struct ath11k
+@@ -4478,10 +4549,11 @@ static int ath11k_nss_init(struct ath11k
  		ath11k_warn(ab, "timeout while waiting for nss init msg response\n");
  		goto unregister;
  	}
@@ -1312,7 +1312,7 @@
  
  	kfree(wlmsg);
  
-@@ -4583,6 +4655,7 @@ int ath11k_nss_pdev_init(struct ath11k_b
+@@ -4591,6 +4663,7 @@ int ath11k_nss_pdev_init(struct ath11k_b
  	 * for messages related to vdev/radio
  	 */
  	ar->nss.if_num = radio_if_num;

@@ -21,7 +21,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
 
 --- a/drivers/net/wireless/ath/ath11k/core.h
 +++ b/drivers/net/wireless/ath/ath11k/core.h
-@@ -152,6 +152,7 @@ struct ath11k_skb_rxcb {
+@@ -149,6 +149,7 @@ struct ath11k_skb_rxcb {
  	u8 tid;
  	u16 peer_id;
  	u16 seq_no;
@@ -29,7 +29,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  };
  
  enum ath11k_hw_rev {
-@@ -1163,6 +1164,7 @@ struct ath11k_base {
+@@ -1159,6 +1160,7 @@ struct ath11k_base {
  	u32 max_ast_index;
  	u32 num_ast_entries;
  
@@ -439,7 +439,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  	.rx_desc_get_mpdu_fc_valid = ath11k_hw_qcn9074_rx_desc_get_mpdu_fc_valid,
 --- a/drivers/net/wireless/ath/ath11k/hw.h
 +++ b/drivers/net/wireless/ath/ath11k/hw.h
-@@ -267,6 +267,7 @@ struct ath11k_hw_ops {
+@@ -275,6 +275,7 @@ struct ath11k_hw_ops {
  	u32 (*rx_desc_get_encrypt_type)(struct hal_rx_desc *desc);
  	u8 (*rx_desc_get_decap_type)(struct hal_rx_desc *desc);
  	u8 (*rx_desc_get_mesh_ctl)(struct hal_rx_desc *desc);

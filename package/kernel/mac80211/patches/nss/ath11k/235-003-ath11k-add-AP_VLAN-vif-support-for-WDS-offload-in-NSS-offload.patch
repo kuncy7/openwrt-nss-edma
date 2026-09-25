@@ -33,7 +33,7 @@ Signed-off-by: Sathishkumar Muruganandam <murugana@codeaurora.org>
 
 --- a/drivers/net/wireless/ath/ath11k/core.h
 +++ b/drivers/net/wireless/ath/ath11k/core.h
-@@ -438,6 +438,7 @@ struct ath11k_vif {
+@@ -435,6 +435,7 @@ struct ath11k_vif {
  #ifdef CPTCFG_ATH11K_NSS_SUPPORT
  	struct arvif_nss nss;
  #endif
@@ -518,7 +518,7 @@ Signed-off-by: Sathishkumar Muruganandam <murugana@codeaurora.org>
  				      u8* mac_addr, enum ath11k_ast_entry_type type)
 --- a/drivers/net/wireless/ath/ath11k/nss.c
 +++ b/drivers/net/wireless/ath/ath11k/nss.c
-@@ -124,7 +124,10 @@ static void ath11k_nss_get_peer_stats(st
+@@ -125,7 +125,10 @@ static void ath11k_nss_get_peer_stats(st
  
  		peer->nss.nss_stats->tx_failed += tx_dropped;
  
@@ -530,7 +530,7 @@ Signed-off-by: Sathishkumar Muruganandam <murugana@codeaurora.org>
  
  		rx_packets = pstats->rx.rx_recvd;
  		peer->nss.nss_stats->rx_packets += rx_packets;
-@@ -134,7 +137,10 @@ static void ath11k_nss_get_peer_stats(st
+@@ -135,7 +138,10 @@ static void ath11k_nss_get_peer_stats(st
  			pstats->rx.err.decrypt_err;
  		peer->nss.nss_stats->rx_dropped += rx_dropped;
  
@@ -542,7 +542,7 @@ Signed-off-by: Sathishkumar Muruganandam <murugana@codeaurora.org>
  
  		spin_unlock_bh(&ab->base_lock);
  		rcu_read_unlock();
-@@ -1000,6 +1006,9 @@ int ath11k_nss_vdev_set_cmd(struct ath11
+@@ -1001,6 +1007,9 @@ int ath11k_nss_vdev_set_cmd(struct ath11
  	case ATH11K_NSS_WIFI_VDEV_DECAP_TYPE_CMD:
  		cmd = NSS_WIFI_VDEV_DECAP_TYPE_CMD;
  		break;

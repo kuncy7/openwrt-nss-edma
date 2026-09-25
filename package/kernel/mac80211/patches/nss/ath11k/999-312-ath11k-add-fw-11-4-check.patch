@@ -1,6 +1,6 @@
 --- a/drivers/net/wireless/ath/ath11k/nss.c
 +++ b/drivers/net/wireless/ath/ath11k/nss.c
-@@ -818,9 +818,11 @@ ath11k_nss_vdev_special_data_receive(str
+@@ -819,9 +819,11 @@ ath11k_nss_vdev_special_data_receive(str
  	bool eth_decap = false;
  	int data_offs = 0;
  	int ret = 0;
@@ -13,7 +13,7 @@
  
  	arvif = ath11k_nss_get_arvif_from_dev(dev);
  	if (!arvif) {
-@@ -872,6 +874,7 @@ ath11k_nss_vdev_special_data_receive(str
+@@ -873,6 +875,7 @@ ath11k_nss_vdev_special_data_receive(str
  		rxcb->is_mcbc = true;
  		ath11k_dp_rx_from_nss(arvif->ar, skb, napi);
  	break;
@@ -21,7 +21,7 @@
  	case NSS_WIFI_VDEV_EXT_DATA_PKT_TYPE_4ADDR:
  		if (eth_decap) {
  			addr4_metadata = &wifi_metadata->metadata.addr4_metadata;
-@@ -891,6 +894,7 @@ ath11k_nss_vdev_special_data_receive(str
+@@ -892,6 +895,7 @@ ath11k_nss_vdev_special_data_receive(str
  			spin_unlock_bh(&ab->base_lock);
  		}
  		dev_kfree_skb_any(skb);

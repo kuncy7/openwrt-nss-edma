@@ -1,0 +1,22 @@
+--- a/drivers/net/wireless/ath/ath11k/core.c
++++ b/drivers/net/wireless/ath/ath11k/core.c
+@@ -972,7 +972,8 @@ static struct ath11k_hw_params ath11k_hw
+ 		.supports_regdb = false,
+ 		.fix_l1ss = true,
+ 		.credit_flow = false,
+-		.hal_params = &ath11k_hw_hal_params_ipq5018,
++		.max_tx_ring = 1,
++		.hal_params = &ath11k_hw_hal_params_ipq8074,
+ 		.supports_dynamic_smps_6ghz = false,
+ 		.alloc_cacheable_memory = false,
+ 		.supports_rssi_stats = false,
+@@ -998,9 +999,6 @@ static struct ath11k_hw_params ath11k_hw
+ 		.support_fw_mac_sequence = false,
+ 		.support_dual_stations = false,
+ 		.pdev_suspend = false,
+-		.cfr_support = false,
+-		.cfr_num_stream_bufs = 0,
+-		.cfr_stream_buf_size = 0,
+ 	},
+ };
+ 

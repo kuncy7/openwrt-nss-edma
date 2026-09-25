@@ -8,7 +8,7 @@
  
  static struct ath11k_hw_params ath11k_hw_params[] = {
  	{
-@@ -744,7 +745,7 @@ static struct ath11k_hw_params ath11k_hw
+@@ -752,7 +753,7 @@ static struct ath11k_hw_params ath11k_hw
  		.tx_ring_size = DP_TCL_DATA_RING_SIZE,
  		.smp2p_wow_exit = false,
  		.support_fw_mac_sequence = false,
@@ -17,20 +17,24 @@
  		.support_dual_stations = false,
  		.pdev_suspend = false,
  	},
-@@ -988,8 +989,23 @@ static struct ath11k_hw_params ath11k_hw
- 		.support_off_channel_tx = false,
- 		.tcl_ring_retry = true,
+@@ -1018,7 +1019,7 @@ static struct ath11k_hw_params ath11k_hw
  		.tx_ring_size = DP_TCL_DATA_RING_SIZE,
+ 		.smp2p_wow_exit = false,
+ 		.support_fw_mac_sequence = false,
 -		.num_vdevs_peers = ath11k_vdevs_peers,
 +		.num_vdevs_peers = ath11k_vdevs_peers_ipq5018,
-+	},
-+};
-+
+ 		.support_dual_stations = false,
+ 		.pdev_suspend = false,
+ 	},
+@@ -2830,6 +2831,21 @@ static const struct ath11k_num_vdevs_pee
+ 	},
+ };
+ 
 +static const struct ath11k_num_vdevs_peers ath11k_vdevs_peers_ipq5018[] = {
 +	{
 +		.num_vdevs = (8 + 1),
 +		.num_peers = 128,
- 	},
++ 	},
 +	{
 +		.num_vdevs = (8 + 1),
 +		.num_peers = 128,
@@ -39,9 +43,11 @@
 +		.num_vdevs = 8,
 +		.num_peers = 128,
 +	}
- };
- 
- static const struct dmi_system_id ath11k_pm_quirk_table[] = {
++};
++
+ static int ath11k_core_pm_notifier_register(struct ath11k_base *ab)
+ {
+ 	ab->pm_nb.notifier_call = ath11k_core_pm_notify;
 --- a/drivers/net/wireless/ath/ath11k/hw.c
 +++ b/drivers/net/wireless/ath/ath11k/hw.c
 @@ -1043,6 +1043,7 @@ static void ath11k_hw_wcn6855_reo_setup(
@@ -81,7 +87,7 @@
  	ath11k_hif_write32(ab, reo_base + HAL_REO1_DEST_RING_CTRL_IX_1,
 --- a/drivers/net/wireless/ath/ath11k/nss.c
 +++ b/drivers/net/wireless/ath/ath11k/nss.c
-@@ -4327,6 +4327,8 @@ static int ath11k_nss_get_target_type(st
+@@ -4328,6 +4328,8 @@ static int ath11k_nss_get_target_type(st
  		return ATH11K_WIFILI_TARGET_TYPE_QCN9074;
  	case ATH11K_HW_IPQ5018_HW10:
  		return ATH11K_WIFILI_TARGET_TYPE_QCA5018;
@@ -90,7 +96,7 @@
  	default:
  		ath11k_warn(ab, "NSS Offload not supported for this HW\n");
  		return ATH11K_WIFILI_TARGET_TYPE_UNKNOWN;
-@@ -4341,6 +4343,7 @@ static int ath11k_nss_get_interface_type
+@@ -4342,6 +4344,7 @@ static int ath11k_nss_get_interface_type
  	case ATH11K_HW_IPQ5018_HW10:
  		return NSS_WIFILI_INTERNAL_INTERFACE;
  	case ATH11K_HW_QCN9074_HW10:

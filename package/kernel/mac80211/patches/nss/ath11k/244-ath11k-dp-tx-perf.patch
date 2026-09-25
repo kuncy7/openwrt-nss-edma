@@ -26,7 +26,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
 
 --- a/drivers/net/wireless/ath/ath11k/core.h
 +++ b/drivers/net/wireless/ath/ath11k/core.h
-@@ -124,6 +124,7 @@ static inline enum wme_ac ath11k_tid_to_
+@@ -121,6 +121,7 @@ static inline enum wme_ac ath11k_tid_to_
  enum ath11k_skb_flags {
  	ATH11K_SKB_HW_80211_ENCAP = BIT(0),
  	ATH11K_SKB_CIPHER_SET = BIT(1),
@@ -34,7 +34,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  };
  
  struct ath11k_skb_cb {
-@@ -943,10 +944,13 @@ struct ath11k_dp_ring_bp_stats {
+@@ -940,10 +941,13 @@ struct ath11k_dp_ring_bp_stats {
  struct ath11k_soc_dp_tx_err_stats {
  	/* TCL Ring Descriptor unavailable */
  	u32 desc_na[DP_TCL_NUM_RING_MAX];
@@ -473,7 +473,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  	if (len > size)
 --- a/drivers/net/wireless/ath/ath11k/core.c
 +++ b/drivers/net/wireless/ath/ath11k/core.c
-@@ -108,7 +108,8 @@ static struct ath11k_hw_params ath11k_hw
+@@ -109,7 +109,8 @@ static struct ath11k_hw_params ath11k_hw
  		.supports_regdb = false,
  		.fix_l1ss = true,
  		.credit_flow = false,
@@ -483,7 +483,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  		.hal_params = &ath11k_hw_hal_params_ipq8074,
  		.supports_dynamic_smps_6ghz = false,
  		.alloc_cacheable_memory = true,
-@@ -193,7 +194,8 @@ static struct ath11k_hw_params ath11k_hw
+@@ -195,7 +196,8 @@ static struct ath11k_hw_params ath11k_hw
  		.supports_regdb = false,
  		.fix_l1ss = true,
  		.credit_flow = false,
@@ -493,7 +493,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  		.hal_params = &ath11k_hw_hal_params_ipq8074,
  		.supports_dynamic_smps_6ghz = false,
  		.alloc_cacheable_memory = true,
-@@ -368,7 +370,8 @@ static struct ath11k_hw_params ath11k_hw
+@@ -372,7 +374,8 @@ static struct ath11k_hw_params ath11k_hw
  		.supports_regdb = false,
  		.fix_l1ss = true,
  		.credit_flow = false,
@@ -503,7 +503,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  		.hal_params = &ath11k_hw_hal_params_ipq8074,
  		.supports_dynamic_smps_6ghz = true,
  		.alloc_cacheable_memory = true,
-@@ -2734,6 +2737,9 @@ int ath11k_core_pre_init(struct ath11k_b
+@@ -2776,6 +2779,9 @@ int ath11k_core_pre_init(struct ath11k_b
  	if (nss_offload)
  		ab->nss.stats_enabled = 1;
  

@@ -26,11 +26,9 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  drivers/net/wireless/ath/ath11k/nss.c | 4 +++-
  1 file changed, 3 insertions(+), 1 deletion(-)
 
-diff --git a/drivers/net/wireless/ath/ath11k/nss.c b/drivers/net/wireless/ath/ath11k/nss.c
-index 99daa9a..cc356ba 100644
 --- a/drivers/net/wireless/ath/ath11k/nss.c
 +++ b/drivers/net/wireless/ath/ath11k/nss.c
-@@ -129,7 +129,7 @@ static void ath11k_nss_wifili_link_desc_return(struct ath11k_base *ab,
+@@ -137,7 +137,7 @@ static void ath11k_nss_wifili_link_desc_
  
  exit:
  	ath11k_hal_srng_access_end(ab, srng);
@@ -39,7 +37,7 @@ index 99daa9a..cc356ba 100644
  }
  
  static void ath11k_nss_get_peer_stats(struct ath11k_base *ab, struct nss_wifili_peer_stats *stats)
-@@ -713,11 +713,13 @@ static void ath11k_nss_wds_type_rx(struct ath11k_vif *arvif, struct net_device *
+@@ -706,11 +706,13 @@ static void ath11k_nss_wds_type_rx(struc
  
  	wdev = dev->ieee80211_ptr;
  	if (!wdev) {

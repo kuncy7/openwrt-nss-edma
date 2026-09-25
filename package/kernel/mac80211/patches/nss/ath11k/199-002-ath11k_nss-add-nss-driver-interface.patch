@@ -48,12 +48,13 @@ Signed-off-by: Sriram R <srirrama@codeaurora.org>
  ath11k_ahb-y += ahb.o
 --- /dev/null
 +++ b/drivers/net/wireless/ath/ath11k/nss.c
-@@ -0,0 +1,2399 @@
+@@ -0,0 +1,2407 @@
 +// SPDX-License-Identifier: BSD-3-Clause-Clear
 +/*
 + * Copyright (c) 2020 The Linux Foundation. All rights reserved.
 + */
 +
++#include "ahb.h"
 +#include "debug.h"
 +#include "mac.h"
 +#include "nss.h"
@@ -1813,11 +1814,18 @@ Signed-off-by: Sriram R <srirrama@codeaurora.org>
 +	struct nss_wifili_msg *wlmsg = NULL;
 +	struct nss_ctx_instance *nss_contex;
 +	nss_wifili_msg_callback_t msg_cb;
++	struct ath11k_ahb *ab_ahb;
 +	u32 target_type;
 +	u32 features = 0;
 +	nss_tx_status_t status;
 +	struct ath11k_dp *dp;
++	u32 userpd_id = 0;
 +	int i, ret;
++
++	if (ab->hif.bus == ATH11K_BUS_AHB) {
++		ab_ahb = ath11k_ahb_priv(ab);
++		userpd_id = ab_ahb->userpd_id;
++	}
 +
 +	dp = &ab->dp;
 +
@@ -1879,7 +1887,7 @@ Signed-off-by: Sriram R <srirrama@codeaurora.org>
 +
 +	ab->nss.if_num = ath11k_nss_get_interface_type(ab);
 +
-+	ath11k_info(ab, "nss init soc nss if_num %d userpd_id %d\n", ab->nss.if_num, ab->userpd_id);
++	ath11k_info(ab, "nss init soc nss if_num %d userpd_id %d\n", ab->nss.if_num, userpd_id);
 +
 +	if (ab->nss.if_num >= NSS_MAX_NET_INTERFACES) {
 +		ath11k_warn(ab, "NSS invalid interface\n");
@@ -2806,7 +2814,7 @@ Signed-off-by: Sriram R <srirrama@codeaurora.org>
  static inline void ath11k_pci_select_window(struct ath11k_pci *ab_pci, u32 offset)
  {
  	struct ath11k_base *ab = ab_pci->ab;
-@@ -922,6 +936,7 @@ static const struct ath11k_hif_ops ath11
+@@ -920,6 +934,7 @@ static const struct ath11k_hif_ops ath11
  	.map_service_to_pipe = ath11k_pcic_map_service_to_pipe,
  	.ce_irq_enable = ath11k_pci_hif_ce_irq_enable,
  	.ce_irq_disable = ath11k_pci_hif_ce_irq_disable,
@@ -3017,7 +3025,7 @@ Signed-off-by: Sriram R <srirrama@codeaurora.org>
  	/* TODO: Do we need to enable ANI? */
 --- a/drivers/net/wireless/ath/ath11k/core.h
 +++ b/drivers/net/wireless/ath/ath11k/core.h
-@@ -909,6 +909,8 @@ struct ath11k_soc_dp_tx_err_stats {
+@@ -906,6 +906,8 @@ struct ath11k_soc_dp_tx_err_stats {
  	 * idr unavailable etc.
  	 */
  	atomic_t misc_fail;
@@ -3026,7 +3034,7 @@ Signed-off-by: Sriram R <srirrama@codeaurora.org>
  };
  
  struct ath11k_soc_dp_stats {
-@@ -959,6 +961,7 @@ struct ath11k_base {
+@@ -956,6 +958,7 @@ struct ath11k_base {
  	struct ath11k_htc htc;
  
  	struct ath11k_dp dp;

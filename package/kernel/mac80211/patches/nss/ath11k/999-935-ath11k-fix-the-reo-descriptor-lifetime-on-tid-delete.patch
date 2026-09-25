@@ -36,11 +36,9 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  drivers/net/wireless/ath/ath11k/dp_rx.c | 19 ++++++++++++++++---
  1 file changed, 16 insertions(+), 3 deletions(-)
 
-diff --git a/drivers/net/wireless/ath/ath11k/dp_rx.c b/drivers/net/wireless/ath/ath11k/dp_rx.c
-index ab1e5a0..666903e 100644
 --- a/drivers/net/wireless/ath/ath11k/dp_rx.c
 +++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
-@@ -746,9 +746,9 @@ void ath11k_dp_reo_cmd_list_cleanup(struct ath11k_base *ab)
+@@ -765,9 +765,9 @@ void ath11k_dp_reo_cmd_list_cleanup(stru
  		list_del(&cmd_queue->list);
  		rx_tid = &cmd_queue->data;
  		if (rx_tid->vaddr_unaligned) {
@@ -53,7 +51,7 @@ index ab1e5a0..666903e 100644
  			rx_tid->vaddr_unaligned = NULL;
  		}
  		kfree(cmd_queue);
-@@ -951,6 +951,19 @@ void ath11k_peer_rx_tid_delete(struct ath11k *ar,
+@@ -970,6 +970,19 @@ void ath11k_peer_rx_tid_delete(struct at
  	elem->tid = tid;
  	memcpy(&elem->data, rx_tid, sizeof(*rx_tid));
  

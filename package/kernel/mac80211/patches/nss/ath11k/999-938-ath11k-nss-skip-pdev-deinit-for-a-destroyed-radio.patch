@@ -28,11 +28,9 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  drivers/net/wireless/ath/ath11k/nss.c | 6 ++++++
  1 file changed, 6 insertions(+)
 
-diff --git a/drivers/net/wireless/ath/ath11k/nss.c b/drivers/net/wireless/ath/ath11k/nss.c
-index b8b52f6..a38516d 100644
 --- a/drivers/net/wireless/ath/ath11k/nss.c
 +++ b/drivers/net/wireless/ath/ath11k/nss.c
-@@ -3451,6 +3451,12 @@ static int ath11k_nss_pdev_deinit(struct ath11k_base *ab, int radio_id)
+@@ -4947,6 +4947,12 @@ static int ath11k_nss_pdev_deinit(struct
  	int dyn_if_type;
  	int ret;
  

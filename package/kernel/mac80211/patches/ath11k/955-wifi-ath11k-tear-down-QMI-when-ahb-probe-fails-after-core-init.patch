@@ -44,7 +44,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/net/wireless/ath/ath11k/ahb.c
 +++ b/drivers/net/wireless/ath/ath11k/ahb.c
-@@ -1208,6 +1208,8 @@
+@@ -1639,6 +1639,8 @@ static int ath11k_ahb_fw_resource_deinit
  	return 0;
  }
  
@@ -53,11 +53,11 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  static int ath11k_ahb_probe(struct platform_device *pdev)
  {
  	struct ath11k_base *ab;
-@@ -1312,13 +1314,20 @@
+@@ -1745,13 +1747,20 @@ static int ath11k_ahb_probe(struct platf
  	ret = ath11k_ahb_config_irq(ab);
  	if (ret) {
  		ath11k_err(ab, "failed to configure irq: %d\n", ret);
--		goto err_ce_free;
+-		goto err_rproc_deconfigure;
 +		goto err_core_stop;
  	}
  
@@ -72,6 +72,6 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	ath11k_qmi_deinit_service(ab);
 +	ath11k_core_pm_notifier_unregister(ab);
 +
- err_ce_free:
- 	ath11k_ce_free_pipes(ab);
+ err_rproc_deconfigure:
+ 	ath11k_ahb_deconfigure_rproc(ab);
  

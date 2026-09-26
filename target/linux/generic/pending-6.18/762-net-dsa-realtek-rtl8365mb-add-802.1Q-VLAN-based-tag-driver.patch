@@ -28,8 +28,16 @@ Realtek tag; the VLAN tagger is chosen from the device tree
 (dsa-tag-protocol = "rtl8365mb-8021q") or at runtime through
 /sys/class/net/<conduit>/dsa/tagging.
 
-Same limit as the qca8k and vsc73xx taggers: VLAN-aware bridges are
-refused.
+A VLAN-aware bridge works as on the qca8k tagger: its VLANs go into
+the VLAN 4K table as they are, PVID and untagged included, the CPU port
+is a tagged member of each, and a frame received in one of them is
+handed to a port of that bridge which is in the VLAN, tag left on. The
+port keeps two PVIDs, the tag_8021q one and the bridge's, and
+vlan_filtering picks which the register holds; a VID outside the
+tag_8021q range names one thing on the switch. Ingress filtering is on
+in this mode, so a tagged frame in a VLAN the port is not a member of
+is dropped at the port instead of reaching an upper or a VLAN-aware
+bridge it was never meant for.
 
 Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 --- a/drivers/net/dsa/realtek/rtl8365mb_main.c
@@ -50,15 +58,22 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
   * @chip_info: chip-specific info about the attached switch
   * @cpu: CPU tagging and CPU port configuration for this chip
   * @mib_lock: prevent concurrent reads of MIB counters
-@@ -849,6 +851,7 @@ struct rtl8365mb_port {
+@@ -849,6 +851,14 @@ struct rtl8365mb_port {
  struct rtl8365mb {
  	struct realtek_priv *priv;
  	int irq;
 +	enum dsa_tag_protocol tag_proto;
++	/* The PVID a port carries under the rtl8365mb-8021q tagger: its
++	 * tag_8021q VLAN (standalone, or the VLAN of a VLAN-unaware bridge)
++	 * or, while it sits in a VLAN-aware bridge, that bridge's. One
++	 * register holds it, rtl8365mb_commit_pvid() picks.
++	 */
++	u16 tag_8021q_pvid[RTL8365MB_MAX_NUM_PORTS];
++	u16 bridge_pvid[RTL8365MB_MAX_NUM_PORTS];
  	const struct rtl8365mb_chip_info *chip_info;
  	struct rtl8365mb_cpu cpu;
  	struct mutex mib_lock;
-@@ -1874,6 +1877,19 @@ static void rtl8365mb_port_stp_state_set
+@@ -1874,6 +1884,94 @@ static void rtl8365mb_port_stp_state_set
  			   val << RTL8365MB_MSTI_CTRL_PORT_STATE_OFFSET(port));
  }
  
@@ -75,36 +90,128 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	return mb->tag_proto == DSA_TAG_PROTO_RTL8365MB_8021Q;
 +}
 +
++/* Under the tagger a port has two candidate PVIDs: its tag_8021q VLAN,
++ * and the PVID of the VLAN-aware bridge it may sit in. The register holds
++ * one; @vlan_aware says which applies - the caller knows the state being
++ * set, dp->vlan_filtering may still hold the old one.
++ */
++static int rtl8365mb_commit_pvid(struct dsa_switch *ds, int port,
++				 bool vlan_aware)
++{
++	struct realtek_priv *priv = ds->priv;
++	struct rtl8365mb *mb = priv->chip_data;
++	u16 pvid;
++	int ret;
++
++	pvid = vlan_aware ? mb->bridge_pvid[port] : mb->tag_8021q_pvid[port];
++
++	/* No PVID yet (a bridge's VLANs come after vlan_filtering): the
++	 * register keeps what it has until one arrives.
++	 */
++	if (!pvid)
++		return 0;
++
++	mutex_lock(&priv->vlan_lock);
++	ret = rtl8365mb_vlan_pvid_port_set(ds, port, pvid, NULL);
++	mutex_unlock(&priv->vlan_lock);
++
++	return ret;
++}
++
++/* Is this VID a VLAN of a VLAN-aware bridge that @port is not in? The
++ * tagger picks the bridge by the VID alone, so one VID cannot serve two.
++ */
++static bool rtl8365mb_vlan_in_other_bridge(struct dsa_switch *ds, int port,
++					   u16 vid)
++{
++	struct dsa_port *dp = dsa_to_port(ds, port), *other;
++	struct bridge_vlan_info vinfo;
++	bool found = false;
++
++	rcu_read_lock();
++	dsa_switch_for_each_user_port(other, ds) {
++		if (!other->bridge || !other->user ||
++		    dsa_port_bridge_same(dp, other))
++			continue;
++		if (!br_vlan_get_info_rcu(other->user, vid, &vinfo)) {
++			found = true;
++			break;
++		}
++	}
++	rcu_read_unlock();
++
++	return found;
++}
++
++/* An 802.1Q upper of a port is delivered by its VID, so the VID must not
++ * belong to a VLAN-aware bridge on another port. The core only checks the
++ * bridge this port is in.
++ */
++static int rtl8365mb_port_prechangeupper(struct dsa_switch *ds, int port,
++					 struct netdev_notifier_changeupper_info *info)
++{
++	struct net_device *upper = info->upper_dev;
++
++	if (!rtl8365mb_is_8021q(ds->priv) || !info->linking ||
++	    !is_vlan_dev(upper))
++		return 0;
++
++	if (rtl8365mb_vlan_in_other_bridge(ds, port, vlan_dev_vlan_id(upper))) {
++		NL_SET_ERR_MSG_MOD(info->info.extack,
++				   "VID is a VLAN of a VLAN-aware bridge on another port");
++		return -EBUSY;
++	}
++
++	return 0;
++}
++
  static int rtl8365mb_port_set_transparent(struct realtek_priv *priv,
  					  int igr_port, int egr_port,
  					  bool enable)
-@@ -1934,6 +1950,22 @@ static int rtl8365mb_port_vlan_filtering
+@@ -1934,6 +2032,19 @@ static int rtl8365mb_port_vlan_filtering
  	dev_dbg(priv->dev, "port %d: %s VLAN filtering\n", port,
  		vlan_filtering ? "enable" : "disable");
  
 +	/* With the rtl8365mb-8021q tagger the VLAN setup is the tagger's:
 +	 * membership decides, the untag masks strip on the way out, and
 +	 * the transparent mode that a VLAN-unaware port normally gets would
-+	 * let frames out of the CPU port untagged. VLAN-aware bridges would
-+	 * need the same PVID bookkeeping the vsc73xx tagger does not do
-+	 * either.
++	 * let frames out of the CPU port untagged - nothing of that
++	 * changes here. What a VLAN-aware bridge changes is whose PVID the
++	 * port carries. Its VLANs go into the table through
++	 * rtl8365mb_port_vlan_add() like the tagger's own, and the tagger
++	 * delivers a frame in one of them to the bridge by the VID
++	 * (tag_rtl8365mb_8021q.c).
 +	 */
-+	if (rtl8365mb_is_8021q(priv)) {
-+		if (vlan_filtering) {
-+			NL_SET_ERR_MSG_MOD(extack,
-+					   "VLAN-aware bridges are not supported with the rtl8365mb-8021q tagger yet");
-+			return -EOPNOTSUPP;
-+		}
-+		return 0;
-+	}
++	if (rtl8365mb_is_8021q(priv))
++		return rtl8365mb_commit_pvid(ds, port, vlan_filtering);
 +
  	ret = rtl8365mb_vlan_port_get_framefilter(priv, port,
  						  &prev_accepted_frame);
  	if (ret) {
-@@ -2029,6 +2061,27 @@ undo_transparent:
+@@ -2029,14 +2140,57 @@ undo_transparent:
  	return ret;
  }
  
++/* The 802.1Q upper of @dev with this VID, looking at @dev's own uppers
++ * only: __vlan_find_dev_deep_rcu() climbs from a port that has no VLAN
++ * state of its own to its bridge, and would answer with the bridge's L3
++ * VLAN interface (br-lan.10) for every port of a VLAN-aware bridge.
++ */
++static struct net_device *rtl8365mb_vlan_upper_of(struct net_device *dev, u16 vid)
++{
++	struct net_device *upper;
++	struct list_head *iter;
++
++	netdev_for_each_upper_dev_rcu(dev, upper, iter) {
++		if (is_vlan_dev(upper) &&
++		    vlan_dev_vlan_proto(upper) == htons(ETH_P_8021Q) &&
++		    vlan_dev_vlan_id(upper) == vid)
++			return upper;
++	}
++
++	return NULL;
++}
++
 +/* Does another user port already have an 802.1Q upper with this VID? */
 +static bool rtl8365mb_vlan_upper_elsewhere(struct dsa_switch *ds, int port,
 +					   u16 vid)
@@ -116,7 +223,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	dsa_switch_for_each_user_port(dp, ds) {
 +		if (dp->index == port || !dp->user)
 +			continue;
-+		if (__vlan_find_dev_deep_rcu(dp->user, htons(ETH_P_8021Q), vid)) {
++		if (rtl8365mb_vlan_upper_of(dp->user, vid)) {
 +			found = true;
 +			break;
 +		}
@@ -129,7 +236,17 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  static int rtl8365mb_port_vlan_add(struct dsa_switch *ds, int port,
  				   const struct switchdev_obj_port_vlan *vlan,
  				   struct netlink_ext_ack *extack)
-@@ -2050,6 +2103,33 @@ static int rtl8365mb_port_vlan_add(struc
+ {
+ 	bool untagged = !!(vlan->flags & BRIDGE_VLAN_INFO_UNTAGGED);
+ 	bool pvid = !!(vlan->flags & BRIDGE_VLAN_INFO_PVID);
++	struct switchdev_obj_port_vlan cpu_vlan;
+ 	u16 pvid_vid;
+ 	struct realtek_priv *priv = ds->priv;
++	struct rtl8365mb *mb = priv->chip_data;
+ 	int ret;
+ 
+ 	dev_dbg(priv->dev, "add VLAN %d on port %d, %s, %s\n",
+@@ -2050,6 +2204,58 @@ static int rtl8365mb_port_vlan_add(struc
  		return -EOPNOTSUPP;
  	}
  
@@ -140,44 +257,93 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +			return -EBUSY;
 +		}
 +
-+		/* On a VLAN-unaware port the bridge's PVID and untagged
-+		 * replays are none of the switch's business - the tag_8021q
-+		 * VIDs do the port separation. What is left is the VLAN of
-+		 * an 802.1Q upper of the port (wan.35): the port and the CPU
-+		 * port become tagged members, and the tagger carries that
-+		 * tag as it is. One such VLAN belongs to one port only, or
-+		 * the receive side could not tell whose upper it is.
-+		 */
-+		if (!dsa_port_is_vlan_filtering(dsa_to_port(ds, port))) {
++		if (dsa_is_cpu_port(ds, port)) {
++			/* The CPU port is a tagged member of every VLAN the
++			 * user ports carry - the tagger reads the VID - and
++			 * has no PVID of its own. A VLAN-unaware bridge's
++			 * replay (VID 1) lands here too and carries nothing.
++			 */
++			cpu_vlan = *vlan;
++			cpu_vlan.flags &= ~(BRIDGE_VLAN_INFO_PVID |
++					    BRIDGE_VLAN_INFO_UNTAGGED);
++			vlan = &cpu_vlan;
++			untagged = false;
++			pvid = false;
++		} else if (!dsa_port_is_vlan_filtering(dsa_to_port(ds, port))) {
++			/* On a VLAN-unaware port the bridge's PVID and untagged
++			 * replays are none of the switch's business - the
++			 * tag_8021q VIDs do the port separation. What is left
++			 * is the VLAN of an 802.1Q upper of the port (wan.35):
++			 * the port and the CPU port become tagged members, and
++			 * the tagger carries that tag as it is. One such VLAN
++			 * belongs to one port only, or the receive side could
++			 * not tell whose upper it is.
++			 */
 +			if (pvid || untagged)
 +				return 0;
-+			if (dsa_is_user_port(ds, port) &&
-+			    rtl8365mb_vlan_upper_elsewhere(ds, port, vlan->vid)) {
++			if (rtl8365mb_vlan_upper_elsewhere(ds, port, vlan->vid)) {
 +				NL_SET_ERR_MSG_MOD(extack,
 +						   "VID is already an 802.1Q upper of another port");
 +				return -EBUSY;
 +			}
++		} else if (rtl8365mb_vlan_upper_elsewhere(ds, port, vlan->vid)) {
++			/* A VLAN-aware bridge's VLANs go in as they are, PVID
++			 * and untagged included; the tagger delivers by the
++			 * VID, so the VID may span the bridge's ports but not
++			 * reach beyond the bridge.
++			 */
++			NL_SET_ERR_MSG_MOD(extack,
++					   "VID is already an 802.1Q upper of another port");
++			return -EBUSY;
++		} else if (rtl8365mb_vlan_in_other_bridge(ds, port, vlan->vid)) {
++			NL_SET_ERR_MSG_MOD(extack,
++					   "VID is already a VLAN of another VLAN-aware bridge");
++			return -EBUSY;
 +		}
 +	}
 +
  	mutex_lock(&priv->vlan_lock);
  
  	ret = rtl8365mb_vlan_port_get_pvid(priv, port, &pvid_vid);
-@@ -2108,6 +2188,13 @@ static int rtl8365mb_port_vlan_del(struc
+@@ -2074,6 +2280,12 @@ static int rtl8365mb_port_vlan_add(struc
+ 	if (ret)
+ 		goto undo_set_pvid;
+ 
++	/* The PVID of a VLAN-aware bridge: remembered next to the
++	 * tag_8021q one, so vlan_filtering can switch between them.
++	 */
++	if (pvid && rtl8365mb_is_8021q(priv))
++		mb->bridge_pvid[port] = vlan->vid;
++
+ 	ret = 0;
+ 	goto out_unlock;
+ 
+@@ -2108,6 +2320,24 @@ static int rtl8365mb_port_vlan_del(struc
  	if (vlan->vid == 0)
  		return -EOPNOTSUPP;
  
-+	/* See rtl8365mb_port_vlan_add(): nothing was installed for these. */
-+	if (rtl8365mb_is_8021q(priv) &&
-+	    !dsa_port_is_vlan_filtering(dsa_to_port(ds, port)) &&
-+	    (vid_is_dsa_8021q(vlan->vid) ||
-+	     (vlan->flags & (BRIDGE_VLAN_INFO_PVID | BRIDGE_VLAN_INFO_UNTAGGED))))
-+		return 0;
++	/* See rtl8365mb_port_vlan_add(): nothing was installed for the
++	 * tag_8021q range, nor for a VLAN-unaware bridge's VLANs
++	 * (PVID/untagged) on a user port. The rest was and goes; a
++	 * VLAN-aware bridge's PVID is forgotten here.
++	 */
++	if (rtl8365mb_is_8021q(priv)) {
++		struct rtl8365mb *mb = priv->chip_data;
++
++		if (vid_is_dsa_8021q(vlan->vid))
++			return 0;
++		if (dsa_is_user_port(ds, port) &&
++		    !dsa_port_is_vlan_filtering(dsa_to_port(ds, port)) &&
++		    (vlan->flags & (BRIDGE_VLAN_INFO_PVID | BRIDGE_VLAN_INFO_UNTAGGED)))
++			return 0;
++		if (mb->bridge_pvid[port] == vlan->vid)
++			mb->bridge_pvid[port] = 0;
++	}
 +
  	mutex_lock(&priv->vlan_lock);
  	ret = rtl8365mb_vlan_pvid_port_clear(ds, port, vlan->vid);
  	if (ret)
-@@ -2917,15 +3004,242 @@ static int rtl8365mb_cpu_config(struct r
+@@ -2917,15 +3147,271 @@ static int rtl8365mb_cpu_config(struct r
  	return 0;
  }
  
@@ -197,10 +363,21 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	int ret;
 +
 +	mutex_lock(&priv->vlan_lock);
-+	if (flags & BRIDGE_VLAN_INFO_PVID)
-+		ret = rtl8365mb_vlan_pvid_port_set(ds, port, vid, NULL);
-+	else
++	if (flags & BRIDGE_VLAN_INFO_PVID) {
++		struct rtl8365mb *mb = priv->chip_data;
++		struct dsa_port *dp = dsa_to_port(ds, port);
++
++		/* Remembered for rtl8365mb_commit_pvid(); written now unless
++		 * the port sits in a VLAN-aware bridge, whose PVID it keeps.
++		 */
++		mb->tag_8021q_pvid[port] = vid;
++		if (dp->bridge && dsa_port_is_vlan_filtering(dp))
++			ret = 0;
++		else
++			ret = rtl8365mb_vlan_pvid_port_set(ds, port, vid, NULL);
++	} else {
 +		ret = rtl8365mb_vlan_pvid_port_clear(ds, port, vid);
++	}
 +	if (!ret)
 +		ret = rtl8365mb_vlan_4k_port_add(ds, port, &vlan, NULL);
 +	mutex_unlock(&priv->vlan_lock);
@@ -305,6 +482,16 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +							  RTL8365MB_VLAN_EGRESS_MODE_ORIGINAL);
 +		if (ret)
 +			return ret;
++
++		/* A tagged frame in a VLAN the port is not a member of is
++		 * dropped at the port: without this any port could inject
++		 * into an upper's or a VLAN-aware bridge's VLAN. An untagged
++		 * frame takes the PVID, of which the port is a member.
++		 */
++		ret = rtl8365mb_port_set_ingress_filtering(priv, dp->index,
++							   true);
++		if (ret)
++			return ret;
 +	}
 +
 +	return 0;
@@ -392,9 +579,17 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +					struct dsa_bridge bridge)
 +{
 +	struct dsa_port *dp = dsa_to_port(ds, port);
++	struct realtek_priv *priv = ds->priv;
++	struct rtl8365mb *mb = priv->chip_data;
 +
-+	if (rtl8365mb_is_8021q(ds->priv))
++	if (rtl8365mb_is_8021q(priv)) {
++		/* A VLAN-aware bridge's PVID leaves with the bridge; the
++		 * tag_8021q one comes back through
++		 * rtl8365mb_tag_8021q_vlan_add().
++		 */
++		mb->bridge_pvid[port] = 0;
 +		dsa_tag_8021q_bridge_leave(ds, port, bridge);
++	}
 +
 +	rtl83xx_port_bridge_leave(ds, port, bridge);
 +
@@ -420,7 +615,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  	switch (proto) {
  	case DSA_TAG_PROTO_RTL8_4:
-@@ -2936,6 +3250,26 @@ static int rtl8365mb_change_tag_protocol
+@@ -2936,6 +3422,26 @@ static int rtl8365mb_change_tag_protocol
  		cpu->format = RTL8365MB_CPU_FORMAT_8BYTES;
  		cpu->position = RTL8365MB_CPU_POS_BEFORE_CRC;
  		break;
@@ -447,7 +642,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	/* The switch also supports a 4-byte format, similar to rtl4a but with
  	 * the same 0x04 8-bit version and probably 8-bit port source/dest.
  	 * There is no public doc about it. Not supported yet and it will probably
-@@ -2945,7 +3279,27 @@ static int rtl8365mb_change_tag_protocol
+@@ -2945,7 +3451,27 @@ static int rtl8365mb_change_tag_protocol
  		return -EPROTONOSUPPORT;
  	}
  
@@ -475,7 +670,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  }
  
  static int rtl8365mb_switch_init(struct realtek_priv *priv)
-@@ -3157,13 +3511,19 @@ static int rtl8365mb_setup(struct dsa_sw
+@@ -3157,13 +3683,19 @@ static int rtl8365mb_setup(struct dsa_sw
  	if (ret)
  		goto out_teardown_irq;
  
@@ -496,7 +691,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	ds->max_num_bridges = FIELD_MAX(RTL8365MB_EFID_MASK);
  
  	ds->configure_vlan_while_not_filtering = true;
-@@ -3288,20 +3648,23 @@ static const struct dsa_switch_ops rtl83
+@@ -3288,20 +3820,24 @@ static const struct dsa_switch_ops rtl83
  	.setup = rtl8365mb_setup,
  	.teardown = rtl8365mb_teardown,
  	.phylink_get_caps = rtl8365mb_phylink_get_caps,
@@ -521,6 +716,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	.port_vlan_add = rtl8365mb_port_vlan_add,
  	.port_vlan_del = rtl8365mb_port_vlan_del,
  	.port_vlan_filtering = rtl8365mb_port_vlan_filtering,
++	.port_prechangeupper = rtl8365mb_port_prechangeupper,
 +	.tag_8021q_vlan_add = rtl8365mb_tag_8021q_vlan_add,
 +	.tag_8021q_vlan_del = rtl8365mb_tag_8021q_vlan_del,
  	.get_strings = rtl8365mb_get_strings,
@@ -573,7 +769,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  obj-$(CONFIG_NET_DSA_TAG_TRAILER) += tag_trailer.o
 --- /dev/null
 +++ b/net/dsa/tag_rtl8365mb_8021q.c
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,156 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/* Copyright (C) 2026 Stanislaw Pal <stefdo61@gmail.com>
 + *
@@ -635,6 +831,25 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 + * only ever installed for one port (rtl8365mb_port_vlan_add refuses a second),
 + * so the first match is the only match.
 + */
++/* @dev's own 802.1Q upper with this VID, if any. Not the deep lookup:
++ * from a port without VLAN state of its own that climbs to the bridge
++ * and answers with the bridge's L3 VLAN interface.
++ */
++static struct net_device *rtl8365mb_8021q_vlan_upper_of(struct net_device *dev,
++						 __be16 proto, u16 vid)
++{
++	struct net_device *upper;
++	struct list_head *iter;
++
++	netdev_for_each_upper_dev_rcu(dev, upper, iter) {
++		if (is_vlan_dev(upper) && vlan_dev_vlan_proto(upper) == proto &&
++		    vlan_dev_vlan_id(upper) == vid)
++			return upper;
++	}
++
++	return NULL;
++}
++
 +static struct net_device *rtl8365mb_8021q_find_vlan_upper(struct net_device *conduit,
 +						    __be16 proto, u16 vid)
 +{
@@ -644,7 +859,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	dsa_tree_for_each_user_port(dp, cpu_dp->dst) {
 +		if (dp->cpu_dp != cpu_dp)
 +			continue;
-+		if (__vlan_find_dev_deep_rcu(dp->user, proto, vid))
++		if (rtl8365mb_8021q_vlan_upper_of(dp->user, proto, vid))
 +			return dp->user;
 +	}
 +
@@ -671,9 +886,17 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	 * as hwaccel metadata, so once the frame reaches the user port the
 +	 * kernel's VLAN demux hands it to the upper; we only pick the port.
 +	 */
-+	if (vid >= 0 && !vid_is_dsa_8021q(vid) && skb_vlan_tag_present(skb))
++	if (vid >= 0 && !vid_is_dsa_8021q(vid) && skb_vlan_tag_present(skb)) {
++		/* An 802.1Q upper of a port, or a VLAN of a VLAN-aware
++		 * bridge: handed to a port of that bridge which is in the
++		 * VLAN, which of them the frame came from is not known
++		 * (imprecise RX, as for a VLAN-unaware bridge), and the
++		 * bridge does its own VLAN handling on the tag.
++		 */
 +		skb->dev = rtl8365mb_8021q_find_vlan_upper(netdev, skb->vlan_proto, vid);
-+	else
++		if (!skb->dev)
++			skb->dev = dsa_find_designated_bridge_port_by_vid(netdev, vid);
++	} else
 +		skb->dev = dsa_tag_8021q_find_user(netdev, src_port, switch_id,
 +						   vid, vbid);
 +	if (!skb->dev) {

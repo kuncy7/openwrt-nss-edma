@@ -33,6 +33,7 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/if_vlan.h>
+#include <linux/if_bridge.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/workqueue.h>
@@ -210,6 +211,15 @@ static int dsa_nss_collect(struct dsa_nss_want *want, int max)
 			bound = dev;
 		} else if (dp->bridge && dp->bridge->tx_fwd_offload) {
 			unsigned int vbid = dsa_port_bridge_num_get(dp);
+
+			/* A VLAN-aware bridge's frames carry the bridge's own
+			 * VIDs, not the tag_8021q one; those have no node yet,
+			 * and the firmware hands a frame in a VLAN it has no
+			 * node for to the host (measured), so the bridge runs
+			 * on the host path for now.
+			 */
+			if (br_vlan_enabled(dsa_port_bridge_dev_get(dp)))
+				continue;
 
 			vid = dsa_tag_8021q_bridge_vid(vbid);
 			/* the port imprecise RX delivers to, if any is live */

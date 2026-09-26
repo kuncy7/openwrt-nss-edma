@@ -368,8 +368,21 @@ TP-Link Archer AX55 v1 (RTL8367S), with nothing in uci but the defaults and
 asks for `qcom,ath11k-fw-memory-mode = <1>` (the AX55, the Xiaomi AX6000 and
 others): wifili runs in that mode - measured on the AX55 and on two AX6000s -
 and the service only logs a warning; `nss.general.wifi_offload=0` keeps the
-radios on the host. Not yet: VLAN-aware bridges (refused by both taggers) and
-switches other than these two.
+radios on the host. Not yet: switches other than these two.
+
+**VLAN-aware bridges** (`bridge-vlan` sections, `vlan_filtering`) work on
+both taggers, on the host path: the bridge's VLANs go into the switch as
+they are, PVID and untagged included, the CPU port is a tagged member of
+each, and the tagger hands a frame in one of them to the bridge by its VID
+(which of the bridge's ports it came from is not known - the same imprecise
+receive as for a VLAN-unaware bridge, and the switch forwards between its own
+ports by itself). The one rule that stays: a VID names one thing on the whole
+switch - the VLAN of one VLAN-aware bridge, or an 802.1Q upper of one port -
+because the VID is all the tagger has. Flows through such a bridge are not
+accelerated yet: the firmware has no interface for the bridge's VLANs and
+hands their frames to the host (it does, measured), so `br-lan.10` routed to
+the WAN costs host CPU where `br-lan` does not. Standalone ports, `wan.35`,
+VLAN-unaware bridges and the Wi-Fi are accelerated as before.
 
 **The trunk (`vlan-trunk`, `lan-trunk`)** stays supported next to it. A board
 with no such switch gets it on first boot from the board table (see
@@ -433,6 +446,19 @@ CPU instead of 3-5 %. The first boot clears the option (`98-nss-offload`) and
 `nss-dwmac-up` warns in the log if a flowtable is back; `nft list flowtables`
 must print nothing. A pinned IRQ layout in `/etc/rc.local` from the old build
 belongs in the same clean-up: `nss-irq-affinity` sets its own.
+
+One more that is not the plane at all but looks like a hung router: after
+`/etc/init.d/network restart` on a config with several DHCP-serving
+interfaces (a guest and an IoT VLAN next to the LAN), **dnsmasq can stay
+dead** - clients lose their leases while the box itself answers on
+link-local or on another VLAN. That is an upstream race in the dnsmasq init
+script under ujail: every interface event runs a reload, a reload with a
+changed config restarts the jailed instance and then signals it, and the
+signal kills the new ujail before it has its handlers; procd counts each of
+those as a crash and gives up after five (`logread` shows `Instance
+dnsmasq::... in a crash loop`). `/etc/init.d/dnsmasq start` brings it back,
+a reboot resets the count. Nothing in this branch changes that path; it is
+mentioned here because a VLAN-aware setup trips it in one or two restarts.
 
 ## Why DSA has to go
 

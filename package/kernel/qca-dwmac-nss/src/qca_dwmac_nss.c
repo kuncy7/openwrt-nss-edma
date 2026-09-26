@@ -111,6 +111,7 @@ struct dwmac_nss_port {
 	struct net_device *netdev;	/* held while armed */
 	atomic_t rx_kicks;		/* E181: manual RX poll-demand kicks */
 	enum dwmac_nss_port_state state;
+	bool start_pending;		/* overridden, fw start waits for carrier */
 	bool headroom_added;		/* dp_ops->init() added 32B */
 	netdev_features_t saved_wanted_features;
 	bool features_trimmed;		/* TX csum/TSO cleared while started */
@@ -128,6 +129,18 @@ struct dwmac_nss_port {
 	u8 fw_link_failed;
 	atomic_t fw_link_changes;
 	atomic_t fw_link_skipped;
+	/*
+	 * Descriptor ring bases the firmware programmed on its first open
+	 * after boot (per GMAC, fixed for the boot: kept across unwinds),
+	 * and where the DMA stood in them when the firmware last closed.
+	 */
+	u32 fw_rx_ring;
+	u32 fw_tx_ring;
+	bool fw_rings_known;
+	u32 fw_rx_resume;
+	u32 fw_tx_resume;
+	bool fw_resume_valid;
+	atomic_t ring_restores;
 };
 
 static struct dwmac_nss_port dwmac_nss_ports[NSS_DP_MAX_INTERFACES];
@@ -304,6 +317,119 @@ static int dwmac_nss_msg_open(void *arg)
 	return port->dp_ops->open(port->dpc, 0, 0, 0);
 }
 
+/*
+ * The firmware points the GMAC DMA at its own descriptor rings on its
+ * first open after boot, and a later open neither points it back nor
+ * rewinds the firmware's ring indices. Any host close/open in between -
+ * netifd bouncing the trunk on a config reload, an MTU change - resets
+ * the DMA onto the host rings. Measured on an AX6000 after a bridge
+ * reload: the firmware reopened with the GMAC0 list addresses on the
+ * stmmac rings (0x4567c000/0x43ddc000 instead of gmac_rx_desc_0/
+ * gmac_tx_desc_0 from the NSS meminfo) and wired traffic stayed dead
+ * until reboot; putting only the ring bases back started the DMA at
+ * descriptor 0 while the firmware waited at 7 (RX) and 16 (TX), and TX
+ * deadlocked. So: record the ring bases after the first open; on every
+ * close record where the DMA stands; before the next open start the DMA
+ * there, and once it runs point the list addresses back at the ring
+ * bases for the wrap. All under rtnl and dwmac_nss_lock, claim held.
+ */
+
+/* after the firmware closed, before the claim is released */
+static void dwmac_nss_rings_save(struct dwmac_nss_port *port)
+{
+	struct qca_dwmac_dp_rings r;
+	int err;
+
+	port->fw_resume_valid = false;
+	if (!port->fw_rings_known)
+		return;
+
+	err = qca_dwmac_dp_dma_stop(port->netdev);
+	if (!err)
+		err = qca_dwmac_dp_rings_get(port->netdev, &r);
+	if (err) {
+		netdev_warn(port->netdev, "qca-dwmac-nss: phys_if %d DMA did not stop (%d), no resume point\n",
+			    port->if_num, err);
+		return;
+	}
+	if (r.rx_base != port->fw_rx_ring || r.tx_base != port->fw_tx_ring) {
+		netdev_warn(port->netdev, "qca-dwmac-nss: phys_if %d DMA not on the fw rings at close (rx %08x tx %08x), no resume point\n",
+			    port->if_num, r.rx_base, r.tx_base);
+		return;
+	}
+	port->fw_rx_resume = r.rx_cur;
+	port->fw_tx_resume = r.tx_cur;
+	port->fw_resume_valid = true;
+}
+
+/* after the claim, before the firmware messages */
+static int dwmac_nss_rings_prepare(struct dwmac_nss_port *port)
+{
+	u32 rx = port->fw_rx_ring, tx = port->fw_tx_ring;
+	int err;
+
+	/* first open after boot: the firmware programs its rings itself */
+	if (!port->fw_rings_known)
+		return 0;
+
+	if (port->fw_resume_valid) {
+		rx = port->fw_rx_resume;
+		tx = port->fw_tx_resume;
+	} else {
+		netdev_warn(port->netdev, "qca-dwmac-nss: phys_if %d has no resume point, fw DMA rings restart at their base\n",
+			    port->if_num);
+	}
+	port->fw_resume_valid = false;
+
+	/* no frame may move the DMA between its start and the wrap fix */
+	qca_dwmac_dp_mac_set(port->netdev, false);
+	err = qca_dwmac_dp_rings_set(port->netdev, rx, tx);
+	if (err) {
+		netdev_warn(port->netdev, "qca-dwmac-nss: fw DMA rings not restored on phys_if %d (%d)\n",
+			    port->if_num, err);
+		return err;
+	}
+	port->fw_rx_resume = rx;
+	port->fw_tx_resume = tx;
+	return 0;
+}
+
+/* after a successful firmware open */
+static void dwmac_nss_rings_start(struct dwmac_nss_port *port)
+{
+	struct qca_dwmac_dp_rings r;
+	int err;
+
+	if (port->fw_rings_known) {
+		err = qca_dwmac_dp_rings_wrap(port->netdev, port->fw_rx_ring,
+					      port->fw_tx_ring);
+		if (netif_carrier_ok(port->netdev))
+			qca_dwmac_dp_mac_set(port->netdev, true);
+		if (err) {
+			netdev_warn(port->netdev, "qca-dwmac-nss: phys_if %d DMA not started by the fw open (%d)\n",
+				    port->if_num, err);
+			return;
+		}
+		atomic_inc(&port->ring_restores);
+		netdev_info(port->netdev, "qca-dwmac-nss: fw DMA rings restored on phys_if %d, resumed at rx %08x tx %08x\n",
+			    port->if_num, port->fw_rx_resume, port->fw_tx_resume);
+		return;
+	}
+
+	if (qca_dwmac_dp_rings_get(port->netdev, &r))
+		return;
+	if (r.rx_base == r.host_rx || r.tx_base == r.host_tx) {
+		netdev_warn(port->netdev, "qca-dwmac-nss: fw open left phys_if %d on the host DMA rings (rx %08x tx %08x)\n",
+			    port->if_num, r.rx_base, r.tx_base);
+		return;
+	}
+	port->fw_rx_ring = r.rx_base;
+	port->fw_tx_ring = r.tx_base;
+	port->fw_rings_known = true;
+	netdev_info(port->netdev, "qca-dwmac-nss: fw DMA rings of phys_if %d: rx %08x tx %08x\n",
+		    port->if_num, r.rx_base, r.tx_base);
+}
+
 static int dwmac_nss_port_start(struct dwmac_nss_port *port)
 {
 	struct net_device *netdev = port->netdev;
@@ -317,6 +443,9 @@ static int dwmac_nss_port_start(struct dwmac_nss_port *port)
 			    ret);
 		return ret;
 	}
+
+	if (dwmac_nss_rings_prepare(port))
+		goto err_release;
 
 	if (dwmac_nss_msg_retry(dwmac_nss_msg_mac_addr, port)) {
 		netdev_warn(netdev, "qca-dwmac-nss: fw mac_addr failed\n");
@@ -333,6 +462,8 @@ static int dwmac_nss_port_start(struct dwmac_nss_port *port)
 		netdev_warn(netdev, "qca-dwmac-nss: fw open failed\n");
 		goto err_release;
 	}
+
+	dwmac_nss_rings_start(port);
 
 	/*
 	 * The stmmac hardware whose checksum engine backed NETIF_F_HW_CSUM is
@@ -372,6 +503,40 @@ err_release:
 }
 
 /*
+ * Start the firmware plane of an overridden port only on a live link.
+ * Started while the carrier is down, the firmware opens the GMAC, TX
+ * works, and not one ingress frame is ever delivered. nss-dwmac-up keeps
+ * the boot arm clear of that by waiting for operstate up, but a trunk
+ * bounced after boot - netifd rebuilding the bridge on a config reload
+ * bounces the DSA conduit - comes back through NETDEV_UP a couple of
+ * seconds before phylink brings the link up (measured on an AX6000:
+ * claimed at 515.99s, link up at 518.09s, and no ingress on the wired
+ * ports until reboot). So a port without carrier stays on the host
+ * plane, marked pending, and the linkwatch NETDEV_CHANGE that reports
+ * the carrier starts it.
+ *
+ * Only a pending port is started from NETDEV_CHANGE: a start that failed
+ * has already bounced back to the host, and retrying it on every carrier
+ * event would park the host DMA against a dead firmware over and over.
+ * Caller holds rtnl and dwmac_nss_lock.
+ */
+static void dwmac_nss_port_start_on_link(struct dwmac_nss_port *port)
+{
+	struct net_device *netdev = port->netdev;
+
+	if (!netif_running(netdev) || !netif_carrier_ok(netdev)) {
+		if (!port->start_pending)
+			netdev_info(netdev, "qca-dwmac-nss: phys_if %d waits for link before the NSS fw data plane\n",
+				    port->if_num);
+		port->start_pending = true;
+		return;
+	}
+
+	port->start_pending = false;
+	dwmac_nss_port_start(port);
+}
+
+/*
  * Unwind a port down the state ladder to @target. With @fw_alive the
  * firmware is messaged (link down, close); without, only host-side state
  * is undone - the rmmod path must not message a dead firmware.
@@ -389,6 +554,9 @@ static void dwmac_nss_port_unwind(struct dwmac_nss_port *port,
 			dwmac_nss_fw_link_state(port, false);
 			if (port->dp_ops->close(port->dpc))
 				netdev_warn(port->netdev, "qca-dwmac-nss: fw close failed\n");
+			dwmac_nss_rings_save(port);
+		} else {
+			port->fw_resume_valid = false;
 		}
 
 		/* returns with TX stopped; nothing runs fw_xmit after this */
@@ -416,6 +584,7 @@ static void dwmac_nss_port_unwind(struct dwmac_nss_port *port,
 		}
 		port->dp_ops = NULL;
 		port->dpc = NULL;
+		port->start_pending = false;
 		port->state = DWMAC_NSS_PORT_ARMED;
 		netdev_info(port->netdev, "qca-dwmac-nss: NSS data plane released on phys_if %d\n",
 			    port->if_num);
@@ -504,7 +673,7 @@ EXPORT_SYMBOL(nss_dp_override_data_plane);
 /*
  * nss-drv signals "registration done, port was open" here (process
  * context). For a port that is down, the NETDEV_UP notifier does this
- * instead.
+ * instead; for one without carrier, the NETDEV_CHANGE that raises it.
  */
 void nss_dp_start_data_plane(struct net_device *netdev,
 			     struct nss_dp_data_plane_ctx *dpc)
@@ -518,7 +687,7 @@ void nss_dp_start_data_plane(struct net_device *netdev,
 		if (port->dpc != dpc)
 			netdev_warn(netdev, "qca-dwmac-nss: start with foreign dpc, ignored\n");
 		else
-			dwmac_nss_port_start(port);
+			dwmac_nss_port_start_on_link(port);
 	}
 	mutex_unlock(&dwmac_nss_lock);
 	rtnl_unlock();
@@ -1035,11 +1204,16 @@ static int dwmac_nss_netdev_event(struct notifier_block *nb,
 	 * port_start's netdev_update_features() raises NETDEV_FEAT_CHANGE
 	 * with dwmac_nss_lock (and rtnl) held - taking the lock here again
 	 * deadlocked the nss-drv registration workqueue with rtnl pinned,
-	 * freezing all network configuration (measured).
+	 * freezing all network configuration (measured). NETDEV_CHANGE and
+	 * NETDEV_PRECHANGEMTU are safe to let through: none of those paths
+	 * changes an MTU, and carrier changes reach the notifier from the
+	 * linkwatch work, which takes rtnl on its own.
 	 */
 	switch (event) {
 	case NETDEV_UP:
+	case NETDEV_CHANGE:
 	case NETDEV_GOING_DOWN:
+	case NETDEV_PRECHANGEMTU:
 	case NETDEV_CHANGEMTU:
 	case NETDEV_CHANGEADDR:
 	case NETDEV_UNREGISTER:
@@ -1062,9 +1236,15 @@ static int dwmac_nss_netdev_event(struct notifier_block *nb,
 	switch (event) {
 	case NETDEV_UP:
 		if (port->state == DWMAC_NSS_PORT_OVERRIDDEN)
-			dwmac_nss_port_start(port);
+			dwmac_nss_port_start_on_link(port);
+		break;
+	case NETDEV_CHANGE:
+		if (port->state == DWMAC_NSS_PORT_OVERRIDDEN &&
+		    port->start_pending)
+			dwmac_nss_port_start_on_link(port);
 		break;
 	case NETDEV_GOING_DOWN:
+		port->start_pending = false;
 		/*
 		 * stmmac_release would tear the driver down around a
 		 * firmware-owned DMA; hand the port back first. No bounce -
@@ -1075,9 +1255,26 @@ static int dwmac_nss_netdev_event(struct notifier_block *nb,
 			dwmac_nss_port_unwind(port, DWMAC_NSS_PORT_OVERRIDDEN,
 					      true, false);
 		break;
+	case NETDEV_PRECHANGEMTU:
+		/*
+		 * stmmac changes the MTU of a running interface by reopening
+		 * the DMA itself (__stmmac_release + __stmmac_open), without
+		 * NETDEV_GOING_DOWN/UP. On a claimed GMAC that napi_disable()s
+		 * the queues the claim already disabled - which blocks forever
+		 * with rtnl held - and then leaves the DMA on the new host
+		 * rings. Hand the port back first, as on GOING_DOWN;
+		 * NETDEV_CHANGEMTU brings the firmware back once there is link.
+		 */
+		port->start_pending = false;
+		if (port->state == DWMAC_NSS_PORT_STARTED)
+			dwmac_nss_port_unwind(port, DWMAC_NSS_PORT_OVERRIDDEN,
+					      true, false);
+		break;
 	case NETDEV_CHANGEMTU:
-		if (port->state == DWMAC_NSS_PORT_STARTED &&
-		    port->dp_ops->change_mtu(port->dpc, netdev->mtu))
+		if (port->state == DWMAC_NSS_PORT_OVERRIDDEN)
+			dwmac_nss_port_start_on_link(port);
+		else if (port->state == DWMAC_NSS_PORT_STARTED &&
+			 port->dp_ops->change_mtu(port->dpc, netdev->mtu))
 			netdev_warn(netdev, "qca-dwmac-nss: fw change_mtu(%d) failed\n",
 				    netdev->mtu);
 		break;
@@ -1138,11 +1335,12 @@ static int dwmac_nss_status_show(struct seq_file *m, void *v)
 				   "not in fw_mask");
 			continue;
 		}
-		seq_printf(m, "phys_if %d: %s dev=%s fw_link=%s%s\n",
+		seq_printf(m, "phys_if %d: %s dev=%s fw_link=%s%s%s\n",
 			   i, dwmac_nss_state_names[port->state],
 			   netdev_name(port->netdev),
 			   port->fw_link_up ? "up" : "down",
-			   port->fw_link_failed ? " (notify-failed)" : "");
+			   port->fw_link_failed ? " (notify-failed)" : "",
+			   port->start_pending ? " (waiting for link)" : "");
 		seq_printf(m, "  tx_redirect=%lld tx_busy=%lld rx_fw=%lld link_changes=%d link_skipped=%d\n",
 			   (long long)atomic64_read(&port->tx_redirect_pkts),
 			   (long long)atomic64_read(&port->tx_busy),
@@ -1151,11 +1349,21 @@ static int dwmac_nss_status_show(struct seq_file *m, void *v)
 			   atomic_read(&port->fw_link_skipped));
 		if (port->state >= DWMAC_NSS_PORT_ARMED && port->netdev) {
 			u32 st = qca_dwmac_dp_dma_status(port->netdev);
+			struct qca_dwmac_dp_rings r;
 
 			seq_printf(m, "  dma_status=%08x rs=%u ts=%u ru=%u tu=%u rx_kicks=%d\n",
 				   st, (st >> 17) & 7, (st >> 20) & 7,
 				   !!(st & 0x80), !!(st & 0x4),
 				   atomic_read(&port->rx_kicks));
+			if (!qca_dwmac_dp_rings_get(port->netdev, &r))
+				seq_printf(m, "  rings rx=%08x tx=%08x cur rx=%08x tx=%08x host rx=%08x tx=%08x fw %s rx=%08x tx=%08x resume rx=%08x tx=%08x%s restores=%d\n",
+					   r.rx_base, r.tx_base, r.rx_cur, r.tx_cur,
+					   r.host_rx, r.host_tx,
+					   port->fw_rings_known ? "known" : "unknown",
+					   port->fw_rx_ring, port->fw_tx_ring,
+					   port->fw_rx_resume, port->fw_tx_resume,
+					   port->fw_resume_valid ? " (pending)" : "",
+					   atomic_read(&port->ring_restores));
 		}
 	}
 	mutex_unlock(&dwmac_nss_lock);

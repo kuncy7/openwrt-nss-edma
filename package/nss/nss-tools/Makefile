@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=nss-tools
-PKG_RELEASE:=6
+PKG_RELEASE:=7
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -94,7 +94,9 @@ endef
 
 define Package/luci-app-nss/description
  Status -> NSS Offload: renders 'nss-status -j' (firmware state, cores,
- ports, ECM acceleration counts, SQM/fast-lane health) in LuCI.
+ ports, ECM acceleration counts, SQM/fast-lane health) in LuCI, and adds
+ the NSS core load and the ECM-accelerated connections to Status ->
+ Overview.
 endef
 
 define Package/luci-app-nssqos
@@ -163,6 +165,8 @@ endef
 define Package/luci-app-nss/install
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/nss
 	$(INSTALL_DATA) ./files/luci-nss-status.js $(1)/www/luci-static/resources/view/nss/status.js
+	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/status/include
+	$(INSTALL_DATA) ./files/luci-nss-overview.js $(1)/www/luci-static/resources/view/status/include/15_nss.js
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./files/luci-app-nss.menu.json $(1)/usr/share/luci/menu.d/luci-app-nss.json
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d

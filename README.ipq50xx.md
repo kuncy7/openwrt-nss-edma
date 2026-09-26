@@ -36,7 +36,7 @@ them:
 
 | Commit | What |
 |---|---|
-| `qualcommax: ipq50xx: keep the CMN PLL bus clocks enabled on 6.18` | Without this, 6.18 does not boot on IPQ5018 at all - the SoC dies within milliseconds of the CMN PLL probe. Merged into openwrt/main as [86b584bd0994](https://github.com/openwrt/openwrt/commit/86b584bd09949f14231d373c46563cc9); the branch now takes it from main. |
+| `qualcommax: ipq50xx: keep the CMN PLL bus clocks enabled on 6.18` | Without this, 6.18 does not boot on IPQ5018 at all - the SoC dies within milliseconds of the CMN PLL probe. Merged into openwrt/main as [86b584bd0994](https://github.com/openwrt/openwrt/commit/86b584bd09949f14231d373c46563cc9). Superseded on 2026-09-25 by the upstream root-cause fix, which marks `gpll0_main` critical in the GCC driver ([bbe5cbb665e](https://github.com/openwrt/openwrt/commit/bbe5cbb665ec1db69e9171e35d4aaa6d3ac0f146), patch `0090`); the branch takes that from main and the workaround is gone. |
 | `qualcommax: stmmac: add a data-plane claim API for the NSS firmware` | Patch `0956`: lets a module take the data path of a GMAC away from stmmac (TX drained, NAPI off, DMA stopped, `ndo_start_xmit` redirected) and hand it back. phylink, MDIO and the netdev stay with the host. |
 | `qualcommax: ipq5018: add the NSS core node and reserved memory` | `ipq5018-nss.dtsi`: the `nss0` node with its clocks and interrupts, plus the reserved-memory region for the firmware. |
 | `package: add qca-dwmac-nss, the NSS data-plane glue for IPQ5018` | `kmod-qca-dwmac-nss`: the counterpart of `qca-ppe-nss` for this SoC. Implements the `nss-dp` API `qca-nss-drv` expects on top of the stmmac claim. Arms at runtime through debugfs, never at probe. |

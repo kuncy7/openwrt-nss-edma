@@ -62,4 +62,35 @@ int qca_dwmac_dp_release(struct net_device *dev);
 u32 qca_dwmac_dp_dma_status(struct net_device *dev);
 u32 qca_dwmac_dp_rx_kick(struct net_device *dev);
 
+/*
+ * Descriptor rings (dwmac1000 DMA). The firmware points the DMA at its own
+ * rings on its first open after boot only, and a later open does not
+ * rewind its ring indices; a host close/open in between resets the DMA
+ * onto the host rings. With the claim held, the owner:
+ *  - qca_dwmac_dp_dma_stop() + qca_dwmac_dp_rings_get() before release:
+ *    the current descriptors are where the firmware resumes;
+ *  - qca_dwmac_dp_mac_set(false) + qca_dwmac_dp_rings_set(resume points)
+ *    before the firmware open: a start loads the current descriptors from
+ *    the list addresses;
+ *  - qca_dwmac_dp_rings_wrap(ring bases) + qca_dwmac_dp_mac_set(true)
+ *    after it: the running DMA reads the list addresses at the ring end.
+ * All but _get() fail with -EPERM without a claim; _stop() and _set()
+ * with -EBUSY if the DMA does not stop, _wrap() if it has not started.
+ */
+struct qca_dwmac_dp_rings {
+	u32 rx_base;	/* receive descriptor list address */
+	u32 tx_base;	/* transmit descriptor list address */
+	u32 rx_cur;	/* current receive descriptor */
+	u32 tx_cur;	/* current transmit descriptor */
+	u32 host_rx;	/* the host's own receive ring */
+	u32 host_tx;	/* the host's own transmit ring */
+};
+
+int qca_dwmac_dp_rings_get(struct net_device *dev,
+			   struct qca_dwmac_dp_rings *rings);
+int qca_dwmac_dp_dma_stop(struct net_device *dev);
+int qca_dwmac_dp_rings_set(struct net_device *dev, u32 rx, u32 tx);
+int qca_dwmac_dp_rings_wrap(struct net_device *dev, u32 rx, u32 tx);
+void qca_dwmac_dp_mac_set(struct net_device *dev, bool enable);
+
 #endif /* __LINUX_SOC_QCOM_QCA_DWMAC_H */

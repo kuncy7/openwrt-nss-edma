@@ -206,6 +206,14 @@ jobs:
           CCACHE_DIR="$PWD/.ccache" staging_dir/host/bin/ccache -s || true
           df -h / | tail -1
 
+      - name: Add luci-app-nss to the build's repository
+        run: |
+          set -euo pipefail
+          # PKGARCH all lands in the base feed directory, which is not published; the image lists
+          # only this build's target repository and the official feeds, which do not carry it.
+          cp bin/packages/*/base/luci-app-nss-*.apk "bin/targets/${TARGET}/packages/"
+          make package/index
+
       - name: Check the output
         run: |
           set -euo pipefail
@@ -217,6 +225,8 @@ jobs:
           [[ -f "$out/packages/packages.adb" ]] || { echo "::error::no package index"; exit 1; }
           compgen -G "$out/packages/kmod-wireguard-*.apk" >/dev/null \
             || { echo "::error::kmod-wireguard missing from the repository"; exit 1; }
+          compgen -G "$out/packages/luci-app-nss-*.apk" >/dev/null \
+            || { echo "::error::luci-app-nss missing from the repository"; exit 1; }
           kernel=$(find "$out/packages" -maxdepth 1 -name 'kernel-*.apk' -printf '%f\n')
           echo "repository: $(find "$out/packages" -maxdepth 1 -name '*.apk' | wc -l) packages, ${kernel}"
 

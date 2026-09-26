@@ -3,7 +3,10 @@
 		"description": "Grant access to the NSS offload status page",
 		"read": {
 			"file": {
-				"/usr/sbin/nss-status -j": [ "exec" ]
+				"/usr/sbin/nss-status -j": [ "exec" ],
+				"/sys/kernel/debug/qca-nss-drv/stats/cpu_load_ubi": [ "read" ],
+				"/sys/kernel/debug/ecm/ecm_nss_ipv4/accelerated_count": [ "read" ],
+				"/sys/kernel/debug/ecm/ecm_nss_ipv6/accelerated_count": [ "read" ]
 			}
 		}
 	}

@@ -166,7 +166,7 @@ define Package/luci-app-nss/install
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/nss
 	$(INSTALL_DATA) ./files/luci-nss-status.js $(1)/www/luci-static/resources/view/nss/status.js
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/status/include
-	$(INSTALL_DATA) ./files/luci-nss-overview.js $(1)/www/luci-static/resources/view/status/include/15_nss.js
+	$(INSTALL_DATA) ./files/luci-nss-overview.js $(1)/www/luci-static/resources/view/status/include/16_nss_offload.js
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./files/luci-app-nss.menu.json $(1)/usr/share/luci/menu.d/luci-app-nss.json
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/acl.d

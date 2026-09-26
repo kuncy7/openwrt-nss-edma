@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=nss-tools
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -87,7 +87,8 @@ define Package/luci-app-nss
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI status page for NSS offloading
-  DEPENDS:=+nss-tools +luci-base
+  DEPENDS:=+luci-base +TARGET_qualcommax_ipq50xx:nss-tools-dwmac \
+	+!TARGET_qualcommax_ipq50xx:nss-tools
   PKGARCH:=all
 endef
 
@@ -137,6 +138,7 @@ define Package/nss-tools-dwmac/install
 	$(INSTALL_BIN) ./files/nss-dwmac-up $(1)/usr/sbin/nss-dwmac-up
 	$(INSTALL_BIN) ./files/nss-irq-affinity $(1)/usr/sbin/nss-irq-affinity
 	$(INSTALL_BIN) ./files/nss-dwmac-probe $(1)/usr/sbin/nss-dwmac-probe
+	$(INSTALL_BIN) ./files/nss-status $(1)/usr/sbin/nss-status
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/nss-dwmac.init $(1)/etc/init.d/nss
 	$(INSTALL_DIR) $(1)/lib/nss

@@ -11,7 +11,19 @@ R="${NSS_STATUS_ROOT:-}"
 
 . "$R/lib/nss/functions.sh"
 
+# Two glues hand the firmware its ports: qca-ppe-nss on ipq807x/ipq60xx (EDMA
+# behind the PPE) and qca-dwmac-nss on ipq50xx (the stmmac GMACs). They keep
+# the same fw_mask file but describe their ports differently, so everything
+# port-shaped below is read per glue.
 GLUE=$R/sys/kernel/debug/qca-ppe-nss
+GLUE_KIND=ppe
+if [ ! -d "$GLUE" ] && [ -d "$R/sys/kernel/debug/qca-dwmac-nss" ]; then
+	GLUE=$R/sys/kernel/debug/qca-dwmac-nss
+	GLUE_KIND=dwmac
+fi
+# ipq50xx with the switch left to its DSA driver: one firmware VLAN node per
+# port, created by qca-dsa-nss on top of the GMAC.
+DSA=$R/sys/kernel/debug/qca-dsa-nss
 DRV=$R/sys/kernel/debug/qca-nss-drv/stats
 ECM=$R/sys/kernel/debug/ecm
 NET=$R/sys/class/net
@@ -49,7 +61,9 @@ for f in "$R"/sys/kernel/debug/ath11k/*/dbg_infra/links; do
 done
 
 fw_mask=$(cat "$GLUE/fw_mask" 2>/dev/null)
-[ -n "$fw_mask" ] || fw_mask="0x0"
+# The dwmac glue prints the mask with %#lx, which renders an empty mask as a
+# bare "0" rather than "0x0".
+case "$fw_mask" in ""|0|0x0) fw_mask="0x0" ;; esac
 
 n2h_sum() { awk '$1 == "n2h_rx_pkts" {s += $3} END {print s + 0}' "$DRV/n2h" 2>/dev/null; }
 
@@ -75,6 +89,34 @@ core_loads=$(awk '/^Core [0-9]+:/ {c=$2; sub(":","",c)}
 # Match the fields by name. By position, a field added to the line silently
 # shifts every counter after it into the wrong column, and the result still
 # looks like a plausible packet count.
+if [ "$GLUE_KIND" = dwmac ]; then
+# phys_if N: started dev=eth0 fw_link=up
+#   tx_redirect=N tx_busy=N rx_fw=N link_changes=N link_skipped=N
+#   dma_status=... (armed ports only)
+# The counters sit on the line after the port's own; an idle port (not in
+# fw_mask, or its netdev not up yet) has no counters and no firmware path.
+ports=$(awk '
+function flush() { if (nd != "") print ifn " " nd " " st " " tx " " rx; nd = "" }
+/^phys_if/ {
+	flush()
+	ifn = $2; sub(":", "", ifn)
+	st = ($3 == "started") ? 1 : 0; tx = 0; rx = 0
+	if ($3 == "idle") next
+	for (i = 4; i <= NF; i++) {
+		split($i, kv, "=")
+		if (kv[1] == "dev") nd = kv[2]
+	}
+	next
+}
+/^[ \t]+tx_redirect=/ {
+	for (i = 1; i <= NF; i++) {
+		split($i, kv, "=")
+		if (kv[1] == "tx_redirect") tx = kv[2]
+		else if (kv[1] == "rx_fw")  rx = kv[2]
+	}
+}
+END { flush() }' "$GLUE/status" 2>/dev/null)
+else
 ports=$(awk '/^if_num/ {
 	sub(":", "", $2)
 	nd = ""; st = 0; tx = 0; rx = 0
@@ -87,12 +129,29 @@ ports=$(awk '/^if_num/ {
 	}
 	if (nd != "-") print $2 " " nd " " st " " tx " " rx
 }' "$GLUE/status" 2>/dev/null)
+fi
+
+# Wire totals for a port. On the PPE the netdev counters are the MAC's MIB. An
+# stmmac netdev counts only what its own DMA moved, which is nothing once the
+# firmware owns the GMAC; the MMC counters behind 'ethtool -S' see the wire.
+port_totals() { # port_totals <netdev> -> "<tx> <rx>"
+	t=""
+	if [ "$GLUE_KIND" = dwmac ]; then
+		t=$(ethtool -S "$1" 2>/dev/null | awk '
+			$1 == "mmc_tx_framecount_gb:" {tx = $2}
+			$1 == "mmc_rx_framecount_gb:" {rx = $2}
+			END {if (tx != "" && rx != "") print tx " " rx}')
+	fi
+	[ -n "$t" ] || t="$(cat "$NET/$1/statistics/tx_packets" 2>/dev/null || echo 0) $(cat "$NET/$1/statistics/rx_packets" 2>/dev/null || echo 0)"
+	echo "$t"
+}
 
 # ifnum netdev started host_tx fw_rx tx_total rx_total tx_offl rx_offl tx_pct rx_pct
 ports=$(echo "$ports" | while read -r ifnum nd st htx frx; do
 	[ -n "$ifnum" ] || continue
-	ttx=$(cat "$NET/$nd/statistics/tx_packets" 2>/dev/null || echo 0)
-	trx=$(cat "$NET/$nd/statistics/rx_packets" 2>/dev/null || echo 0)
+	tt=$(port_totals "$nd")
+	ttx=${tt% *}
+	trx=${tt#* }
 	echo "$ifnum $nd $st $htx $frx $ttx $trx" | LC_ALL=C awk '{
 		otx = $6 - $4; orx = $7 - $5
 		if (otx < 0) otx = 0
@@ -102,6 +161,27 @@ ports=$(echo "$ports" | while read -r ifnum nd st htx frx; do
 		printf "%s %s %s %s %s %s %s %d %d %.1f %.1f\n",
 		       $1, $2, $3, $4, $5, $6, $7, otx, orx, ptx, prx
 	}'
+done)
+
+# qca-dsa-nss: one firmware VLAN node per standalone port or VLAN-unaware
+# bridge (its ports share the bridge's tag_8021q VID), "<netdev> if_num=N vid=N
+# phys_if=N mtu=N mac=M", then a totals line. The node carries the port's
+# traffic inside the GMAC's, so the glue above has no per-port exception
+# counters; the port's wire totals come from the switch MIB behind the netdev.
+# dsa_ports: ifnum netdev vid carrier tx_total rx_total
+dsa_ports=$(awk '$2 ~ /^if_num=/ {
+	ifn = ""; vid = ""
+	for (i = 2; i <= NF; i++) {
+		split($i, kv, "=")
+		if (kv[1] == "if_num")   ifn = kv[2]
+		else if (kv[1] == "vid") vid = kv[2]
+	}
+	if (ifn != "") print ifn " " $1 " " vid
+}' "$DSA/status" 2>/dev/null | while read -r ifn nd vid; do
+	[ -n "$ifn" ] || continue
+	echo "$ifn $nd $vid $(cat "$NET/$nd/carrier" 2>/dev/null || echo 0)" \
+	     "$(cat "$NET/$nd/statistics/tx_packets" 2>/dev/null || echo 0)" \
+	     "$(cat "$NET/$nd/statistics/rx_packets" 2>/dev/null || echo 0)"
 done)
 
 ecm_loaded=$(mod ecm)
@@ -215,9 +295,18 @@ if [ "$JSON" = 1 ]; then
 	done
 	sfjson="[${sfjson%,}]"
 
+	djson=""
+	for line in $(echo "$dsa_ports" | tr ' ' ','); do
+		# shellcheck disable=SC2046
+		set -- $(echo "$line" | tr ',' ' ')
+		[ -n "$1" ] || continue
+		djson="$djson{\"ifnum\":$1,\"netdev\":\"$2\",\"vid\":$3,\"carrier\":$4,\"tx_total\":$5,\"rx_total\":$6},"
+	done
+	djson="[${djson%,}]"
+
 	cat <<-EOF
-	{"state":"$state","fw_version":"$fw_version","fw_mask":"$fw_mask",
-	"heartbeat_pps":$heartbeat,"cores":$cjson,"ports":$pjson,
+	{"state":"$state","fw_version":"$fw_version","fw_mask":"$fw_mask","glue":"$GLUE_KIND",
+	"heartbeat_pps":$heartbeat,"cores":$cjson,"ports":$pjson,"dsa_ports":$djson,
 	"ecm":{"loaded":$ecm_loaded,"ipv4_accel":$ecm_v4,"ipv6_accel":$ecm_v6},
 	"modules":{"bridge_mgr":$bridge_mgr,"mcs":$mcs,"pppoe":$pppoe_mgr},
 	"wifi_offload":$wifi_offload,
@@ -235,6 +324,17 @@ fi
 # host<->fw<->wire counters per offloaded port. The pointer that localises an
 # egress stall: a link-up port whose host->fw (glue tx_redirect) climbs while
 # the client stays unreachable is not putting frames on the wire.
+if [ "$L2" = 1 ] && [ "$GLUE_KIND" = dwmac ]; then
+	# No PPE or EDMA on ipq50xx: the per-port datapath lives in the GMAC glue
+	# and, with the switch on DSA, in the per-port VLAN nodes.
+	echo "NSS L2 datapath (qca-dwmac-nss, $GLUE/status):"
+	sed 's/^/  /' "$GLUE/status" 2>/dev/null
+	if [ -r "$DSA/status" ]; then
+		echo "DSA port nodes (qca-dsa-nss, $DSA/status):"
+		sed 's/^/  /' "$DSA/status" 2>/dev/null
+	fi
+	exit 0
+fi
 if [ "$L2" = 1 ]; then
 	edp=$DRV/edma/ports
 	# VSI table base (HPPE, SoC-wide on IPQ807x): PPE 0x3a000000 + L2 block
@@ -378,6 +478,16 @@ if [ -n "$ports" ]; then
 	echo "     short-lived flows, and traffic addressed to the router itself. A quiet"
 	echo "     port carries little else, so its share reads low. Port totals: ifconfig)"
 fi
+if [ -n "$dsa_ports" ]; then
+	echo "  DSA nodes:   one firmware node per standalone port or bridge (a bridge's"
+	echo "               ports share it, listed under one); totals from that port's MIB"
+	printf "    %-8s %4s %5s %4s %12s %12s\n" "port" "if" "vid" "link" "tx pkts" "rx pkts"
+	echo "$dsa_ports" | while read -r ifn nd vid car ttx trx; do
+		[ -n "$ifn" ] || continue
+		[ "$car" = 1 ] && car=up || car=down
+		printf "    %-8s %4s %5s %4s %12s %12s\n" "$nd" "$ifn" "$vid" "$car" "$ttx" "$trx"
+	done
+fi
 echo "  ECM:         loaded=$ecm_loaded, accelerated: $ecm_v4 IPv4 / $ecm_v6 IPv6"
 echo "  modules:     bridge-mgr=$bridge_mgr qca-mcs=$mcs pppoe-mgr=$pppoe_mgr"
 case "$wifi_offload" in
@@ -453,6 +563,15 @@ if [ -r "$DRV/n2h" ]; then
 	echo "  dev.nss.n2hcfg.n2h_queue_limit_coreN); neither touches offloaded flows."
 else
 	echo "(not available - qca-nss-drv not loaded / firmware not armed)"
+fi
+
+if [ "$GLUE_KIND" = dwmac ]; then
+	sec "GMAC glue ($GLUE/status)"
+	cat "$GLUE/status" 2>/dev/null || echo "(not available)"
+	if [ -r "$DSA/status" ]; then
+		sec "DSA port nodes ($DSA/status)"
+		cat "$DSA/status"
+	fi
 fi
 
 sec "PPE fabric drop codes, per port (nonzero only, $DRV/ppe/code/drop)"

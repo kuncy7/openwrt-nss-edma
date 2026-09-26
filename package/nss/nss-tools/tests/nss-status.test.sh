@@ -142,7 +142,7 @@ PATH="$root/bin:$PATH" "${NSS_TEST_SH:-sh}" -c 'tc' 2>/dev/null | \
 json_num() { printf '%s' "$1" | tr ',{' '\n\n' | sed -n "s/^\"$2\"://p" | head -1; }
 port_field() { # port_field <json> <ifnum> <key>
 	printf '%s' "$1" | tr '{' '\n' | grep "\"ifnum\":$2," |
-		tr ',' '\n' | sed -n "s/^\"$3\"://p" | head -1
+		tr ',' '\n' | sed -n "s/^\"$3\":\([^]}]*\).*/\1/p" | head -1
 }
 
 # ---- the port table --------------------------------------------------------
@@ -275,5 +275,90 @@ check 'mesh: a real vdev is reported as offloaded' \
 	'1' "$(json_num "$(run -j)" offloaded)"
 check 'mesh: a real vdev says so in the text report' \
 	1 "$(run | grep -c 'mesh offloaded')"
+
+# ---- ipq50xx: the qca-dwmac-nss glue and the DSA port nodes ----------------
+#
+# Same report, other glue. The port and counter lines are rebuilt from the
+# driver's own format strings for the reason given at the top: a field added
+# there must reach this fixture, not stay behind in a pasted copy.
+
+dwmac_src="$here/../../../kernel/qca-dwmac-nss/src/qca_dwmac_nss.c"
+dsa_src="$here/../../../kernel/qca-dsa-nss/src/qca_dsa_nss.c"
+head_fmt="$(sed -n 's/.*"\(phys_if %d: %s dev=%s fw_link=%s%s\)\\n".*/\1/p' "$dwmac_src")"
+ctr_fmt="$(sed -n 's/.*"\(  tx_redirect=%lld [^"]*\)\\n".*/\1/p' "$dwmac_src")"
+dsa_fmt="$(sed -n 's/.*"\(%-16s if_num=%d vid=%u [^"]*\)\\n".*/\1/p' "$dsa_src")"
+# %pM is the kernel's MAC format; the shell's printf takes it as a string.
+dsa_fmt="$(printf '%s' "$dsa_fmt" | sed 's/%pM/%s/')"
+[ -n "$head_fmt" ] && [ -n "$ctr_fmt" ] && [ -n "$dsa_fmt" ] ||
+	{ echo "FAIL  cannot find the dwmac/dsa status formats"; exit 1; }
+# Keys the parser reads, in the order the driver prints them.
+for want_key in tx_redirect rx_fw; do
+	printf '%s\n' "$ctr_fmt" | tr ' ' '\n' | grep -q "^$want_key=%" ||
+		{ echo "FAIL  dwmac glue no longer prints $want_key"; exit 1; }
+done
+
+dw="$(mktemp -d)"
+trap 'rm -rf "$root" "$dw"' EXIT
+mkdir -p "$dw/lib/nss" "$dw/sys/kernel/debug/qca-dwmac-nss" \
+	 "$dw/sys/kernel/debug/qca-dsa-nss" \
+	 "$dw/sys/kernel/debug/qca-nss-drv/stats" "$dw/bin"
+cp "$files/functions.sh" "$dw/lib/nss/functions.sh"
+cp "$root"/bin/* "$dw/bin/"
+dwg="$dw/sys/kernel/debug/qca-dwmac-nss"
+echo 0x2 > "$dwg/fw_mask"
+printf '\tn2h_rx_pkts = 5000\n' > "$dw/sys/kernel/debug/qca-nss-drv/stats/n2h"
+
+# The counter line: tx_redirect, tx_busy, rx_fw, link_changes, link_skipped,
+# each a distinct value so a column slip cannot land on the right number.
+{ echo "fw_mask: 0x2"; echo "rx_unexpected: 0"
+  printf "$head_fmt\n" 0 idle eth1 down ""
+  printf "$head_fmt\n" 1 started eth0 up ""
+  printf "$ctr_fmt\n" 300 7 400 1 2
+  printf '  dma_status=00660004 rs=3 ts=6 ru=0 tu=1 rx_kicks=0\n'; } > "$dwg/status"
+{ printf "$dsa_fmt\n" wan 30 3073 1 1500 94:83:c4:de:60:ed
+  printf "$dsa_fmt\n" lan1 31 3088 1 1500 94:83:c4:de:60:ef
+  echo "nodes=2 resyncs=1 creates=2 destroys=0 alloc_failures=0 retries_pending=0"; } \
+	> "$dw/sys/kernel/debug/qca-dsa-nss/status"
+
+# eth0's own counters stay at what its DMA moved before the firmware took the
+# GMAC; the MMC counters behind ethtool -S are the wire.
+netdev_dw() { # netdev_dw <name> <tx> <rx> <carrier>
+	mkdir -p "$dw/sys/class/net/$1/statistics"
+	echo "$2" > "$dw/sys/class/net/$1/statistics/tx_packets"
+	echo "$3" > "$dw/sys/class/net/$1/statistics/rx_packets"
+	echo "$4" > "$dw/sys/class/net/$1/carrier"
+}
+netdev_dw eth0 5 6 1
+netdev_dw wan 3000 2000 1
+netdev_dw lan1 0 0 0
+stub_dw() { printf '#!/bin/sh\n%s\n' "$2" > "$dw/bin/$1"; chmod +x "$dw/bin/$1"; }
+stub_dw ethtool 'printf "     mmc_tx_framecount_gb: 3000\n     mmc_rx_framecount_gb: 1600\n"'
+
+run_dw() {
+	NSS_STATUS_ROOT="$dw" PATH="$dw/bin:$PATH" \
+		"${NSS_TEST_SH:-sh}" "$files/nss-status" "$@"
+}
+dout="$(run_dw -j)"
+check 'dwmac: the glue is recognised' '"dwmac"' "$(json_num "$dout" glue)"
+check 'dwmac: an idle GMAC (not in fw_mask) is left out' '' "$(port_field "$dout" 0 tx_total)"
+check 'dwmac: host TX comes from tx_redirect, not tx_busy' \
+	300 "$(port_field "$dout" 1 tx_host_pkts)"
+check 'dwmac: host RX comes from rx_fw' 400 "$(port_field "$dout" 1 rx_host_pkts)"
+check 'dwmac: wire totals come from the MMC, not the stmmac netdev' \
+	3000 "$(port_field "$dout" 1 tx_total)"
+check 'dwmac: offloaded RX is wire minus host' 1200 "$(port_field "$dout" 1 rx_offloaded)"
+check 'dwmac: a started port reads started' 1 "$(port_field "$dout" 1 started)"
+check 'dwmac: DSA port nodes are listed with their VID' \
+	3088 "$(port_field "$dout" 31 vid)"
+check 'dwmac: DSA port totals come from the port netdev' \
+	2000 "$(port_field "$dout" 30 rx_total)"
+check 'dwmac: DSA port link is the carrier' 0 "$(port_field "$dout" 31 carrier)"
+check 'dwmac: an armed dwmac mask with a frozen heartbeat reads stalled, not host' \
+	'"stalled"' "$(json_num "$dout" state)"
+check 'dwmac: the text report lists the DSA ports' \
+	2 "$(run_dw | grep -cE '^    (wan|lan1) ')"
+echo 0 > "$dwg/fw_mask"
+check 'dwmac: an empty mask printed as a bare 0 still reads as host' \
+	'"host"' "$(json_num "$(run_dw -j)" state)"
 
 exit "$fail"

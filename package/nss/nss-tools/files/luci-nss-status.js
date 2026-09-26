@@ -80,6 +80,35 @@ function renderStatus(d) {
 		]);
 	});
 
+	// ipq50xx with the switch on DSA: one firmware VLAN node per switch port,
+	// carried inside the GMAC above. The glue has no per-port exception
+	// counters there, so this table shows the node and the port's wire totals.
+	var dsaRows = (d.dsa_ports || []).map(function(p) {
+		return E('tr', { 'class': 'tr' }, [
+			E('td', { 'class': 'td', 'data-title': _('Port') }, [ p.netdev ]),
+			E('td', { 'class': 'td', 'data-title': 'if_num' }, [ String(p.ifnum) ]),
+			E('td', { 'class': 'td', 'data-title': 'VID' }, [ String(p.vid) ]),
+			E('td', { 'class': 'td', 'data-title': _('Link') }, [ p.carrier ? _('up') : _('down') ]),
+			E('td', { 'class': 'td', 'data-title': _('TX packets') }, [ String(p.tx_total) ]),
+			E('td', { 'class': 'td', 'data-title': _('RX packets') }, [ String(p.rx_total) ])
+		]);
+	});
+
+	var dsaSection = dsaRows.length ? [
+		E('h3', {}, _('Switch ports and bridges on the firmware (DSA)')),
+		E('table', { 'class': 'table' }, [
+			E('tr', { 'class': 'tr table-titles' }, [
+				E('th', { 'class': 'th' }, _('Port')),
+				E('th', { 'class': 'th' }, 'if_num'),
+				E('th', { 'class': 'th' }, 'VID'),
+				E('th', { 'class': 'th' }, _('Link')),
+				E('th', { 'class': 'th' }, _('TX packets')),
+				E('th', { 'class': 'th' }, _('RX packets'))
+			])
+		].concat(dsaRows)),
+		E('p', {}, E('em', {}, _('Each standalone switch port reaches the firmware as its own VLAN node on the GMAC above, and so does each bridge: the ports of a bridge share one node, listed under one of them. The offloaded share is part of the GMAC\'s figures above; the totals here are that port\'s own switch counters.')))
+	] : [];
+
 	return E('div', {}, [
 		E('p', {}, stateBadge(d.state)),
 		E('table', { 'class': 'table' }, [
@@ -95,7 +124,7 @@ function renderStatus(d) {
 			row(_('Wi-Fi data path'), wifi),
 			row(_('SQM shaper'), d.sqm.active
 				? _('nsstbl on') + ' ' + d.sqm.device + (igs ? ' — ' + _('upload IGS:') + ' ' + igs : '')
-				: _('no NSS shaper on') + ' ' + d.sqm.device),
+				: (d.sqm.device ? _('no NSS shaper on') + ' ' + d.sqm.device : _('no NSS shaper'))),
 			(d.sqm.fastlane && d.sqm.fastlane.active)
 				? row(_('Fast lane'), _('egress') + ' ' + d.sqm.fastlane.egress_pkts + ' pkts / ' +
 					_('ingress') + ' ' + d.sqm.fastlane.ingress_pkts + ' pkts — ' +
@@ -119,7 +148,7 @@ function renderStatus(d) {
 			])
 		])),
 		E('p', {}, E('em', {}, _('Offloaded packets are forwarded by the firmware and never reach the host. "via host" / "to host" is the host↔firmware exception path — what was not offloaded — so low numbers there mean offload is working. Broadcast and multicast discovery, connection setup, short-lived flows and traffic addressed to the router itself always take that path: a flow is only offloaded once it is established, so a quiet port that carries little else shows a low offloaded share. Port totals are on Status → Overview.')))
-	]);
+	].concat(dsaSection));
 }
 
 return view.extend({

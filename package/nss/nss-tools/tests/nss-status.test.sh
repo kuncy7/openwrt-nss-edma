@@ -284,7 +284,7 @@ check 'mesh: a real vdev says so in the text report' \
 
 dwmac_src="$here/../../../kernel/qca-dwmac-nss/src/qca_dwmac_nss.c"
 dsa_src="$here/../../../kernel/qca-dsa-nss/src/qca_dsa_nss.c"
-head_fmt="$(sed -n 's/.*"\(phys_if %d: %s dev=%s fw_link=%s%s\)\\n".*/\1/p' "$dwmac_src")"
+head_fmt="$(sed -n 's/.*"\(phys_if %d: %s dev=%s fw_link=%s[%s]*\)\\n".*/\1/p' "$dwmac_src")"
 ctr_fmt="$(sed -n 's/.*"\(  tx_redirect=%lld [^"]*\)\\n".*/\1/p' "$dwmac_src")"
 dsa_fmt="$(sed -n 's/.*"\(%-16s if_num=%d vid=%u [^"]*\)\\n".*/\1/p' "$dsa_src")"
 # %pM is the kernel's MAC format; the shell's printf takes it as a string.

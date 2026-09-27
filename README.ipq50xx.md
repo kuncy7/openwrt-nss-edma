@@ -383,6 +383,12 @@ accelerated yet: the firmware has no interface for the bridge's VLANs and
 hands their frames to the host (it does, measured), so `br-lan.10` routed to
 the WAN costs host CPU where `br-lan` does not. Standalone ports, `wan.35`,
 VLAN-unaware bridges and the Wi-Fi are accelerated as before.
+Turn `vlan_filtering` on in the config (uci or LuCI), not with `ip link set
+br-lan type bridge vlan_filtering 1` on a running bridge: netifd then rebuilds
+the bridge and the switch gets its VLANs, while switched on in place the wired
+ports have no VLAN in the switch and stay dead until the next network reload.
+A bridge with `vlan_filtering` and no `bridge-vlan` section keeps VLAN 1 as
+upstream does (0967; 0966 from QSDK used to drop it, and the LAN with it).
 
 **The trunk (`vlan-trunk`, `lan-trunk`)** stays supported next to it. A board
 with no such switch gets it on first boot from the board table (see

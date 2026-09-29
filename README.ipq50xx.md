@@ -51,7 +51,8 @@ The companion feed is **[kuncy7/nss-packages](https://github.com/kuncy7/nss-pack
 branch `ipq50xx-rebase`: Julius's `nss-packages` (last synced on 21 September
 2026) with the ipq50xx work on top - the 12.2 firmware line as a selectable
 version, the per-target package split that lets the stack build on ipq50xx,
-the ECM patch for DSA ports (`0046`), the 256 MB memory profile for the boards
+the ECM patches for DSA ports (`0046`) and VLAN-aware bridges on them
+(`0047`, `0048`), the 256 MB memory profile for the boards
 that need it, and the driver fixes met during bring-up (core boot and clocks,
 N2H bounds, offloaded-traffic counters, CPU-load reporting; see the feed
 README).
@@ -312,8 +313,8 @@ switches the conduit's tag protocol to the switch's tag_8021q tagger before
 netifd runs - `qca-8021q` for `qca8k` (QCA8337), `rtl8365mb-8021q` for
 `rtl8365mb` (RTL8367S) - so the switch talks to the CPU in plain 802.1Q,
 which the firmware parses, and after the arm `qca-dsa-nss` gives every port,
-bridge and 802.1Q upper of a port a firmware VLAN interface so ECM can write
-rules for them.
+bridge, VLAN of a VLAN-aware bridge and 802.1Q upper of a port a firmware
+VLAN interface so ECM can write rules for them.
 
 A board whose switch is driven by `qca8k` or `rtl8365mb` gets the `dsa`
 topology on first boot, and **nothing about the wiring is configured**: the
@@ -371,18 +372,30 @@ and the service only logs a warning; `nss.general.wifi_offload=0` keeps the
 radios on the host. Not yet: switches other than these two.
 
 **VLAN-aware bridges** (`bridge-vlan` sections, `vlan_filtering`) work on
-both taggers, on the host path: the bridge's VLANs go into the switch as
-they are, PVID and untagged included, the CPU port is a tagged member of
-each, and the tagger hands a frame in one of them to the bridge by its VID
-(which of the bridge's ports it came from is not known - the same imprecise
-receive as for a VLAN-unaware bridge, and the switch forwards between its own
-ports by itself). The one rule that stays: a VID names one thing on the whole
-switch - the VLAN of one VLAN-aware bridge, or an 802.1Q upper of one port -
-because the VID is all the tagger has. Flows through such a bridge are not
-accelerated yet: the firmware has no interface for the bridge's VLANs and
-hands their frames to the host (it does, measured), so `br-lan.10` routed to
-the WAN costs host CPU where `br-lan` does not. Standalone ports, `wan.35`,
-VLAN-unaware bridges and the Wi-Fi are accelerated as before.
+both taggers: the bridge's VLANs go into the switch as they are, PVID and
+untagged included, the CPU port is a tagged member of each, and the tagger
+hands a frame in one of them to the bridge by its VID (which of the bridge's
+ports it came from is not known - the same imprecise receive as for a
+VLAN-unaware bridge, and the switch forwards between its own ports by
+itself). The one rule that stays: a VID names one thing on the whole switch
+- the VLAN of one VLAN-aware bridge, or an 802.1Q upper of one port -
+because the VID is all the tagger has.
+
+Flows through such a bridge are accelerated like the rest. `qca-dsa-nss`
+gives each VLAN of the bridge a firmware VLAN interface on the conduit (the
+firmware hands a tagged frame it has no interface for to the host), and ECM
+writes the rule on the conduit with the flow's VLAN as its tag (`0047`) -
+for a tagged and an untagged member port alike, since the conduit carries
+the tag either way. Routing between two VLANs of the one bridge is
+accelerated too: a guest VLAN to the LAN, or the WAN port made a member of
+VLAN 2 and the WAN on `br-lan.2`. Stock ECM refused every such flow; `0048`
+gives each side of a routed flow its own VLAN, the one of its `br-lan.N`.
+What stays on the host path: ICMP, GRE, ESP and multicast through a port of
+a VLAN-aware bridge (only the TCP/UDP frontends know the flow's VLAN), and
+bridged flows to a host that uses one MAC in several VLANs of the bridge -
+802.1Q sub-interfaces on one NIC, a managed switch behind a port - where
+ECM takes the VLAN from the FDB, which cannot tell them apart, and refuses
+the flow rather than guess.
 Turn `vlan_filtering` on in the config (uci or LuCI), not with `ip link set
 br-lan type bridge vlan_filtering 1` on a running bridge: netifd then rebuilds
 the bridge and the switch gets its VLANs, while switched on in place the wired
@@ -453,18 +466,21 @@ CPU instead of 3-5 %. The first boot clears the option (`98-nss-offload`) and
 must print nothing. A pinned IRQ layout in `/etc/rc.local` from the old build
 belongs in the same clean-up: `nss-irq-affinity` sets its own.
 
-One more that is not the plane at all but looks like a hung router: after
+One more that is not the plane at all but looked like a hung router: after
 `/etc/init.d/network restart` on a config with several DHCP-serving
-interfaces (a guest and an IoT VLAN next to the LAN), **dnsmasq can stay
-dead** - clients lose their leases while the box itself answers on
-link-local or on another VLAN. That is an upstream race in the dnsmasq init
-script under ujail: every interface event runs a reload, a reload with a
-changed config restarts the jailed instance and then signals it, and the
-signal kills the new ujail before it has its handlers; procd counts each of
-those as a crash and gives up after five (`logread` shows `Instance
-dnsmasq::... in a crash loop`). `/etc/init.d/dnsmasq start` brings it back,
-a reboot resets the count. Nothing in this branch changes that path; it is
-mentioned here because a VLAN-aware setup trips it in one or two restarts.
+interfaces (a guest and an IoT VLAN next to the LAN), **dnsmasq could stay
+dead** - clients lost their leases while the box itself answered on
+link-local or on another VLAN. The cause is upstream
+([#25409](https://github.com/openwrt/openwrt/issues/25409)): every interface
+event runs a reload, a reload with a changed config restarts the jailed
+instance and then signals it, and the signal kills the new ujail before it
+has its handlers; procd counts each of those as a crash and gives up after
+five (`logread` shows `Instance dnsmasq::... in a crash loop`). This branch
+carries a fix in `dnsmasq.init`: the reload signals the instance only when
+its generated config did not change - a changed one has just been restarted
+and reads everything anyway (measured: 5 of 6 reloads killed dnsmasq before,
+0 of 8 after). On an image without it, `/etc/init.d/dnsmasq start` brings it
+back and a reboot resets the count.
 
 ## Why DSA has to go
 
@@ -625,6 +641,7 @@ Legend as in the [IPQ807x README](/README.md): ✅ offloaded & validated ·
 | IPv4 NAT / routing | ✅ | ECM; ~900 Mbit/s at the single-CPU-port ceiling, host >90 % idle |
 | IPv6 routing | 🟨 | built (`NSS_DRV_IPV6_ENABLE`), not measured |
 | 802.1Q VLAN | ✅ | the trunk itself; `qca-nss-vlan` |
+| VLAN-aware bridge (`bridge-vlan`) | ✅ | `dsa` topology: TCP/UDP routed and bridged through its ports, routing between its VLANs included (`0047`, `0048`); ICMP/GRE/ESP/multicast on the host |
 | L2 between LAN ports | ✅ | in the switch fabric (same VLAN), never reaches the SoC |
 | PPPoE | ✅ | Kernel patch `0961` gained the lockless `__ppp_hold_channels()` / `__ppp_is_multilink()` that ECM's deadlock fix needs, `kmod-qca-nss-drv-pppoe` is selected, and `nss-dwmac-up` **loads it** after the arm - without the manager in memory ECM tracks the PPPoE flows, marks every rule invalid and the WAN silently stays on the host path (measured: 0 rules, 22k exceptions in 20 s; the same silent failure AugustoAmaral hit before the package was selected at all, ~950 Mbit/s at 84-95 % idle on an AX6000 once it was in). Measured here on the `dsa` topology with the ISP's VLAN on the WAN port (`wan.35`, PPPoE server on the bench): rules created, 120k-157k firmware hits per 15-20 s, 0-65 exceptions, 2 % CPU, at the 100 Mbit/s ceiling of the bench client. On the trunk topology LS3434 runs it as `eth0.35` with `vtu='...;35:6t,2t'` (#154, #156): 890-950 down / 310 up at 1-5 % CPU. |
 | Wi-Fi (wifili) | ✅ | both radios; 734/447 Mbit/s over 5 GHz through the router, host ~90 % idle. Needs the core-clock fix - see below |

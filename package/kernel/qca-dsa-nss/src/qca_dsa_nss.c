@@ -23,6 +23,15 @@
  * netdev event; a node whose VID, port or phys_if no longer matches is
  * torn down and rebuilt.
  *
+ * A VLAN-aware bridge is different: its frames cross the conduit with the
+ * bridge's own VIDs (the CPU port is a tagged member of every bridge VLAN),
+ * not with a tag_8021q one, and a port carries as many VIDs as it is a
+ * member of. Such a bridge gets one node per (bridge VID, phys_if), bound to
+ * the first member port for the node's MAC and MTU. A netdev cannot name
+ * the node then - one port, several VIDs - so ECM asks for it by VID
+ * through qca_dsa_nss_if_num() instead of by netdev. Bridge VLAN changes
+ * do not raise netdev events; the switchdev notifier covers them.
+ *
  * The firmware hands out dynamic interface numbers next-fit and does not
  * reuse a freed slot until the cursor wraps, which takes a moment: after
  * ~118 allocations since boot an allocation can fail for a few seconds
@@ -40,6 +49,7 @@
 #include <linux/rtnetlink.h>
 #include <linux/dsa/8021q.h>
 #include <net/dsa.h>
+#include <net/switchdev.h>
 #include <nss_api_if.h>
 
 /* exported by net/dsa/tag_8021q.c but declared only in its private header */
@@ -47,7 +57,10 @@ struct net_device *dsa_tag_8021q_find_user(struct net_device *conduit,
 					   int source_port, int switch_id,
 					   int vid, int vbid);
 
-#define DSA_NSS_MAX_NODES	16
+/* for ECM (qca-nss-ecm resolves it with symbol_get(), no link dependency) */
+int qca_dsa_nss_if_num(struct net_device *conduit, u16 vid);
+
+#define DSA_NSS_MAX_NODES	32
 #define DSA_NSS_COALESCE_MS	100
 #define DSA_NSS_RETRY_MS	2000
 #define DSA_NSS_MAX_RETRIES	10
@@ -63,6 +76,7 @@ struct dsa_nss_node {
 
 static struct dsa_nss_node dsa_nss_nodes[DSA_NSS_MAX_NODES];
 static DEFINE_MUTEX(dsa_nss_lock);	/* nodes[] */
+static DEFINE_SPINLOCK(dsa_nss_table_lock);	/* if_num publish, for lookups from softirq */
 static struct delayed_work dsa_nss_work;
 static unsigned int dsa_nss_retries;
 static atomic_t dsa_nss_resyncs = ATOMIC_INIT(0);
@@ -89,7 +103,9 @@ static void dsa_nss_node_destroy(struct dsa_nss_node *n, const char *why)
 			netdev_name(n->ndev), n->if_num);
 	dev_put(n->ndev);
 	n->ndev = NULL;
+	spin_lock_bh(&dsa_nss_table_lock);
 	n->if_num = -1;
+	spin_unlock_bh(&dsa_nss_table_lock);
 	atomic_inc(&dsa_nss_destroys);
 }
 
@@ -121,7 +137,9 @@ static int dsa_nss_node_create(struct dsa_nss_node *n, u16 vid, int phys_if,
 		n->ndev = NULL;
 		return -EIO;
 	}
+	spin_lock_bh(&dsa_nss_table_lock);
 	n->if_num = if_num;
+	spin_unlock_bh(&dsa_nss_table_lock);
 
 	if (nss_vlan_tx_set_mac_addr_msg(if_num, n->mac) != NSS_TX_SUCCESS ||
 	    nss_vlan_tx_set_mtu_msg(if_num, n->mtu) != NSS_TX_SUCCESS ||
@@ -178,12 +196,34 @@ static struct dsa_port *dsa_nss_port_of(struct net_device *dev, bool *upper)
 	return dp;
 }
 
+/* One entry per (vid, phys_if): a second port in the same VLAN keeps the
+ * first port's entry. False when the table is full.
+ */
+static bool dsa_nss_want_add(struct dsa_nss_want *want, int *n, int max,
+			     u16 vid, int phys_if, struct net_device *ndev)
+{
+	int i;
+
+	for (i = 0; i < *n; i++)
+		if (want[i].vid == vid && want[i].phys_if == phys_if)
+			return true;	/* the bridge already has its entry */
+	if (*n == max) {
+		pr_warn_once("qca-dsa-nss: more than %d nodes wanted, rest ignored\n", max);
+		return false;
+	}
+	want[*n].vid = vid;
+	want[*n].phys_if = phys_if;
+	want[*n].ndev = ndev;
+	(*n)++;
+	return true;
+}
+
 /*
  * One entry per standalone tag_8021q port, one per VLAN-unaware bridge on
- * such ports, and one per 802.1Q upper of such a port (its own VID - the
- * switch carries that VLAN through, the tagger leaves it alone, and it is
- * on the conduit as a single tag, exactly like eth0.<vid> on a trunk).
- * Returns the count.
+ * such ports, one per VLAN of a VLAN-aware bridge on such ports, and one
+ * per 802.1Q upper of such a port (its own VID - the switch carries that
+ * VLAN through, the tagger leaves it alone, and it is on the conduit as a
+ * single tag, exactly like eth0.<vid> on a trunk). Returns the count.
  */
 static int dsa_nss_collect(struct dsa_nss_want *want, int max)
 {
@@ -193,7 +233,7 @@ static int dsa_nss_collect(struct dsa_nss_want *want, int max)
 	for_each_netdev(&init_net, dev) {
 		struct net_device *conduit, *bound;
 		struct dsa_port *dp;
-		int phys_if, i;
+		int phys_if;
 		bool upper;
 		u16 vid;
 
@@ -209,17 +249,25 @@ static int dsa_nss_collect(struct dsa_nss_want *want, int max)
 		if (upper) {
 			vid = vlan_dev_vlan_id(dev);
 			bound = dev;
+		} else if (dp->bridge &&
+			   br_vlan_enabled(dsa_port_bridge_dev_get(dp))) {
+			/* A VLAN-aware bridge's frames carry the bridge's own
+			 * VIDs on the conduit: one node per VID the port is a
+			 * member of, the first port found in a VLAN lending
+			 * the node its MAC and MTU. The tag_8021q range is the
+			 * tagger's and never a bridge VLAN.
+			 */
+			struct bridge_vlan_info vinfo;
+
+			for (vid = 1; vid < VLAN_N_VID && !vid_is_dsa_8021q(vid); vid++) {
+				if (br_vlan_get_info(dev, vid, &vinfo))
+					continue;
+				if (!dsa_nss_want_add(want, &n, max, vid, phys_if, dev))
+					return n;
+			}
+			continue;
 		} else if (dp->bridge && dp->bridge->tx_fwd_offload) {
 			unsigned int vbid = dsa_port_bridge_num_get(dp);
-
-			/* A VLAN-aware bridge's frames carry the bridge's own
-			 * VIDs, not the tag_8021q one; those have no node yet,
-			 * and the firmware hands a frame in a VLAN it has no
-			 * node for to the host (measured), so the bridge runs
-			 * on the host path for now.
-			 */
-			if (br_vlan_enabled(dsa_port_bridge_dev_get(dp)))
-				continue;
 
 			vid = dsa_tag_8021q_bridge_vid(vbid);
 			/* the port imprecise RX delivers to, if any is live */
@@ -231,22 +279,40 @@ static int dsa_nss_collect(struct dsa_nss_want *want, int max)
 			bound = dev;
 		}
 
-		for (i = 0; i < n; i++)
-			if (want[i].vid == vid && want[i].phys_if == phys_if)
-				break;
-		if (i < n)
-			continue;	/* the bridge already has its entry */
-		if (n == max) {
-			pr_warn_once("qca-dsa-nss: more than %d nodes wanted, rest ignored\n", max);
+		if (!dsa_nss_want_add(want, &n, max, vid, phys_if, bound))
 			break;
-		}
-		want[n].vid = vid;
-		want[n].phys_if = phys_if;
-		want[n].ndev = bound;
-		n++;
 	}
 	return n;
 }
+
+/*
+ * qca_dsa_nss_if_num()
+ *	The node of @vid on the phys_if of @conduit, -1 when there is none.
+ *
+ * For ECM: a port of a VLAN-aware bridge has one node per VID it is in, so
+ * a netdev cannot name the node - the flow's VID can. Callable from softirq.
+ */
+int qca_dsa_nss_if_num(struct net_device *conduit, u16 vid)
+{
+	int phys_if, i, if_num = -1;
+
+	phys_if = nss_cmn_get_interface_number_by_dev(conduit);
+	if (phys_if < 0)
+		return -1;
+
+	spin_lock_bh(&dsa_nss_table_lock);
+	for (i = 0; i < DSA_NSS_MAX_NODES; i++) {
+		const struct dsa_nss_node *n = &dsa_nss_nodes[i];
+
+		if (n->if_num >= 0 && n->vid == vid && n->phys_if == phys_if) {
+			if_num = n->if_num;
+			break;
+		}
+	}
+	spin_unlock_bh(&dsa_nss_table_lock);
+	return if_num;
+}
+EXPORT_SYMBOL_GPL(qca_dsa_nss_if_num);
 
 static bool dsa_nss_node_matches(const struct dsa_nss_node *n,
 				 const struct dsa_nss_want *w)
@@ -386,6 +452,49 @@ static struct notifier_block dsa_nss_netdev_nb = {
 };
 
 /*
+ * ===== switchdev events =====
+ *
+ * A bridge VLAN added to or removed from a port, and vlan_filtering
+ * toggled on a bridge, reach the switch driver through switchdev and raise
+ * no netdev event; both change the nodes a VLAN-aware bridge wants.
+ */
+static int dsa_nss_switchdev_event(struct notifier_block *nb,
+				   unsigned long event, void *ptr)
+{
+	struct net_device *dev = switchdev_notifier_info_to_dev(ptr);
+	bool upper;
+
+	switch (event) {
+	case SWITCHDEV_PORT_OBJ_ADD:
+	case SWITCHDEV_PORT_OBJ_DEL: {
+		const struct switchdev_notifier_port_obj_info *info = ptr;
+
+		if (info->obj->id != SWITCHDEV_OBJ_ID_PORT_VLAN)
+			return NOTIFY_DONE;
+		break;
+	}
+	case SWITCHDEV_PORT_ATTR_SET: {
+		const struct switchdev_notifier_port_attr_info *info = ptr;
+
+		if (info->attr->id != SWITCHDEV_ATTR_ID_BRIDGE_VLAN_FILTERING)
+			return NOTIFY_DONE;
+		break;
+	}
+	default:
+		return NOTIFY_DONE;
+	}
+
+	/* the port itself, or a bridge (its own VLANs, vlan_filtering) */
+	if (dsa_nss_port_of(dev, &upper) || netif_is_bridge_master(dev))
+		dsa_nss_schedule();
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block dsa_nss_switchdev_nb = {
+	.notifier_call = dsa_nss_switchdev_event,
+};
+
+/*
  * ===== debugfs =====
  */
 
@@ -441,6 +550,11 @@ static int __init qca_dsa_nss_init(void)
 	ret = register_netdevice_notifier(&dsa_nss_netdev_nb);
 	if (ret)
 		return ret;
+	ret = register_switchdev_blocking_notifier(&dsa_nss_switchdev_nb);
+	if (ret) {
+		unregister_netdevice_notifier(&dsa_nss_netdev_nb);
+		return ret;
+	}
 
 	dsa_nss_dentry = debugfs_create_dir("qca-dsa-nss", NULL);
 	debugfs_create_file("status", 0444, dsa_nss_dentry, NULL,
@@ -457,6 +571,7 @@ static void __exit qca_dsa_nss_exit(void)
 {
 	int i;
 
+	unregister_switchdev_blocking_notifier(&dsa_nss_switchdev_nb);
 	unregister_netdevice_notifier(&dsa_nss_netdev_nb);
 	cancel_delayed_work_sync(&dsa_nss_work);
 	debugfs_remove_recursive(dsa_nss_dentry);

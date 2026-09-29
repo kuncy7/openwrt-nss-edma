@@ -20,9 +20,11 @@ define KernelPackage/qca-dsa-nss/description
   Gives the user ports of a DSA switch driven by a tag_8021q tagger (qca-8021q, rtl8365mb-8021q) an
   NSS interface number: one firmware VLAN interface (dynamic interface type
   VLAN on the conduit's phys_if) per standalone port and per VLAN-unaware
-  bridge, carrying the VID the tagger uses. ECM treats a DSA port as plain
-  ethernet and only needs that number to accelerate flows through it, so
-  the switch driver stays bound and lan/wan keep being real DSA ports.
+  bridge, carrying the VID the tagger uses, and one per VLAN of a VLAN-aware
+  bridge, carrying that bridge VID (ECM asks for those by VID through
+  qca_dsa_nss_if_num). ECM treats a DSA port as plain ethernet and only
+  needs that number to accelerate flows through it, so the switch driver
+  stays bound and lan/wan keep being real DSA ports.
   Loaded by nss-dwmac-up after the firmware arm, like qca-nss-vlan.
 endef
 

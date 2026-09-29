@@ -1406,8 +1406,23 @@ start_service() {
 	fi
 }
 
+dnsmasq_config_sums() {
+	md5sum "$BASECONFIGFILE".* 2>/dev/null
+}
+
 reload_service() {
+	local before="$(dnsmasq_config_sums)"
+
 	rc_procd start_service "$@"
+
+	# A changed generated config makes procd restart the instance, and the
+	# new one reads everything anyway. A SIGHUP right behind that restart
+	# reaches the new ujail before it has installed its signal handlers and
+	# kills it; procd counts that as a crash and, after five, leaves DHCP
+	# and DNS down (openwrt/openwrt#25409). Signal only an instance that
+	# kept running.
+	[ "$before" = "$(dnsmasq_config_sums)" ] || return 0
+
 	procd_send_signal dnsmasq "$@"
 }
 

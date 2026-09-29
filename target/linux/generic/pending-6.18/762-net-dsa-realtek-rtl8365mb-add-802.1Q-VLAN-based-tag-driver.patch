@@ -769,7 +769,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  obj-$(CONFIG_NET_DSA_TAG_TRAILER) += tag_trailer.o
 --- /dev/null
 +++ b/net/dsa/tag_rtl8365mb_8021q.c
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,179 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/* Copyright (C) 2026 Stanislaw Pal <stefdo61@gmail.com>
 + *
@@ -788,6 +788,47 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +#include "tag_8021q.h"
 +
 +#define RTL8365MB_8021Q_NAME "rtl8365mb-8021q"
++
++/* @dev's own 802.1Q upper with this VID, if any. Not the deep lookup:
++ * from a port without VLAN state of its own that climbs to the bridge
++ * and answers with the bridge's L3 VLAN interface.
++ */
++static struct net_device *rtl8365mb_8021q_vlan_upper_of(struct net_device *dev,
++						 __be16 proto, u16 vid)
++{
++	struct net_device *upper;
++	struct list_head *iter;
++
++	netdev_for_each_upper_dev_rcu(dev, upper, iter) {
++		if (is_vlan_dev(upper) && vlan_dev_vlan_proto(upper) == proto &&
++		    vlan_dev_vlan_id(upper) == vid)
++			return upper;
++	}
++
++	return NULL;
++}
++
++/* Did an 802.1Q upper of this port tag the frame? The tag is hwaccel
++ * metadata, or - a user port offers no VLAN TX offload, so
++ * validate_xmit_vlan() pushes it in - already in the frame. A frame the
++ * bridge forwards (offload_fwd_mark) stays in the bridge's VLAN whatever
++ * it carries inside.
++ */
++static bool rtl8365mb_8021q_upper_tagged(struct sk_buff *skb, struct net_device *netdev)
++{
++	u16 tci;
++
++	if (skb_vlan_tag_present(skb))
++		return !vid_is_dsa_8021q(skb_vlan_tag_get_id(skb));
++
++	if (skb->offload_fwd_mark || skb->protocol != htons(ETH_P_8021Q) ||
++	    __vlan_get_tag(skb, &tci))
++		return false;
++
++	tci &= VLAN_VID_MASK;
++	return !vid_is_dsa_8021q(tci) &&
++	       rtl8365mb_8021q_vlan_upper_of(netdev, htons(ETH_P_8021Q), tci);
++}
 +
 +static struct sk_buff *rtl8365mb_8021q_xmit(struct sk_buff *skb,
 +				      struct net_device *netdev)
@@ -810,14 +851,15 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +		tx_vid = dsa_tag_8021q_bridge_vid(bridge_num);
 +	}
 +
-+	/* An 802.1Q upper of the port (wan.35 for a PPPoE ISP) already
-+	 * put its own tag in the skb. The switch carries that VLAN as it
-+	 * is - the port and the CPU port are tagged members of it (see
-+	 * rtl8365mb_port_vlan_add) - so send the frame with that tag alone
-+	 * instead of stacking the port's tag_8021q VID in front of it.
++	/* An 802.1Q upper of the port (wan.35 for a PPPoE ISP, wan.99 next
++	 * to the port's place in a VLAN-unaware bridge) already tagged the
++	 * frame. The switch carries that VLAN as it is - the port and the
++	 * CPU port are tagged members of it (see rtl8365mb_port_vlan_add) -
++	 * so send the frame with that tag alone instead of stacking the
++	 * port's standalone tag_8021q VID in front of it: a bridged port is
++	 * no longer a member of that VID and the switch would drop it.
 +	 */
-+	if (skb_vlan_tag_present(skb) &&
-+	    !vid_is_dsa_8021q(skb_vlan_tag_get_id(skb)))
++	if (rtl8365mb_8021q_upper_tagged(skb, netdev))
 +		return skb;
 +
 +	pcp = netdev_txq_to_tc(netdev, queue_mapping);
@@ -831,25 +873,6 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 + * only ever installed for one port (rtl8365mb_port_vlan_add refuses a second),
 + * so the first match is the only match.
 + */
-+/* @dev's own 802.1Q upper with this VID, if any. Not the deep lookup:
-+ * from a port without VLAN state of its own that climbs to the bridge
-+ * and answers with the bridge's L3 VLAN interface.
-+ */
-+static struct net_device *rtl8365mb_8021q_vlan_upper_of(struct net_device *dev,
-+						 __be16 proto, u16 vid)
-+{
-+	struct net_device *upper;
-+	struct list_head *iter;
-+
-+	netdev_for_each_upper_dev_rcu(dev, upper, iter) {
-+		if (is_vlan_dev(upper) && vlan_dev_vlan_proto(upper) == proto &&
-+		    vlan_dev_vlan_id(upper) == vid)
-+			return upper;
-+	}
-+
-+	return NULL;
-+}
-+
 +static struct net_device *rtl8365mb_8021q_find_vlan_upper(struct net_device *conduit,
 +						    __be16 proto, u16 vid)
 +{

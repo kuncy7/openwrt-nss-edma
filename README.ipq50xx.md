@@ -357,8 +357,9 @@ uci commit network
 reboot
 ```
 The VTU and the `qca8337-nss` parameters have no meaning here. A tagged ISP VLAN or a VLAN
-for an SSID is plain netifd (`wan.35`, `lan1.10`): the kernel installs it in
-the switch. To try it on a board that migrated to the trunk on another image:
+for an SSID is plain netifd (`wan.35`, `lan1.10`, also on a port that sits in
+a VLAN-unaware bridge - `wan.99` next to `wan` in `br-lan` for a dumb AP's
+guest SSID): the kernel installs it in the switch. To try it on a board that migrated to the trunk on another image:
 `uci set nss.general.topology='dsa'`, put the network config back on the DSA
 ports, reboot. Measured on the GL-B3000 against the trunk topology:
 the same plane (5 GHz → NAT → WAN 597/570/631 up, 650/642/629 down Mbit/s

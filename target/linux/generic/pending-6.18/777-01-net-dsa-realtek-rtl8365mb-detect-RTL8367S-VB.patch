@@ -10,11 +10,16 @@ separation by defining RTL8365MB_FAMILY_D, hooks up the new hardware
 ID (0x6642), revision, and maps its unique external interface capability
 where SGMII/HSGMII sits on ext_int 0 instead of ext_int 1.
 
+Also cap priv->num_ports at RTL8365MB_D_MAX_NUM_PORTS (8) for family D.
+This is a functional change: it sets ds->num_ports, the IRQ domain size
+and the bound of every loop over priv->num_ports.
+
 Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 ---
- drivers/net/dsa/realtek/rtl8365mb.h      | 14 ++++++++++++++
- drivers/net/dsa/realtek/rtl8365mb_main.c | 28 ++++++++++++++++++++++++
- 2 files changed, 42 insertions(+)
+ drivers/net/dsa/realtek/rtl8365mb.h      | 14 ++++++++++
+ drivers/net/dsa/realtek/rtl8365mb_main.c | 35 +++++++++++++++++++++++-
+ 2 files changed, 48 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/net/dsa/realtek/rtl8365mb.h
 
 --- /dev/null
 +++ b/drivers/net/dsa/realtek/rtl8365mb.h
@@ -43,7 +48,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
   *  - RTL8370MB
   *  - RTL8310SR
   *
-@@ -109,6 +110,7 @@
+@@ -109,12 +110,14 @@
  #include "rtl83xx.h"
  #include "rtl8365mb_l2.h"
  #include "rtl8365mb_vlan.h"
@@ -51,7 +56,14 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  
  /* Family-specific data and limits */
  #define RTL8365MB_PHYADDRMAX		7
-@@ -692,6 +694,7 @@ struct rtl8365mb_extint {
+ #define RTL8365MB_NUM_PHYREGS		32
+ #define RTL8365MB_PHYREGMAX		(RTL8365MB_NUM_PHYREGS - 1)
+ #define RTL8365MB_MAX_NUM_PORTS		11
++#define RTL8365MB_D_MAX_NUM_PORTS	8
+ /* Valid for the whole family except RTL8370B, which has 4160 entries.
+  * RTL8370B is mentioned in vendor code but it might not even belong
+  * to the same RTL8367C family.
+@@ -692,6 +695,7 @@ struct rtl8365mb_extint {
   * @name: human-readable chip name
   * @chip_id: chip identifier
   * @chip_ver: chip silicon revision
@@ -59,7 +71,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
   * @extints: available external interfaces
   * @jam_table: chip-specific initialization jam table
   * @jam_size: size of the chip's jam table
-@@ -704,6 +707,7 @@ struct rtl8365mb_chip_info {
+@@ -704,6 +708,7 @@ struct rtl8365mb_chip_info {
  	const char *name;
  	u32 chip_id;
  	u32 chip_ver;
@@ -67,7 +79,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	const struct rtl8365mb_extint extints[RTL8365MB_MAX_NUM_EXTINTS];
  	const struct rtl8365mb_jam_tbl_entry *jam_table;
  	size_t jam_size;
-@@ -716,6 +720,7 @@ static const struct rtl8365mb_chip_info
+@@ -716,6 +721,7 @@ static const struct rtl8365mb_chip_info
  		.name = "RTL8365MB-VC",
  		.chip_id = 0x6367,
  		.chip_ver = 0x0040,
@@ -75,7 +87,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  		.extints = {
  			{ 6, 1, PHY_INTF(MII) | PHY_INTF(TMII) |
  				PHY_INTF(RMII) | PHY_INTF(RGMII) },
-@@ -727,6 +732,7 @@ static const struct rtl8365mb_chip_info
+@@ -727,6 +733,7 @@ static const struct rtl8365mb_chip_info
  		.name = "RTL8367S",
  		.chip_id = 0x6367,
  		.chip_ver = 0x00A0,
@@ -83,7 +95,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  		.extints = {
  			{ 6, 1, PHY_INTF(SGMII) | PHY_INTF(HSGMII) },
  			{ 7, 2, PHY_INTF(MII) | PHY_INTF(TMII) |
-@@ -739,6 +745,7 @@ static const struct rtl8365mb_chip_info
+@@ -739,6 +746,7 @@ static const struct rtl8365mb_chip_info
  		.name = "RTL8367SB",
  		.chip_id = 0x6367,
  		.chip_ver = 0x0010,
@@ -91,7 +103,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  		.extints = {
  			{ 6, 1, PHY_INTF(MII) | PHY_INTF(TMII) |
  				PHY_INTF(RMII) | PHY_INTF(RGMII) |
-@@ -753,6 +760,7 @@ static const struct rtl8365mb_chip_info
+@@ -753,6 +761,7 @@ static const struct rtl8365mb_chip_info
  		.name = "RTL8367RB-VB",
  		.chip_id = 0x6367,
  		.chip_ver = 0x0020,
@@ -99,7 +111,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  		.extints = {
  			{ 6, 1, PHY_INTF(MII) | PHY_INTF(TMII) |
  				PHY_INTF(RMII) | PHY_INTF(RGMII) },
-@@ -762,6 +770,19 @@ static const struct rtl8365mb_chip_info
+@@ -762,6 +771,19 @@ static const struct rtl8365mb_chip_info
  		.jam_table = rtl8365mb_init_jam_8365mb_vc,
  		.jam_size = ARRAY_SIZE(rtl8365mb_init_jam_8365mb_vc),
  	},
@@ -119,7 +131,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  };
  
  enum rtl8365mb_stp_state {
-@@ -859,6 +880,13 @@ struct rtl8365mb {
+@@ -859,6 +881,13 @@ struct rtl8365mb {
  
  #define pcs_to_rtl8365mb(_pcs) container_of((_pcs), struct rtl8365mb, pcs)
  
@@ -133,3 +145,16 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  static int rtl8365mb_phy_poll_busy(struct realtek_priv *priv)
  {
  	u32 val;
+@@ -3264,7 +3293,11 @@ static int rtl8365mb_detect(struct realt
+ 
+ 	dev_info(priv->dev, "found an %s switch\n", mb->chip_info->name);
+ 
+-	priv->num_ports = RTL8365MB_MAX_NUM_PORTS;
++	if (rtl8365mb_get_family(priv) == RTL8365MB_FAMILY_D)
++		priv->num_ports = RTL8365MB_D_MAX_NUM_PORTS;
++	else
++		priv->num_ports = RTL8365MB_MAX_NUM_PORTS;
++
+ 	mb->priv = priv;
+ 	mb->cpu.trap_port = RTL8365MB_MAX_NUM_PORTS;
+ 	mb->cpu.insert = RTL8365MB_CPU_INSERT_TO_ALL;

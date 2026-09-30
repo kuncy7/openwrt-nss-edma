@@ -19,7 +19,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 
 --- a/drivers/net/dsa/realtek/rtl8365mb_main.c
 +++ b/drivers/net/dsa/realtek/rtl8365mb_main.c
-@@ -318,6 +318,12 @@
+@@ -319,6 +319,12 @@
  #define   RTL8365MB_SDS_OPTION_ARM_KEY		0x0249
  #define RTL8365MB_SDS_OPTION_REG		0x13C1
  
@@ -32,7 +32,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  /* Embedded DW8051 microcontroller control registers. The microcontroller
   * can run firmware to manage the SerDes link, but this driver keeps it in
   * reset and disabled: phylink already performs the link management that
-@@ -443,6 +449,15 @@
+@@ -444,6 +450,15 @@
  #define   RTL8365MB_PORT_MISC_CFG_VLAN_EGRESS_MODE_MASK		0x0030
  #define   RTL8365MB_PORT_MISC_CFG_CONGESTION_SUSTAIN_TIME_MASK	0x000F
  
@@ -48,7 +48,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  /**
   * enum rtl8365mb_vlan_egress_mode - port VLAN egress mode
   * @RTL8365MB_VLAN_EGRESS_MODE_ORIGINAL: follow untag mask in VLAN4k table entry
-@@ -1130,6 +1145,7 @@ static int rtl8365mb_ext_config_rgmii(st
+@@ -1131,6 +1146,7 @@ static int rtl8365mb_ext_config_rgmii(st
  	struct dsa_port *dp;
  	int tx_delay = 0;
  	int rx_delay = 0;
@@ -56,7 +56,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	u32 val;
  	int ret;
  
-@@ -1199,6 +1215,32 @@ static int rtl8365mb_ext_config_rgmii(st
+@@ -1200,6 +1216,32 @@ static int rtl8365mb_ext_config_rgmii(st
  	if (ret)
  		return ret;
  

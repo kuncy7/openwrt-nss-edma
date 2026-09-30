@@ -18,7 +18,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 
 --- a/drivers/net/dsa/realtek/rtl8365mb_main.c
 +++ b/drivers/net/dsa/realtek/rtl8365mb_main.c
-@@ -330,6 +330,7 @@
+@@ -331,6 +331,7 @@
  #define RTL8365MB_PORT_SPEED_10M	0
  #define RTL8365MB_PORT_SPEED_100M	1
  #define RTL8365MB_PORT_SPEED_1000M	2
@@ -26,7 +26,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  
  /* External interface force configuration registers 0~2 */
  #define RTL8365MB_DIGITAL_INTERFACE_FORCE_REG0		0x1310 /* EXT0 */
-@@ -347,6 +348,20 @@
+@@ -348,6 +349,20 @@
  #define   RTL8365MB_DIGITAL_INTERFACE_FORCE_LINK_MASK		0x0010
  #define   RTL8365MB_DIGITAL_INTERFACE_FORCE_DUPLEX_MASK		0x0004
  #define   RTL8365MB_DIGITAL_INTERFACE_FORCE_SPEED_MASK		0x0003
@@ -47,19 +47,18 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  
  /* CPU port mask register - controls which ports are treated as CPU ports */
  #define RTL8365MB_CPU_PORT_MASK_REG	0x1219
-@@ -1578,6 +1593,7 @@ static int rtl8365mb_ext_config_forcemod
- {
- 	const struct rtl8365mb_extint *extint =
- 		rtl8365mb_get_port_extint(priv, port);
-+	enum rtl8365mb_family family;
- 	u32 r_tx_pause;
- 	u32 r_rx_pause;
+@@ -1584,23 +1599,31 @@ static int rtl8365mb_ext_config_forcemod
  	u32 r_duplex;
-@@ -1589,17 +1605,24 @@ static int rtl8365mb_ext_config_forcemod
+ 	u32 r_speed;
+ 	u32 r_link;
++	bool is_d;
+ 	int val;
+ 	int ret;
+ 
  	if (!extint)
  		return -ENODEV;
  
-+	family = rtl8365mb_get_family(priv);
++	is_d = rtl8365mb_get_family(priv) == RTL8365MB_FAMILY_D;
  	if (link) {
  		/* Force the link up with the desired configuration */
  		r_link = 1;
@@ -72,20 +71,20 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 -		 */
 -		if (speed == SPEED_2500 || speed == SPEED_1000) {
 +		if (speed == SPEED_2500) {
-+			if (family == RTL8365MB_FAMILY_C) {
++			if (is_d) {
++				r_speed = RTL8365MB_D_PORT_SPEED_2500M;
++			} else {
 +				/* The speed field has no value for 2.5 Gbps: the rate is
 +				 * determined by the HSGMII SerDes configuration, and the
 +				 * vendor driver programs the 1 Gbps value here.
 +				 */
 +				r_speed = RTL8365MB_PORT_SPEED_1000M;
-+			} else {
-+				r_speed = RTL8365MB_D_PORT_SPEED_2500M;
 +			}
 +		} else if (speed == SPEED_1000) {
  			r_speed = RTL8365MB_PORT_SPEED_1000M;
  		} else if (speed == SPEED_100) {
  			r_speed = RTL8365MB_PORT_SPEED_100M;
-@@ -1629,8 +1652,7 @@ static int rtl8365mb_ext_config_forcemod
+@@ -1630,8 +1653,7 @@ static int rtl8365mb_ext_config_forcemod
  		r_duplex = 0;
  	}
  
@@ -95,7 +94,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  			 r_tx_pause) |
  	      FIELD_PREP(RTL8365MB_DIGITAL_INTERFACE_FORCE_RXPAUSE_MASK,
  			 r_rx_pause) |
-@@ -1638,11 +1660,33 @@ static int rtl8365mb_ext_config_forcemod
+@@ -1639,11 +1661,33 @@ static int rtl8365mb_ext_config_forcemod
  	      FIELD_PREP(RTL8365MB_DIGITAL_INTERFACE_FORCE_DUPLEX_MASK,
  			 r_duplex) |
  	      FIELD_PREP(RTL8365MB_DIGITAL_INTERFACE_FORCE_SPEED_MASK, r_speed);
@@ -105,14 +104,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 -	if (ret)
 -		return ret;
 +
-+	if (family == RTL8365MB_FAMILY_C) {
-+		val |= FIELD_PREP(RTL8365MB_DIGITAL_INTERFACE_FORCE_EN_MASK, 1);
-+		ret = regmap_write(priv->map,
-+				   RTL8365MB_DIGITAL_INTERFACE_FORCE_REG(extint->id),
-+				   val);
-+		if (ret)
-+			return ret;
-+	} else {
++	if (is_d) {
 +		/* Speed is 3 bits on family D: bits[1:0] go into FORCE_SPEED,
 +		 * bit[2] goes into FORCE_SPEED2 (bit 12); only 2500M sets it,
 +		 * bit 13 of the field is unused.
@@ -128,6 +120,13 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 +		ret = regmap_write(priv->map,
 +				   RTL8365MB_D_DIGITAL_INTERFACE_FORCE_REG_EN(port),
 +				   RTL8365MB_D_DIGITAL_INTERFACE_FORCE_EN_ALL_MASK);
++		if (ret)
++			return ret;
++	} else {
++		val |= FIELD_PREP(RTL8365MB_DIGITAL_INTERFACE_FORCE_EN_MASK, 1);
++		ret = regmap_write(priv->map,
++				   RTL8365MB_DIGITAL_INTERFACE_FORCE_REG(extint->id),
++				   val);
 +		if (ret)
 +			return ret;
 +	}

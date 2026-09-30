@@ -80,13 +80,13 @@ jobs:
           rm "$bb/sh"
           rmdir "$bb"
 
-      - name: Check QCA8337 initialization and failure handling
+      - name: Check switch fabric initialization and failure handling
         run: |
           python3 package/kernel/qca8337-nss/tests/init.test.py
-          python3 package/nss/nss-tools/tests/qca8337-init.test.py
+          python3 package/nss/nss-tools/tests/switch-init.test.py
           bb="$(mktemp -d)"
           ln -s "$(command -v busybox)" "$bb/sh"
-          NSS_TEST_SH="$bb/sh" python3 package/nss/nss-tools/tests/qca8337-init.test.py
+          NSS_TEST_SH="$bb/sh" python3 package/nss/nss-tools/tests/switch-init.test.py
           rm "$bb/sh"
           rmdir "$bb"
 

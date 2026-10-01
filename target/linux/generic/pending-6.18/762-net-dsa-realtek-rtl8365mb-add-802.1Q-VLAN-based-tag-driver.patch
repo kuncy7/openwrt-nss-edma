@@ -343,7 +343,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	mutex_lock(&priv->vlan_lock);
  	ret = rtl8365mb_vlan_pvid_port_clear(ds, port, vlan->vid);
  	if (ret)
-@@ -2917,15 +3147,271 @@ static int rtl8365mb_cpu_config(struct r
+@@ -2917,15 +3147,278 @@ static int rtl8365mb_cpu_config(struct r
  	return 0;
  }
  
@@ -500,17 +500,24 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +/* A bridge that is not VLAN-aware hands its FDB and MDB entries over with
 + * VID 0; the switch learns with IVL in the tag_8021q VID the bridge's
 + * frames are classified into, and that is where the static entries have
-+ * to go for the lookups to meet them.
++ * to go for the lookups to meet them. The DSA core zeroes db.bridge.num
++ * for a switch without FDB isolation, so the number of the bridge is
++ * taken from a port that is in it.
 + */
 +static u16 rtl8365mb_db_vid(struct realtek_priv *priv, struct dsa_db db,
 +			    u16 vid)
 +{
++	struct dsa_port *dp;
++
 +	if (vid || !rtl8365mb_is_8021q(priv))
 +		return vid;
 +
 +	switch (db.type) {
 +	case DSA_DB_BRIDGE:
-+		return dsa_tag_8021q_bridge_vid(db.bridge.num);
++		dsa_switch_for_each_user_port(dp, &priv->ds)
++			if (dsa_port_offloads_bridge_dev(dp, db.bridge.dev))
++				return dsa_tag_8021q_bridge_vid(dp->bridge->num);
++		return vid;
 +	case DSA_DB_PORT:
 +		return dsa_tag_8021q_standalone_vid(db.dp);
 +	default:

@@ -1,0 +1,23 @@
+From: Andrei-Alexandru Bleortu <me@andrei-z.com>
+Subject: [PATCH] ath11k: nss: start the HTT tx completion with no msdu
+
+Since the bitmap tx pool, ath11k_dp_tx_htt_tx_complete_buf() only
+assigns msdu when the completion's id is in the pool, but the "unknown
+msdu_id" check right after reads it either way: a completion for an id
+that is not pending - a duplicate, or one that races the ring cleanup -
+went on with whatever was on the stack and dereferenced it. The other
+two completion paths already start from NULL.
+
+Signed-off-by: Andrei-Alexandru Bleortu <me@andrei-z.com>
+
+--- a/drivers/net/wireless/ath/ath11k/dp_tx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_tx.c
+@@ -402,7 +402,7 @@ ath11k_dp_tx_htt_tx_complete_buf(struct ath11k_base *ab,
+ 				 struct ath11k_dp_htt_wbm_tx_status *ts)
+ {
+ 	struct ieee80211_tx_status status = {};
+-	struct sk_buff *msdu;
++	struct sk_buff *msdu = NULL;
+ 	struct ieee80211_tx_info *info;
+ 	struct ath11k_skb_cb *skb_cb;
+ 	struct ath11k *ar;

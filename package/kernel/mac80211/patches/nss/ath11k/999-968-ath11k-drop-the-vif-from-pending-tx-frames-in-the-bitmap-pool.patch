@@ -1,0 +1,51 @@
+From: Andrei-Alexandru Bleortu <me@andrei-z.com>
+Subject: [PATCH] ath11k: nss: drop the vif from pending tx frames in the
+ bitmap pool
+
+Removing an interface clears skb_cb->vif on every frame still waiting
+for its tx completion, so the completion does not touch the freed vif.
+It walked txbuf_idr, which the bitmap tx pool no longer fills: nothing
+was cleared, and a completion arriving after the interface was gone
+used the freed vif. Walk the pool's set bits instead, under the
+tx_idr_lock the pool is updated under.
+
+Signed-off-by: Andrei-Alexandru Bleortu <me@andrei-z.com>
+
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -7519,15 +7519,18 @@ err:
+ 	return ret;
+ }
+ 
+-static int ath11k_mac_vif_unref(int buf_id, void *skb, void *ctx)
++/* Caller holds tx_ring->tx_idr_lock. */
++static void ath11k_mac_vif_unref(struct dp_tx_ring *tx_ring,
++				 struct ieee80211_vif *vif)
+ {
+-	struct ieee80211_vif *vif = ctx;
+-	struct ath11k_skb_cb *skb_cb = ATH11K_SKB_CB(skb);
+-
+-	if (skb_cb->vif == vif)
+-		skb_cb->vif = NULL;
++	struct ath11k_skb_cb *skb_cb;
++	int i;
+ 
+-	return 0;
++	for_each_set_bit(i, tx_ring->idrs, DP_TX_IDR_SIZE) {
++		skb_cb = ATH11K_SKB_CB(tx_ring->idr_pool[i].buf);
++		if (skb_cb->vif == vif)
++			skb_cb->vif = NULL;
++	}
+ }
+ 
+ static void ath11k_mac_op_remove_interface(struct ieee80211_hw *hw,
+@@ -7621,8 +7624,7 @@ err_vdev_del:
+ 
+ 	for (i = 0; i < DP_TCL_NUM_RING_MAX; i++) {
+ 		spin_lock_bh(&ab->dp.tx_ring[i].tx_idr_lock);
+-		idr_for_each(&ab->dp.tx_ring[i].txbuf_idr,
+-			     ath11k_mac_vif_unref, vif);
++		ath11k_mac_vif_unref(&ab->dp.tx_ring[i], vif);
+ 		spin_unlock_bh(&ab->dp.tx_ring[i].tx_idr_lock);
+ 	}
+ 

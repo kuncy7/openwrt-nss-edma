@@ -395,8 +395,25 @@ json_cleanup() { :; }
     r = run_dsa('glinet,gl-b3000', dict(b3000, **{'nss.general.wifi_offload': '0'}))
     check(r, {'nss.general.wifi_offload': '0'}, 'hand-set wifi_offload=0 kept')
 
+    # An Airoha AN8855 (Xiaomi AX3000T v2): the switch MFD binds on the MDIO
+    # bus as 'an8855', and that alone picks the dsa topology. All four ports
+    # sit on one CPU link, so nothing is consolidated. Until the AN8855 has
+    # a tag_8021q tagger the board stays on the host stack.
+    (tmp / 'mdio' / 'qca8k').rename(tmp / 'mdio' / 'qca8k.off')
+    an8855 = tmp / 'mdio' / 'an8855'
+    an8855.mkdir()
+    (an8855 / '90000.mdio-1:01').touch()
+    ax3000t_v2 = dict(b3000, **{'network.@device[0].ports': 'lan2 lan3 lan4'})
+    r = run_dsa('xiaomi,mi-router-ax3000t-v2', ax3000t_v2)
+    check(r, {'nss.general.topology': 'dsa', 'network.@device[0].ports': 'lan2 lan3 lan4',
+              'network.wan.device': 'wan', 'nss.general.enabled': '0'}, 'ax3000t-v2 an8855 dsa')
+    assert not [k for k in r if k.endswith('.conduit')], ('ax3000t-v2 an8855 dsa', 'a conduit appeared')
+    (an8855 / '90000.mdio-1:01').unlink()
+    an8855.rmdir()
+    (tmp / 'mdio' / 'qca8k.off').rename(tmp / 'mdio' / 'qca8k')
+
 print('PASS: RA74 and Cudy P5 dual link, rerun, Wi-Fi choice kept, tagged WAN, '
       'no wan6, migrated config, B3000 MAC clone, D50 LAN-only trunk, '
       'EX511 headerless switch, dsa conduit consolidation (AX5400 fresh from board.json, '
       'existing wan section, uci override, LuCI sections, B3000, even split), '
-      'Wi-Fi offload on with firmware memory mode 1')
+      'Wi-Fi offload on with firmware memory mode 1, AN8855 picks dsa')

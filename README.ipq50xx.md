@@ -244,13 +244,15 @@ tarball the feed already uses. It is the newest firmware published for IPQ5018
 (May 2025, nine months after 12.5) and the one every measurement in this file
 was taken on. The feed defaults to 12.5 on every target, so pick 12.2 by hand.
 
-- **12.5-210-MP** runs too: on a GL-B3000 (23 September 2026) it brought both
-  radios up on the offload, carried routed and Wi-Fi<->LAN TCP through the
-  firmware and came through a cold boot. It ignores the host's TX
-  checksum-generation flags, though - with the glue's `fw_csum` on, ICMP works
-  and every TCP handshake leaves the wire with a bad checksum - so `fw_csum`
-  defaults to off; leave it. An earlier note here that 12.5 refuses VAP
-  allocation did not hold up.
+- **12.5-210-MP** runs too: on a GL-B3000 it brought both radios up on the
+  offload, carried routed and Wi-Fi<->LAN TCP through the firmware and came
+  through a cold boot (23 September 2026), and accelerated the bridged traffic
+  of an access point with a VLAN-aware bridge (2 October 2026). Two earlier
+  notes here did not hold up when they were repeated: that 12.5 refuses VAP
+  allocation, and that it ignores the host's TX checksum-generation flags -
+  with the glue advertising the firmware's features, TCP from the router
+  itself works with `fw_csum` on, on 12.2 and on 12.5 alike. `fw_csum` still
+  defaults to off: IPv6 and a VLAN on top of a port have not been tried.
 - **11.4-6** refuses VAP allocation.
 
 ## How the plane comes up

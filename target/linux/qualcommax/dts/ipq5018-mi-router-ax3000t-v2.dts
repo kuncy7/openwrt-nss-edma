@@ -4,6 +4,7 @@
 
 #include "ipq5018.dtsi"
 #include "ipq5018-ess.dtsi"
+#include "ipq5018-nss.dtsi"
 #include "ipq5018-qcn6122.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
@@ -24,7 +25,7 @@
 	};
 
 	chosen {
-		bootargs-append = " ubi.mtd=rootfs root=/dev/ubiblock0_0 coherent_pool=2M";
+		bootargs-append = " ubi.mtd=rootfs root=/dev/ubiblock0_0 swiotlb=1 coherent_pool=512K";
 		stdout-path = "serial0:115200n8";
 	};
 
@@ -64,6 +65,27 @@
 			max-brightness = <255>;
 		};
 	};
+
+	reserved-memory {
+		q6_region_qcn6122_1: q6-region-qcn6122-1@4d200000 {
+			reg = <0x0 0x4d200000 0x0 0xd00000>;
+			no-map;
+		};
+
+		m3_dump_qcn6122_1: m3-dump-qcn6122-1@4df00000 {
+			reg = <0x0 0x4df00000 0x0 0x100000>;
+			no-map;
+		};
+	};
+};
+
+/*
+ * The NSS core's DDR region: 8 MiB, as stock reserves on this board
+ * (nss@40000000, 0x800000) and as the other 256 MiB boards here use,
+ * instead of the 16 MiB ipq5018.dtsi reserves for 512 MiB boards.
+ */
+&nss_region {
+	reg = <0x0 0x40000000 0x0 0x800000>;
 };
 
 &sleep_clk {
@@ -283,9 +305,11 @@
 	nvmem-cells = <&mac_addr_wan>;
 	nvmem-cell-names = "mac-address";
 
+	/* Pause on both ends of the 2.5G link, as on the Archer AX55 v1 */
 	fixed-link {
 		speed = <2500>;
 		full-duplex;
+		pause;
 	};
 };
 
@@ -619,31 +643,38 @@
 };
 
 /*
- * Both ath11k radios do not fit in 256 MiB: with the full-size rings the
- * board runs out of memory. Keep the Wi-Fi related peripherals disabled,
- * as on the other 256 MiB ipq50xx boards.
+ * The QCN6122 sits on user PD 2 behind PCIe1, with its reset on GPIO 18:
+ * the stock device tree carries boot-args = <0x02 0x04 0x02 0x12 0x00 0x00>.
  */
 &q6v5_wcss {
-	status = "disabled";
+	boot-args = <
+			/*       type:	*/	0x2	/* PCIE1	*/
+			/*     length:	*/	4
+			/*     UPD ID:	*/	2
+			/* reset GPIO:	*/	18
+			/*   reserved:	*/	0 0>;
 };
 
+/*
+ * Both radios run at firmware memory mode 2, as stock does on this board
+ * (tgt-mem-mode = <0x02>) and as the other 256 MiB boards here do. Their
+ * MAC addresses come with the calibration data in 0:art (0x100e, 0x2680e).
+ */
 &wifi {
-	status = "disabled";
+	status = "okay";
 
-	qcom,rproc = <&q6_wcss_pd1>;
-	qcom,userpd-subsys-name = "q6v5_wcss_userpd1";
+	qcom,rproc = <&q6v5_wcss>;
 	qcom,ath11k-calibration-variant = "Xiaomi-Mi-Router-AX3000T-v2";
-	qcom,ath11k-fw-memory-mode = <1>;
-	qcom,bdf-addr = <0x4c400000>;
+	qcom,ath11k-fw-memory-mode = <2>;
 };
 
 &wifi1 {
-	status = "disabled";
+	status = "okay";
 
-	qcom,rproc = <&q6_wcss_pd2>;
-	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
+	qcom,rproc = <&q6v5_wcss>;
 	qcom,ath11k-calibration-variant = "Xiaomi-Mi-Router-AX3000T-v2";
-	qcom,ath11k-fw-memory-mode = <1>;
-	qcom,bdf-addr = <0x4d100000>;
-	qcom,m3-dump-addr = <0x4df00000>;
+	qcom,ath11k-fw-memory-mode = <2>;
+
+	memory-region = <&q6_region_qcn6122_1>, <&q6_region_ipq5018>, <&m3_dump_qcn6122_1>;
+	memory-region-names = "q6-region", "m3-region", "m3-dump";
 };

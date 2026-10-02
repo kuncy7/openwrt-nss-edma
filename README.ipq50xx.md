@@ -71,6 +71,13 @@ image: a board that is not in official OpenWrt needs a plain OpenWrt image
 built from this tree first (Quick start below), and a board that is gets the
 official one. `sha256sums-<group>.txt` next to the images has the checksums.
 
+The Xiaomi Mi Router AX3000T v2 is the exception: its stock U-Boot only boots
+a freshly ubiformatted kernel volume, so it refuses an in-place sysupgrade and
+is installed and upgraded from `openwrt-qualcommax-ipq50xx-xiaomi_mi-router-ax3000t-v2-initramfs-factory.ubi`,
+in the `256m` group's release (steps in the commit that adds the board). That
+image is for installing only: it runs from RAM, so with Wi-Fi up it can run out
+of memory.
+
 Every image is built with the whole plane in: `nss-tools-dwmac`, firmware
 12.2-156, VLAN and PPPoE managers, ath11k with the NSS patches, plus `ip-full`
 and `iperf3` for checking it. Boards come in two groups, because the ath11k and
@@ -79,7 +86,7 @@ NSS memory profiles are a build-time choice for the whole image:
 | group | boards | memory profile |
 |---|---|---|
 | `std` | 512 MB and 1 GB boards (the release notes list them) | ath11k 1G, NSS medium |
-| `256m` | Cudy P5, TP-Link EX511 v2 | ath11k 256M, NSS low |
+| `256m` | Cudy P5, TP-Link EX511 v2, Xiaomi Mi Router AX3000T v2 | ath11k 256M, NSS low |
 
 The exact configuration of each group is in `.github/ci/ipq50xx/` (`common.config`
 + `<group>.config` + `kmods-extra.config`) and, for a given release, in the
@@ -732,8 +739,9 @@ larger (2092 B) than the data frame size the host advertises (2048 B).
 
 ## 256 MB boards
 
-Two IPQ5018 boards on this branch have 256 MB - the TP-Link EX511 v2
-(IPQ5018 + QCN6122) and the Cudy P5 - and the rest 512 MB. The defaults
+Three IPQ5018 boards on this branch have 256 MB - the TP-Link EX511 v2
+(IPQ5018 + QCN6122), the Cudy P5 and the Xiaomi Mi Router AX3000T v2 - and the rest
+512 MB. The defaults
 tuned for 512 MB do not fit in 256: on the EX511 the first flashed build
 OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the branch and measured on the board
 (2026-09-13) - and what the next 256 MB board will need too:
@@ -789,8 +797,9 @@ OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the bran
     that the cache file is newer than the file you edited.
     `NSS_MEM_PROFILE_LOW` is not in this tree at all - it is a choice in
     the `qca-nss-drv` package of the feed, so a board has to be named in
-    both places - the EX511 v2 and the Cudy P5 are, in both. The firmware
-    version
+    both places - the EX511 v2 and the Cudy P5 are, in both; the AX3000T v2
+    is named here and in kuncy7/nss-packages#4, which is not merged yet. The
+    firmware version
   (`NSS_FIRMWARE_VERSION_12_2`) is still chosen by hand, as on every
   ipq50xx board. `qcom,ath11k-fw-memory-mode = <2>` on both radios is in
   the DTS.

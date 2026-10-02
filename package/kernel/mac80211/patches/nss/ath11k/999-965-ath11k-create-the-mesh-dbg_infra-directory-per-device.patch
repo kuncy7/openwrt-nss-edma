@@ -1,0 +1,23 @@
+From: Andrei-Alexandru Bleortu <me@andrei-z.com>
+Subject: [PATCH] ath11k: nss: create the mesh dbg_infra directory per device
+
+The per-SoC mesh debug entries (links, mpp_mode) went into one dbg_infra
+directory at the top of ath11k's debugfs tree, so on a board with more
+than one radio - IPQ5018 with QCN6122 or QCN9074 - the second device's
+debugfs_create_dir() failed ("'dbg_infra' already exists in 'ath11k'")
+and its entries were never created. Put the directory under the device's
+own debugfs directory, which exists by the time NSS is set up.
+
+Signed-off-by: Andrei-Alexandru Bleortu <me@andrei-z.com>
+
+--- a/drivers/net/wireless/ath/ath11k/debug_nss.c
++++ b/drivers/net/wireless/ath/ath11k/debug_nss.c
+@@ -910,7 +910,7 @@ void ath11k_debugfs_nss_soc_create(struct ath11k_base *ab)
+ {
+ 	struct dentry *debugfs_dbg_infra;
+ 
+-	debugfs_dbg_infra = debugfs_create_dir("dbg_infra", debugfs_ath11k);
++	debugfs_dbg_infra = debugfs_create_dir("dbg_infra", ab->debugfs_soc);
+ 
+ 	debugfs_create_file("links", 0200,
+ 			debugfs_dbg_infra, ab,

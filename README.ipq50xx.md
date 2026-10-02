@@ -657,9 +657,35 @@ Legend as in the [IPQ807x README](/README.md): ✅ offloaded & validated ·
 | L2 between LAN ports | ✅ | in the switch fabric (same VLAN), never reaches the SoC |
 | PPPoE | ✅ | Kernel patch `0961` gained the lockless `__ppp_hold_channels()` / `__ppp_is_multilink()` that ECM's deadlock fix needs, `kmod-qca-nss-drv-pppoe` is selected, and `nss-dwmac-up` **loads it** after the arm - without the manager in memory ECM tracks the PPPoE flows, marks every rule invalid and the WAN silently stays on the host path (measured: 0 rules, 22k exceptions in 20 s; the same silent failure AugustoAmaral hit before the package was selected at all, ~950 Mbit/s at 84-95 % idle on an AX6000 once it was in). Measured here on the `dsa` topology with the ISP's VLAN on the WAN port (`wan.35`, PPPoE server on the bench): rules created, 120k-157k firmware hits per 15-20 s, 0-65 exceptions, 2 % CPU, at the 100 Mbit/s ceiling of the bench client. On the trunk topology LS3434 runs it as `eth0.35` with `vtu='...;35:6t,2t'` (#154, #156): 890-950 down / 310 up at 1-5 % CPU. |
 | Wi-Fi (wifili) | ✅ | both radios; 734/447 Mbit/s over 5 GHz through the router, host ~90 % idle. Needs the core-clock fix - see below |
-| SQM / NSS qdiscs | ⬜ | not carried for ipq50xx |
+| SQM / NSS qdiscs | ✅ | `dsa` topology: `sqm-scripts-nss` shapes the WAN flows in a lane on the conduit (`eth0`), the other ports' traffic passes unshaped; nsstbl + nssfq_codel in the firmware both ways (IGS for ingress). Measured on the GL-B3000: 91/91 Mbit/s at a 100/100 limit, 18/45 at 20/50, ~3 ms ping under load, host 97 % idle. See "SQM" below |
 | Multicast snooping (`qca-mcs`) | ⬜ | not carried for ipq50xx |
 | MAP-T / DS-Lite | 🟨 | `kmod-nat46` staging from the base; untested here |
+
+### SQM
+
+The firmware shaper only takes effect on a physical NSS interface. On the `dsa` topology that is the conduit `eth0`
+alone: a port like `wan` is a firmware VLAN node and the accelerated flows go past it, so a shaper put there is
+accepted and never sees a packet. `sqm-scripts-nss` (`nss-edma.qos`) handles this itself: with `option interface 'wan'`
+it builds the tree on `eth0` as the first band of an `nssprio` root, leaves the second band unshaped as the default,
+and steers the flows that enter or leave through the WAN port (and the VLAN or PPPoE devices stacked on it) into the
+first band with an nftables chain of its own (`meta priority set 10:0`; ECM carries the value into the rule, the IGS
+forward hook into the ingress rule, so one mark serves both directions). Ingress is an IFB fed by `act_nssmirred`
+off `eth0`. The qdisc and IGS modules are loaded by `nss-dwmac-up` once the driver is up, and `qca-nss-drv` on
+ipq50xx hands the firmware a 1 MB QoS pool by default (`qos_mem_size`), without which the MP firmware refuses
+`nssfq_codel`.
+
+```
+config queue 'wan'
+	option enabled '1'
+	option interface 'wan'
+	option script 'nss-edma.qos'
+	option download '100000'
+	option upload '20000'
+```
+
+Not available there: `igs_upload` (the firmware refuses a redirect off a switch port). Traffic the router itself
+originates is not marked and goes through the unshaped band. Measured on the GL-B3000 only (fw 12.2-156); the AX55
+and the 256 MB boards have not been tried.
 
 ### The single CPU port ceiling
 

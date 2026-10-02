@@ -277,6 +277,14 @@ start_service() {
 	[ -w /sys/kernel/debug/qca-dwmac-nss/ifmap ] &&
 		echo "$ifmap" > /sys/kernel/debug/qca-dwmac-nss/ifmap
 	modprobe qca-nss-drv 2>/dev/null
+	# The NSS qdiscs and the IGS action depend on qca-nss-drv, so they must
+	# not sit in /etc/modules.d: kmodloader would pull the driver in at
+	# boot, before any port is armed. Load them here instead, once the
+	# driver is up, so `tc ... nsstbl` works without a modprobe by hand.
+	local m
+	for m in qca-nss-qdisc act_nssmirred; do
+		[ -e "/lib/modules/$(uname -r)/$m.ko" ] && modprobe "$m" 2>/dev/null
+	done
 
 	# GMAC descriptor rings: where the firmware keeps each GMAC's DMA rings.
 	# qca-nss-drv reads meminfo_user_config when the core boots, which is

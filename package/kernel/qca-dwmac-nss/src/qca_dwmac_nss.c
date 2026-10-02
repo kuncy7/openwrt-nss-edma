@@ -38,6 +38,7 @@
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/etherdevice.h>
+#include <linux/if_vlan.h>
 #include <linux/netdevice.h>
 #include <linux/phy.h>
 #include <linux/rtnetlink.h>
@@ -97,7 +98,7 @@ MODULE_PARM_DESC(boot_unarmed,
 static bool fw_csum;
 module_param(fw_csum, bool, 0644);
 MODULE_PARM_DESC(fw_csum,
-		 "trust the NSS firmware to generate TX checksums (default off: measured on fw 12.5-210-MP, the H2N checksum-generation flags are ignored and TCP leaves the wire corrupt - ICMP works, every TCP handshake dies)");
+		 "let the NSS firmware generate TX checksums and segment GSO frames, and advertise TSO and generic checksum offload on the netdev (default off)");
 
 enum dwmac_nss_port_state {
 	DWMAC_NSS_PORT_IDLE = 0,
@@ -115,6 +116,8 @@ struct dwmac_nss_port {
 	bool headroom_added;		/* dp_ops->init() added 32B */
 	netdev_features_t saved_wanted_features;
 	bool features_trimmed;		/* TX csum/TSO cleared while started */
+	netdev_features_t saved_features, saved_hw_features, saved_vlan_features;
+	bool features_raised;		/* fw data-plane features applied */
 	struct nss_dp_data_plane_ops *dp_ops;
 	struct nss_dp_data_plane_ctx *dpc;
 	atomic64_t tx_redirect_pkts;
@@ -159,6 +162,13 @@ static netdev_tx_t dwmac_nss_fw_xmit(struct sk_buff *skb, void *ctx)
 {
 	struct dwmac_nss_port *port = ctx;
 	netdev_tx_t ret;
+
+	/* The firmware cannot checksum a double-tagged frame (nss-dp masked it). */
+	if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL && skb_vlan_tagged_multi(skb)) &&
+	    skb_checksum_help(skb)) {
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
+	}
 
 	ret = port->dp_ops->xmit(port->dpc, skb);
 	if (unlikely(ret == NETDEV_TX_BUSY))
@@ -479,6 +489,24 @@ static int dwmac_nss_port_start(struct dwmac_nss_port *port)
 		netdev->wanted_features &= ~(NETIF_F_CSUM_MASK | NETIF_F_ALL_TSO);
 		netdev_update_features(netdev);
 		port->features_trimmed = true;
+	} else if (port->dp_ops->set_features) {
+		/*
+		 * The firmware checksums and segments what the host hands it, so
+		 * advertise its data plane's features (TSO among them, which the
+		 * DWMAC1000 itself lacks), as nss-dp did on takeover. Its generic
+		 * HW_CSUM replaces the GMAC's IP/IPv6 checksum bits.
+		 */
+		port->saved_features = netdev->features;
+		port->saved_hw_features = netdev->hw_features;
+		port->saved_vlan_features = netdev->vlan_features;
+		port->saved_wanted_features = netdev->wanted_features;
+		netdev->features &= ~NETIF_F_CSUM_MASK;
+		netdev->hw_features &= ~NETIF_F_CSUM_MASK;
+		netdev->vlan_features &= ~NETIF_F_CSUM_MASK;
+		netdev->wanted_features &= ~NETIF_F_CSUM_MASK;
+		port->dp_ops->set_features(port->dpc);
+		netdev_update_features(netdev);
+		port->features_raised = true;
 	}
 
 	/*
@@ -568,6 +596,15 @@ static void dwmac_nss_port_unwind(struct dwmac_nss_port *port,
 				(NETIF_F_CSUM_MASK | NETIF_F_ALL_TSO);
 			netdev_update_features(port->netdev);
 			port->features_trimmed = false;
+		}
+
+		if (port->features_raised) {
+			port->netdev->features = port->saved_features;
+			port->netdev->hw_features = port->saved_hw_features;
+			port->netdev->vlan_features = port->saved_vlan_features;
+			port->netdev->wanted_features = port->saved_wanted_features;
+			netdev_update_features(port->netdev);
+			port->features_raised = false;
 		}
 
 		if (restart_host)

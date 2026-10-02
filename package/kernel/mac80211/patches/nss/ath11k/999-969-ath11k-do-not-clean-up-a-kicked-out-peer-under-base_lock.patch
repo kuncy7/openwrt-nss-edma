@@ -1,0 +1,50 @@
+From: Julius Bairaktaris <julius@bairaktaris.de>
+Subject: [PATCH] ath11k: do not clean up a kicked-out peer under base_lock
+
+ath11k_peer_sta_kickout_event() called ath11k_dp_peer_cleanup(), which
+takes base_lock itself, with base_lock held, so the spurious kickout
+branch spun on its own lock. Drop the lock before the cleanup, keeping
+the vdev_id read under it, and initialise save_peer and sta, which are
+otherwise unset when no radio holds the peer.
+
+Taken from the 999-900 update in JuliusBairaktaris/openwrt-nss-edma
+(fe08e746309) and carried as a separate patch on our backports 6.18.26
+series.
+
+Link: https://github.com/qosmio/openwrt-ipq/pull/111
+Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
+
+--- a/drivers/net/wireless/ath/ath11k/wmi.c
++++ b/drivers/net/wireless/ath/ath11k/wmi.c
+@@ -8067,11 +8067,11 @@ static void ath11k_scan_event(struct ath
+ static void ath11k_peer_sta_kickout_event(struct ath11k_base *ab, struct sk_buff *skb)
+ {
+ 	struct wmi_peer_sta_kickout_arg arg = {};
+-	struct ieee80211_sta *sta;
++	struct ieee80211_sta *sta = NULL;
+ 	struct ath11k_peer *peer;
+-	struct ath11k_peer *save_peer;
++	struct ath11k_peer *save_peer = NULL;
+ 	struct ath11k *ar;
+ 	struct ath11k *save_ar;
+ 	int i;
+ 
+ 	if (ath11k_pull_peer_sta_kickout_ev(ab, skb, &arg) != 0) {
+@@ -8102,11 +8102,15 @@ static void ath11k_peer_sta_kickout_even
+ 		ieee80211_report_low_ack(sta, 10);
+ 	}
+ 	if (!sta && save_peer) {
++		int vdev_id = save_peer->vdev_id;
++
++		spin_unlock_bh(&ab->base_lock);
+ 		ath11k_warn(ab, "Spurious quick kickout for STA %pM but found in peer table\n", arg.mac_addr);
+-		ath11k_dp_peer_cleanup(save_ar, save_peer->vdev_id, arg.mac_addr);
++		ath11k_dp_peer_cleanup(save_ar, vdev_id, arg.mac_addr);
++	} else {
++		spin_unlock_bh(&ab->base_lock);
+ 	}
+ 
+-	spin_unlock_bh(&ab->base_lock);
+ 	rcu_read_unlock();
+ }
+ 

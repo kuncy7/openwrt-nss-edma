@@ -1,0 +1,32 @@
+From: Julius Bairaktaris <julius@bairaktaris.de>
+Subject: [PATCH] ath11k: nss: authorize a peer without a key
+
+ath11k tells the NSS firmware that a peer is authorized only from
+set_key, when it installs a pairwise key. A peer that never gets one -
+an open network, an open mesh - reaches IEEE80211_STA_AUTHORIZED in
+mac80211 but stays unauthorized in the firmware, which then drops
+everything the peer sends (peer_unauth_rx_pkt_drop).
+
+Send the authorize message when the station becomes authorized as well.
+
+Taken from Julius Bairaktaris' openwrt-nss-edma (nss-edma-rework), where
+it is part of 199-003 and 999-900; found by Adriel Santos in his RD03v2
+port (999-991-rd03v2-nss-mesh-authorize-keyless-peers). Kept as a patch
+of its own here because the 199-003 and 999-900 in this tree are
+refreshed against a different backports base.
+
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -10428,8 +10428,11 @@
+ 		spin_lock_bh(&ar->ab->base_lock);
+ 
+ 		peer = ath11k_peer_find(ar, arvif->vdev_id, sta->addr);
+-		if (peer)
++		if (peer) {
+ 			peer->is_authorized = true;
++			/* set_key authorizes a peer in NSS only when it installs a key */
++			ath11k_nss_set_peer_authorize(ar, peer->peer_id);
++		}
+ 
+ 		spin_unlock_bh(&ar->ab->base_lock);
+ 

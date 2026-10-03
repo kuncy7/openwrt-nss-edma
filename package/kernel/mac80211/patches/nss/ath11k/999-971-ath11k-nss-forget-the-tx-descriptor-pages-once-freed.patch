@@ -1,0 +1,23 @@
+From: Julius Bairaktaris <julius@bairaktaris.de>
+Subject: [PATCH] ath11k: nss: forget the tx descriptor pages once they are freed
+
+ath11k_nss_tx_desc_mem_free() tests tx_desc_paddr[] to see whether a
+page is allocated but only clears tx_desc_vaddr[] after freeing it, so a
+second call - a failed bring-up followed by the regular teardown, or a
+firmware recovery - frees the same DMA memory again.
+
+Clear the address too.
+
+Taken from Julius Bairaktaris' openwrt-nss-edma (nss-edma-rework), where
+it is part of 199-002.
+
+--- a/drivers/net/wireless/ath/ath11k/nss.c
++++ b/drivers/net/wireless/ath/ath11k/nss.c
+@@ -4224,6 +4224,7 @@
+ 				  ab->nss.tx_desc_vaddr[i],
+ 				  ab->nss.tx_desc_paddr[i]);
+ 		ab->nss.tx_desc_vaddr[i] = NULL;
++		ab->nss.tx_desc_paddr[i] = 0;
+ 	}
+ 
+ 	ath11k_dbg(ab, ATH11K_DBG_NSS, "allocated tx desc mem freed\n");

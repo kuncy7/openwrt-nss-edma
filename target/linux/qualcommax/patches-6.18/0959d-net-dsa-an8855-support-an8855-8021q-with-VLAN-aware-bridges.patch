@@ -1,0 +1,1146 @@
+From: Adriel Santos <adriel@adriel.eu>
+Subject: [PATCH] net: dsa: an8855: support an8855-8021q with VLAN-aware bridges
+
+Fill in the switch side of the an8855-8021q mode: disable the CPU special
+tag and use the VLAN table for user-port forwarding and CPU tagging, and
+save the register state so that returning to the MediaTek tag restores it.
+
+Track bridge and tagger PVIDs separately, keep the VLANs of a bridge that
+is not VLAN-aware inactive, and replay their membership when filtering is
+enabled. A port of a VLAN-unaware bridge forwards tagged frames as they
+are, as mt7530 does. Support tagged VLAN uppers and tagged or untagged
+bridge members, with unique customer VID ownership and reserved-VID and
+protocol checks.
+
+Make a bridge-wide filtering change one hardware transaction that is
+undone as a whole on failure, and unwind partial VLAN programming
+failures. Other state changes are not transactional across callbacks: if
+a bridge leave fails to drop filtering, shut the port and finish the
+leave on the core's filtering reset that follows. Keep VLAN-upper RX
+filtering through bridge transitions and keep per-port transmit VLANs for
+directed frames. Clear the egress tagging of the link-local trap rules,
+so that trapped frames follow the VLAN table and reach the CPU with a
+tag_8021q VID.
+
+Bridge RX identifies the bridge rather than the physical ingress port.
+
+Signed-off-by: Adriel Santos <adriel@adriel.eu>
+Assisted-by: Claude
+---
+--- a/drivers/net/dsa/an8855.c
++++ b/drivers/net/dsa/an8855.c
+@@ -10,6 +10,7 @@
+ #include <linux/etherdevice.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/if_bridge.h>
++#include <linux/if_vlan.h>
+ #include <linux/iopoll.h>
+ #include <linux/netdevice.h>
+ #include <linux/of_net.h>
+@@ -357,26 +358,71 @@ static u16 an8855_db_vid(struct an8855_p
+ 	}
+ }
+ 
++static int an8855_port_set_pid(struct an8855_priv *priv, int port, u16 pid);
++static int an8855_port_set_status(struct an8855_priv *priv, int port, bool enable);
++static int an8855_8021q_port_tx_vlan(struct an8855_priv *priv, int port);
++static int an8855_8021q_set_filtering(struct dsa_switch *ds, int port, bool on,
++				     struct netlink_ext_ack *extack);
++static int an8855_8021q_commit_pvid(struct an8855_priv *priv, int port);
++
+ static int an8855_port_bridge_join(struct dsa_switch *ds, int port,
+ 				   struct dsa_bridge bridge,
+ 				   bool *tx_fwd_offload,
+ 				   struct netlink_ext_ack *extack)
+ {
+ 	struct an8855_priv *priv = ds->priv;
++	u16 old_pvid = priv->tag_8021q_pvid[port];
++	u16 proto;
+ 	int ret;
+ 
++	if (an8855_is_8021q(priv)) {
++		ret = br_vlan_get_proto(bridge.dev, &proto);
++		if (ret)
++			return ret;
++		if (proto != ETH_P_8021Q) {
++			NL_SET_ERR_MSG_MOD(extack, "an8855-8021q requires an 802.1Q bridge");
++			return -EOPNOTSUPP;
++		}
++	}
++
+ 	ret = an8855_update_port_member(ds, port, bridge.dev, true);
+-	if (ret)
++	if (ret) {
++		an8855_update_port_member(ds, port, bridge.dev, false);
+ 		return ret;
++	}
+ 
+ 	/* 8021q mode: the port trades its standalone VID for the bridge's;
+ 	 * tag_8021q calls an8855_tag_8021q_vlan_del/_add for the swap.
+-	 * TODO(switch side): the port must not drop into fallback mode
+-	 * below - it stays in the mode an8855_8021q_port_mode() set.
++	 * The port stays in the security mode an8855_8021q_port_mode() set.
+ 	 */
+-	if (an8855_is_8021q(priv))
+-		return dsa_tag_8021q_bridge_join(ds, port, bridge,
+-						 tx_fwd_offload, extack);
++	if (an8855_is_8021q(priv)) {
++		ret = an8855_8021q_set_filtering(ds, port, br_vlan_enabled(bridge.dev),
++						extack);
++		if (ret) {
++			an8855_update_port_member(ds, port, bridge.dev, false);
++			return ret;
++		}
++		ret = dsa_tag_8021q_bridge_join(ds, port, bridge,
++					      tx_fwd_offload, extack);
++		if (!ret) {
++			/* Direct TX (STP/LLDP) still uses the standalone VID. */
++			ret = an8855_8021q_port_tx_vlan(priv, port);
++			if (ret)
++				dsa_tag_8021q_bridge_leave(ds, port, bridge);
++		}
++		if (ret) {
++			set_bit(port, &priv->bridge_undo);
++			an8855_8021q_set_filtering(ds, port, false, NULL);
++			an8855_update_port_member(ds, port, bridge.dev, false);
++			/* Restore user membership if deleting the old CPU VID failed. */
++			an8855_8021q_port_tx_vlan(priv, port);
++			/* The new user PVID may have preceded a failed CPU add. */
++			priv->tag_8021q_pvid[port] = old_pvid;
++			an8855_8021q_commit_pvid(priv, port);
++			clear_bit(port, &priv->bridge_undo);
++		}
++		return ret;
++	}
+ 
+ 	/* Set to fallback mode for independent VLAN learning if in a bridge */
+ 	return regmap_update_bits(priv->regmap, AN8855_PCR_P(port),
+@@ -389,19 +435,36 @@ static void an8855_port_bridge_leave(str
+ 				     struct dsa_bridge bridge)
+ {
+ 	struct an8855_priv *priv = ds->priv;
++	int ret;
+ 
+ 	/* The bridge core does not clear BR_ISOLATED when a port leaves */
+ 	priv->port_isolated_map &= ~BIT(port);
+-	an8855_update_port_member(ds, port, bridge.dev, false);
++	ret = an8855_update_port_member(ds, port, bridge.dev, false);
++	if (ret)
++		dev_err(priv->dev, "port %d: failed to leave port matrix: %d\n", port, ret);
+ 
+ 	/* 8021q mode: back to the standalone VID.
+-	 * TODO(switch side): a VLAN-aware bridge's PVID leaves with the
+-	 * bridge and the tag_8021q PVID has to be the one in the register
+-	 * again (shadow PVIDs); the port keeps its 8021q port mode instead
+-	 * of the matrix mode below.
++	 * Keep security mode instead of restoring matrix mode below.
+ 	 */
+ 	if (an8855_is_8021q(priv)) {
++		set_bit(port, &priv->bridge_undo);
++		ret = an8855_8021q_set_filtering(ds, port, false, NULL);
++		if (ret) {
++			/* Keep the shadow and shut the port until a later
++			 * filtering callback, such as the core's reset after
++			 * this leave, finishes the cleanup.
++			 */
++			dev_err(priv->dev, "port %d: failed to leave VLAN filtering: %d\n",
++				port, ret);
++			set_bit(port, &priv->leave_pending);
++			an8855_port_set_status(priv, port, false);
++		} else {
++			bitmap_zero(priv->bridge_vlans[port], VLAN_N_VID);
++			bitmap_zero(priv->bridge_untagged[port], VLAN_N_VID);
++			priv->bridge_pvid[port] = 0;
++		}
+ 		dsa_tag_8021q_bridge_leave(ds, port, bridge);
++		clear_bit(port, &priv->bridge_undo);
+ 		return;
+ 	}
+ 
+@@ -575,13 +638,12 @@ static int an8855_vlan_add(struct an8855
+ 	if (ret)
+ 		return ret;
+ 
+-	/* CPU port is always taken as a tagged port for serving more than one
+-	 * VLANs across and also being applied with egress type stack mode for
+-	 * that VLAN tags would be appended after hardware special tag used as
+-	 * DSA tag.
++	/* The VLAN tag follows the special tag in MTK mode. With tag_8021q,
++	 * the special tag is disabled and this is the only tag on the wire.
+ 	 */
+-	if (port == AN8855_CPU_PORT)
+-		val = AN8855_VLAN_EGRESS_STACK;
++	if (dsa_is_cpu_port(priv->ds, port))
++		val = an8855_is_8021q(priv) ? AN8855_VLAN_EGRESS_TAG :
++					   AN8855_VLAN_EGRESS_STACK;
+ 	/* Decide whether adding tag or not for those outgoing packets from the
+ 	 * port inside the VLAN.
+ 	 */
+@@ -732,6 +794,431 @@ static int an8855_port_commit_vlan(struc
+ 	return an8855_port_set_pid(priv, port, pvid);
+ }
+ 
++struct an8855_vlan_transaction {
++	struct {
++		u32 pcr, pvc, ppbv, pvid;
++	} ports[AN8855_NUM_PORTS];
++	unsigned long port_mask;
++	unsigned int count;
++	struct {
++		u16 vid;
++		u32 value;
++	} rows[];
++};
++
++static int an8855_vlan_transaction_capture_port(struct an8855_priv *priv,
++						 struct an8855_vlan_transaction *state,
++						 int port)
++{
++	int ret;
++
++	ret = regmap_read(priv->regmap, AN8855_PCR_P(port), &state->ports[port].pcr);
++	if (ret)
++		return ret;
++	ret = regmap_read(priv->regmap, AN8855_PVC_P(port), &state->ports[port].pvc);
++	if (ret)
++		return ret;
++	ret = regmap_read(priv->regmap, AN8855_PPBV1_P(port), &state->ports[port].ppbv);
++	if (ret)
++		return ret;
++	ret = regmap_read(priv->regmap, AN8855_PVID_P(port), &state->ports[port].pvid);
++	if (ret)
++		return ret;
++	set_bit(port, &state->port_mask);
++	return 0;
++}
++
++static int an8855_vlan_transaction_begin(struct an8855_priv *priv, int port,
++					 const unsigned long *vids,
++					 struct an8855_vlan_transaction **result)
++	__must_hold(&priv->reg_mutex)
++{
++	struct an8855_vlan_transaction *state;
++	unsigned long vid;
++	unsigned int count = bitmap_weight(vids, VLAN_N_VID), i = 0;
++	int ret;
++
++	state = kzalloc(struct_size(state, rows, count), GFP_KERNEL);
++	if (!state)
++		return -ENOMEM;
++	ret = an8855_vlan_transaction_capture_port(priv, state, port);
++	if (ret)
++		goto fail;
++	for_each_set_bit(vid, vids, VLAN_N_VID) {
++		state->rows[i].vid = vid;
++		ret = an8855_vlan_cmd(priv, AN8855_VTCR_RD_VID, vid);
++		if (ret)
++			goto fail;
++		ret = regmap_read(priv->regmap, AN8855_VARD0, &state->rows[i].value);
++		if (ret)
++			goto fail;
++		i++;
++	}
++	state->count = count;
++	*result = state;
++	return 0;
++fail:
++	kfree(state);
++	return ret;
++}
++
++static void an8855_vlan_transaction_restore(struct an8855_priv *priv, int port,
++					    struct an8855_vlan_transaction *state)
++	__must_hold(&priv->reg_mutex)
++{
++	unsigned int i;
++	unsigned long p;
++	int err = 0, ret;
++
++	for (i = 0; i < state->count; i++) {
++		ret = regmap_write(priv->regmap, AN8855_VAWD0, state->rows[i].value);
++		if (ret && !err)
++			err = ret;
++		ret = regmap_write(priv->regmap, AN8855_VAWD1, 0);
++		if (ret && !err)
++			err = ret;
++		ret = an8855_vlan_cmd(priv, AN8855_VTCR_WR_VID, state->rows[i].vid);
++		if (ret && !err)
++			err = ret;
++	}
++	for_each_set_bit(p, &state->port_mask, AN8855_NUM_PORTS) {
++		ret = regmap_update_bits(priv->regmap, AN8855_PCR_P(p),
++					 AN8855_PORT_VLAN, state->ports[p].pcr);
++		if (ret && !err)
++			err = ret;
++		ret = regmap_update_bits(priv->regmap, AN8855_PVC_P(p),
++					 AN8855_PVC_EG_TAG | AN8855_VLAN_ATTR | AN8855_ACC_FRM,
++					 state->ports[p].pvc);
++		if (ret && !err)
++			err = ret;
++		ret = regmap_update_bits(priv->regmap, AN8855_PPBV1_P(p),
++					 AN8855_PPBV_G0_PORT_VID, state->ports[p].ppbv);
++		if (ret && !err)
++			err = ret;
++		ret = regmap_update_bits(priv->regmap, AN8855_PVID_P(p),
++					 AN8855_G0_PORT_VID, state->ports[p].pvid);
++		if (ret && !err)
++			err = ret;
++	}
++	if (err)
++		dev_err(priv->dev, "port %d: VLAN rollback failed: %d\n", port, err);
++}
++
++/* The DSA core sets dp->bridge before .port_bridge_join and clears it only
++ * after a failed join returns, and it sends BRIDGE_LEAVE with dp->bridge
++ * still set when it unwinds a join the driver accepted. While the driver
++ * undoes a join, treat the port as standalone so that its registers end up
++ * as if it had never joined.
++ */
++static struct net_device *an8855_8021q_bridge_dev(struct an8855_priv *priv,
++						  int port)
++{
++	if (test_bit(port, &priv->bridge_undo))
++		return NULL;
++	return dsa_port_bridge_dev_get(dsa_to_port(priv->ds, port));
++}
++
++static bool an8855_8021q_is_filtering(struct an8855_priv *priv, int port)
++{
++	return test_bit(port, &priv->vlan_filtering) &&
++	       an8855_8021q_bridge_dev(priv, port);
++}
++
++/* DSA changes dp->vlan_filtering after the callback. Use our committed state. */
++static int an8855_8021q_commit_pvid(struct an8855_priv *priv, int port)
++{
++	enum an8855_vlan_port_attr attr = AN8855_VLAN_USER;
++	u16 pvid;
++	int ret;
++
++	if (!dsa_is_user_port(priv->ds, port))
++		return 0;
++	pvid = an8855_8021q_is_filtering(priv, port) ? priv->bridge_pvid[port] :
++						     priv->tag_8021q_pvid[port];
++	/* A VLAN-unaware bridge forwards tagged frames as they are. Do not
++	 * parse their tags then: they are classified into the bridge's
++	 * tag_8021q VID like untagged ones, and keep their tag as payload,
++	 * as mt7530 does for VLAN-unaware ports. An 802.1Q upper needs its
++	 * VID parsed, so a port with one stays a user port.
++	 */
++	if (an8855_8021q_bridge_dev(priv, port) &&
++	    !an8855_8021q_is_filtering(priv, port) &&
++	    bitmap_empty(priv->upper_vlans[port], VLAN_N_VID))
++		attr = AN8855_VLAN_TRANSPARENT;
++	ret = an8855_port_set_vlan_mode(priv, port, AN8855_PORT_SECURITY_MODE,
++					AN8855_VLAN_EG_DISABLED, attr,
++					pvid ? AN8855_VLAN_ACC_ALL : AN8855_VLAN_ACC_TAGGED);
++	if (ret)
++		return ret;
++	return an8855_port_set_pid(priv, port, pvid);
++}
++
++/* A real VID identifies either one upper port or one active bridge on RX. */
++static int an8855_8021q_vlan_owner(struct an8855_priv *priv, int port, u16 vid,
++				   bool bridge, bool active,
++				   struct netlink_ext_ack *extack)
++{
++	struct net_device *br = an8855_8021q_bridge_dev(priv, port);
++	struct dsa_port *other;
++
++	if (bridge && !active)
++		return 0;
++	dsa_switch_for_each_user_port(other, priv->ds) {
++		if (test_bit(vid, priv->upper_vlans[other->index]) &&
++		    (bridge || other->index != port)) {
++			NL_SET_ERR_MSG_MOD(extack, "VID belongs to a VLAN upper of another owner");
++			return -EBUSY;
++		}
++		if (!an8855_8021q_is_filtering(priv, other->index) ||
++		    !test_bit(vid, priv->bridge_vlans[other->index]))
++			continue;
++		if (!bridge || an8855_8021q_bridge_dev(priv, other->index) != br) {
++			NL_SET_ERR_MSG_MOD(extack, "VID belongs to another VLAN-aware bridge");
++			return -EBUSY;
++		}
++	}
++	return 0;
++}
++
++/* Inactive bridge VLANs stay in software; every active CPU member is tagged. */
++static int an8855_8021q_sync_vlan(struct an8855_priv *priv, u16 vid)
++	__must_hold(&priv->reg_mutex)
++{
++	struct dsa_port *dp;
++	u32 ports = 0, tags = 0, val = 0;
++	int ret;
++
++	dsa_switch_for_each_user_port(dp, priv->ds) {
++		bool upper = test_bit(vid, priv->upper_vlans[dp->index]);
++		bool bridge = an8855_8021q_is_filtering(priv, dp->index) &&
++			      test_bit(vid, priv->bridge_vlans[dp->index]);
++
++		if (!upper && !bridge)
++			continue;
++		ports |= BIT(dp->index);
++		if (upper || !test_bit(vid, priv->bridge_untagged[dp->index]))
++			tags |= AN8855_VA0_ETAG_PORT_VAL(dp->index, AN8855_VLAN_EGRESS_TAG);
++	}
++	if (ports) {
++		dsa_switch_for_each_cpu_port(dp, priv->ds) {
++			ports |= BIT(dp->index);
++			tags |= AN8855_VA0_ETAG_PORT_VAL(dp->index, AN8855_VLAN_EGRESS_TAG);
++		}
++		val = AN8855_VA0_IVL_MAC | AN8855_VA0_VTAG_EN | AN8855_VA0_VLAN_VALID |
++		      FIELD_PREP(AN8855_VA0_FID, AN8855_FID_BRIDGED) |
++		      FIELD_PREP(AN8855_VA0_PORT, ports) | tags;
++	}
++	ret = regmap_write(priv->regmap, AN8855_VAWD0, val);
++	if (ret)
++		return ret;
++	ret = regmap_write(priv->regmap, AN8855_VAWD1, 0);
++	if (ret)
++		return ret;
++	return an8855_vlan_cmd(priv, AN8855_VTCR_WR_VID, vid);
++}
++
++static int an8855_8021q_tag_membership(struct an8855_priv *priv, int port,
++				      u16 vid, bool on)
++	__must_hold(&priv->reg_mutex)
++{
++	u32 val;
++	int ret;
++
++	if (on)
++		return an8855_vlan_add(priv, port, vid, true);
++	ret = an8855_vlan_cmd(priv, AN8855_VTCR_RD_VID, vid);
++	if (ret)
++		return ret;
++	ret = regmap_read(priv->regmap, AN8855_VARD0, &val);
++	if (ret)
++		return ret;
++	if (!(val & AN8855_VA0_VLAN_VALID) || !(FIELD_GET(AN8855_VA0_PORT, val) & BIT(port)))
++		return 0;
++	return an8855_vlan_del(priv, port, vid);
++}
++
++/* Finish a bridge leave that failed in an8855_8021q_set_filtering() before:
++ * drop the former bridge's VLANs and bring the port back.
++ */
++static int an8855_8021q_finish_leave(struct an8855_priv *priv, int port)
++{
++	struct dsa_port *dp = dsa_to_port(priv->ds, port);
++
++	if (!test_and_clear_bit(port, &priv->leave_pending))
++		return 0;
++	bitmap_zero(priv->bridge_vlans[port], VLAN_N_VID);
++	bitmap_zero(priv->bridge_untagged[port], VLAN_N_VID);
++	priv->bridge_pvid[port] = 0;
++	if (dp->user && netif_running(dp->user))
++		return an8855_port_set_status(priv, port, true);
++	return 0;
++}
++
++static int an8855_8021q_set_filtering(struct dsa_switch *ds, int port, bool on,
++				     struct netlink_ext_ack *extack)
++{
++	struct an8855_priv *priv = ds->priv;
++	struct an8855_vlan_transaction *state;
++	struct net_device *br = an8855_8021q_bridge_dev(priv, port);
++	struct dsa_port *other;
++	DECLARE_BITMAP(vids, VLAN_N_VID);
++	unsigned long old = priv->vlan_filtering, changed = 0, p, vid;
++	bool bridge_change;
++	int ret;
++
++	if (!dsa_is_user_port(ds, port))
++		return 0;
++	on = on && br;
++	bridge_change = br && br_vlan_enabled(br) == on;
++	/* Switchdev visits ports in sequence without unwinding earlier ports.
++	 * Validate and commit a bridge's awareness in one hardware transaction.
++	 * A detached port is cleaned up alone, preserving its former peers.
++	 */
++	dsa_switch_for_each_user_port(other, ds) {
++		if (bridge_change ? an8855_8021q_bridge_dev(priv, other->index) != br :
++				    other->index != port)
++			continue;
++		if (on) {
++			for_each_set_bit(vid, priv->bridge_vlans[other->index], VLAN_N_VID) {
++				ret = an8855_8021q_vlan_owner(priv, other->index, vid,
++							     true, true, extack);
++				if (ret)
++					return ret;
++			}
++		}
++		if (test_bit(other->index, &priv->vlan_filtering) != on)
++			set_bit(other->index, &changed);
++	}
++	if (!changed)
++		return on || br ? 0 : an8855_8021q_finish_leave(priv, port);
++	bitmap_zero(vids, VLAN_N_VID);
++	for_each_set_bit(p, &changed, AN8855_NUM_PORTS) {
++		bitmap_or(vids, vids, priv->bridge_vlans[p], VLAN_N_VID);
++		bitmap_or(vids, vids, priv->upper_vlans[p], VLAN_N_VID);
++		if (priv->tag_8021q_pvid[p])
++			set_bit(priv->tag_8021q_pvid[p], vids);
++	}
++	mutex_lock(&priv->reg_mutex);
++	/* The callback port need not be one of the ports still needing a change. */
++	p = find_first_bit(&changed, AN8855_NUM_PORTS);
++	ret = an8855_vlan_transaction_begin(priv, p, vids, &state);
++	if (ret)
++		goto out;
++	for_each_set_bit(p, &changed, AN8855_NUM_PORTS) {
++		if (test_bit(p, &state->port_mask))
++			continue;
++		ret = an8855_vlan_transaction_capture_port(priv, state, p);
++		if (ret) {
++			kfree(state);
++			goto out;
++		}
++	}
++	for_each_set_bit(p, &changed, AN8855_NUM_PORTS)
++		__assign_bit(p, &priv->vlan_filtering, on);
++	for_each_set_bit(vid, vids, VLAN_N_VID) {
++		if (vid_is_dsa_8021q(vid))
++			continue;
++		ret = an8855_8021q_sync_vlan(priv, vid);
++		if (ret)
++			goto restore;
++	}
++	for_each_set_bit(p, &changed, AN8855_NUM_PORTS) {
++		u16 tag_vid = priv->tag_8021q_pvid[p];
++
++		if (tag_vid && tag_vid != dsa_tag_8021q_standalone_vid(dsa_to_port(ds, p))) {
++			ret = an8855_8021q_tag_membership(priv, p, tag_vid,
++							!on && br);
++			if (ret)
++				goto restore;
++		}
++		ret = an8855_8021q_commit_pvid(priv, p);
++		if (ret)
++			goto restore;
++	}
++	kfree(state);
++	if (!on && !br)
++		ret = an8855_8021q_finish_leave(priv, port);
++	goto out;
++restore:
++	priv->vlan_filtering = old;
++	an8855_vlan_transaction_restore(priv, port, state);
++	kfree(state);
++out:
++	mutex_unlock(&priv->reg_mutex);
++	return ret;
++}
++
++static int an8855_8021q_customer_vlan(struct dsa_switch *ds, int port,
++				     const struct switchdev_obj_port_vlan *vlan,
++				     bool add, struct netlink_ext_ack *extack)
++{
++	struct an8855_priv *priv = ds->priv;
++	struct an8855_vlan_transaction *state;
++	bool bridge = vlan->obj.orig_dev;
++	bool member, untagged, upper;
++	DECLARE_BITMAP(vids, VLAN_N_VID);
++	u16 vid = vlan->vid, pvid;
++	int ret;
++
++	/* The 8021q layer adds VID 0 to every port that comes up, for
++	 * priority-tagged frames, which the switch already takes as untagged.
++	 */
++	if (!vid)
++		return 0;
++	if (vid >= VLAN_N_VID || vid_is_dsa_8021q(vid)) {
++		NL_SET_ERR_MSG_MOD(extack, "VID 3072-4095 are reserved in an8855-8021q mode");
++		return -EBUSY;
++	}
++	/* User membership programs the complete row, including CPU tags. */
++	if (!dsa_is_user_port(ds, port))
++		return 0;
++	if (add) {
++		ret = an8855_8021q_vlan_owner(priv, port, vid, bridge,
++					     an8855_8021q_is_filtering(priv, port), extack);
++		if (ret)
++			return ret;
++	}
++	mutex_lock(&priv->reg_mutex);
++	member = test_bit(vid, priv->bridge_vlans[port]);
++	untagged = test_bit(vid, priv->bridge_untagged[port]);
++	upper = test_bit(vid, priv->upper_vlans[port]);
++	pvid = priv->bridge_pvid[port];
++	if (!add && !(bridge ? member : upper)) {
++		ret = 0;
++		goto out;
++	}
++	bitmap_zero(vids, VLAN_N_VID);
++	set_bit(vid, vids);
++	ret = an8855_vlan_transaction_begin(priv, port, vids, &state);
++	if (ret)
++		goto out;
++	if (bridge) {
++		__assign_bit(vid, priv->bridge_vlans[port], add);
++		__assign_bit(vid, priv->bridge_untagged[port],
++			     add && (vlan->flags & BRIDGE_VLAN_INFO_UNTAGGED));
++		if (add && (vlan->flags & BRIDGE_VLAN_INFO_PVID))
++			priv->bridge_pvid[port] = vid;
++		else if (priv->bridge_pvid[port] == vid)
++			priv->bridge_pvid[port] = 0;
++	} else {
++		__assign_bit(vid, priv->upper_vlans[port], add);
++	}
++	ret = an8855_8021q_sync_vlan(priv, vid);
++	if (!ret)
++		ret = an8855_8021q_commit_pvid(priv, port);
++	if (ret) {
++		__assign_bit(vid, priv->bridge_vlans[port], member);
++		__assign_bit(vid, priv->bridge_untagged[port], untagged);
++		__assign_bit(vid, priv->upper_vlans[port], upper);
++		priv->bridge_pvid[port] = pvid;
++		an8855_vlan_transaction_restore(priv, port, state);
++	}
++	kfree(state);
++out:
++	mutex_unlock(&priv->reg_mutex);
++	return ret;
++}
++
+ static int an8855_port_vlan_filtering(struct dsa_switch *ds, int port,
+ 				      bool vlan_filtering,
+ 				      struct netlink_ext_ack *extack)
+@@ -739,6 +1226,9 @@ static int an8855_port_vlan_filtering(st
+ 	struct an8855_priv *priv = ds->priv;
+ 	int ret;
+ 
++	if (an8855_is_8021q(priv))
++		return an8855_8021q_set_filtering(ds, port, vlan_filtering, extack);
++
+ 	/* The port is being kept as VLAN-unaware port when bridge is
+ 	 * set up with vlan_filtering not being set, Otherwise, the
+ 	 * port and the corresponding CPU port is required the setup
+@@ -805,6 +1295,9 @@ static int an8855_port_vlan_add(struct d
+ 	u16 new_pvid;
+ 	int ret;
+ 
++	if (an8855_is_8021q(priv))
++		return an8855_8021q_customer_vlan(ds, port, vlan, true, extack);
++
+ 	mutex_lock(&priv->reg_mutex);
+ 	ret = an8855_vlan_add(priv, port, vlan->vid, untagged);
+ 	mutex_unlock(&priv->reg_mutex);
+@@ -836,6 +1329,9 @@ static int an8855_port_vlan_del(struct d
+ 	struct an8855_priv *priv = ds->priv;
+ 	int ret;
+ 
++	if (an8855_is_8021q(priv))
++		return an8855_8021q_customer_vlan(ds, port, vlan, false, NULL);
++
+ 	mutex_lock(&priv->reg_mutex);
+ 	ret = an8855_vlan_del(priv, port, vlan->vid);
+ 	mutex_unlock(&priv->reg_mutex);
+@@ -1281,10 +1777,8 @@ an8855_get_tag_protocol(struct dsa_switc
+ 
+ /* ---- tag_8021q mode: the switch side ------------------------------------
+  *
+- * SKELETON. The tagger (net/dsa/tag_an8855_8021q.c) and the plumbing in
+- * this file are complete; the three functions marked TODO are where the
+- * AN8855 registers go, and until they are filled in the switch refuses
+- * the protocol (-EOPNOTSUPP) and stays on the MediaTek tag.
++ * Standalone ports and VLAN-unaware bridges carry a tagger VID. VLAN-aware
++ * bridges carry their customer VIDs, and VLAN uppers have unique owner ports.
+  *
+  * What the tagger expects to see on the conduit, i.e. what the switch has
+  * to be made to do:
+@@ -1297,8 +1791,9 @@ an8855_get_tag_protocol(struct dsa_switc
+  *  3. A frame from the CPU carries the VID to forward in; the switch
+  *     strips it on the way out of a user port (untagged member) and keeps
+  *     it for an 802.1Q upper's VLAN (tagged member).
+- *  4. tag_8021q VIDs: 3072 + port for a standalone port, 3088 + n for the
+- *     VLAN-unaware bridge n. They come in through an8855_tag_8021q_vlan_add
++ *  4. tag_8021q VIDs: 3072 + port for this switch's standalone ports,
++ *     dsa_tag_8021q_bridge_vid(n) for VLAN-unaware bridge n. They come
++ *     in through an8855_tag_8021q_vlan_add
+  *     with BRIDGE_VLAN_INFO_PVID | BRIDGE_VLAN_INFO_UNTAGGED on the user
+  *     port and with neither on the CPU port.
+  *  5. An untagged frame on a user port takes the port's PVID. A tagged one
+@@ -1314,7 +1809,7 @@ an8855_get_tag_protocol(struct dsa_switc
+  *  8. The switch learns per VLAN (IVL); host FDB/MDB entries go into the
+  *     tag_8021q VID (an8855_db_vid, already wired into fdb/mdb add/del).
+  *
+- * Beyond the first ping (each is a separate, later step):
++ * Customer VLAN handling:
+  *  - an 802.1Q upper of a port (wan.35 for a PPPoE ISP): the user ports
+  *    advertise NETIF_F_HW_VLAN_CTAG_FILTER in this mode, so the core asks
+  *    for the VLAN through port_vlan_add; port and CPU port both tagged
+@@ -1332,55 +1827,273 @@ an8855_get_tag_protocol(struct dsa_switc
+  *    ip link set eth1 down
+  *    echo an8855-8021q > /sys/class/net/eth1/dsa/tagging
+  *    ip link set eth1 up
+- *    tcpdump -e -i eth1      # every frame: 802.1Q, vlan 3072+port or 3088+n
++ *    tcpdump -e -i eth1      # every frame: 802.1Q, standalone or bridge VID
+  * then ping through a standalone port (wan), through the bridge (lanN),
+  * between two bridge ports (must stay in the switch), and DHCP both ways.
++ * Bridge RX identifies the bridge rather than the physical ingress port;
++ * protocols requiring that port identity need a separate validation step.
+  */
+ 
+-/* TODO(switch side): CPU port tagging for the 8021q mode.
+- * on: special tag off on the CPU port, egress tagging of the CPU port left
+- *     to the VLAN table (EG_CON/consistent rather than a forced tag
+- *     attribute), CPU port in every VLAN as a tagged member.
+- * off: back to what an8855_setup() programmed for tag_mtk.
+- */
++static const u32 an8855_8021q_flood_regs[] = {
++	AN8855_BCF, AN8855_UNUF, AN8855_UNMF, AN8855_UNIPMF,
++};
++
++static const struct {
++	u32 reg;
++	u32 mask;
++} an8855_8021q_trap_regs[] = {
++	{ AN8855_BPC, AN8855_BPDU_EG_TAG },
++	{ AN8855_PAC, AN8855_PAE_EG_TAG | AN8855_TAG_PAE_EG_TAG },
++	{ AN8855_RGAC1, AN8855_R01_EG_TAG | AN8855_R02_EG_TAG },
++	{ AN8855_RGAC2, AN8855_R03_EG_TAG | AN8855_R0E_EG_TAG },
++};
++
++static int an8855_8021q_save_state(struct an8855_priv *priv)
++{
++	struct dsa_port *dp;
++	int i, port, ret;
++
++	if (priv->tag_8021q_saved)
++		return 0;
++
++	dsa_switch_for_each_port(dp, priv->ds) {
++		port = dp->index;
++		ret = regmap_read(priv->regmap, AN8855_PCR_P(port),
++				  &priv->tag_8021q_port_state[port].pcr);
++		if (ret)
++			return ret;
++		ret = regmap_read(priv->regmap, AN8855_PVC_P(port),
++				  &priv->tag_8021q_port_state[port].pvc);
++		if (ret)
++			return ret;
++		ret = regmap_read(priv->regmap, AN8855_PPBV1_P(port),
++				  &priv->tag_8021q_port_state[port].ppbv);
++		if (ret)
++			return ret;
++		ret = regmap_read(priv->regmap, AN8855_PVID_P(port),
++				  &priv->tag_8021q_port_state[port].pvid);
++		if (ret)
++			return ret;
++	}
++	for (i = 0; i < ARRAY_SIZE(an8855_8021q_flood_regs); i++) {
++		ret = regmap_read(priv->regmap, an8855_8021q_flood_regs[i],
++				  &priv->tag_8021q_flood_state[i]);
++		if (ret)
++			return ret;
++	}
++	for (i = 0; i < ARRAY_SIZE(an8855_8021q_trap_regs); i++) {
++		ret = regmap_read(priv->regmap, an8855_8021q_trap_regs[i].reg,
++				  &priv->tag_8021q_trap_state[i]);
++		if (ret)
++			return ret;
++	}
++	priv->tag_8021q_saved = true;
++	return 0;
++}
++
++static int an8855_8021q_restore_port(struct an8855_priv *priv, int port)
++{
++	int err = 0, ret;
++
++	/* Try every register even if one write fails during rollback. */
++	ret = regmap_update_bits(priv->regmap, AN8855_PCR_P(port),
++				 AN8855_PORT_VLAN, priv->tag_8021q_port_state[port].pcr);
++	if (ret)
++		err = ret;
++	ret = regmap_update_bits(priv->regmap, AN8855_PVC_P(port),
++				 AN8855_PORT_SPEC_REPLACE_MODE | AN8855_PORT_SPEC_TAG |
++				 AN8855_PVC_EG_TAG | AN8855_VLAN_ATTR | AN8855_ACC_FRM,
++				 priv->tag_8021q_port_state[port].pvc);
++	if (ret && !err)
++		err = ret;
++	ret = regmap_update_bits(priv->regmap, AN8855_PPBV1_P(port),
++				 AN8855_PPBV_G0_PORT_VID,
++				 priv->tag_8021q_port_state[port].ppbv);
++	if (ret && !err)
++		err = ret;
++	ret = regmap_update_bits(priv->regmap, AN8855_PVID_P(port),
++				 AN8855_G0_PORT_VID, priv->tag_8021q_port_state[port].pvid);
++	if (ret && !err)
++		err = ret;
++	return err;
++}
++
++/* Leave egress tagging to the VLAN table, including for trapped frames. */
+ static int an8855_8021q_cpu_port_mode(struct an8855_priv *priv, bool on)
+ {
+-	return on ? -EOPNOTSUPP : 0;
++	struct dsa_port *dp;
++	int i, err = 0, ret;
++
++	if (!on && !priv->tag_8021q_saved)
++		return 0;
++	dsa_switch_for_each_cpu_port(dp, priv->ds) {
++		if (!on) {
++			ret = an8855_8021q_restore_port(priv, dp->index);
++			if (ret && !err)
++				err = ret;
++			continue;
++		}
++		ret = regmap_clear_bits(priv->regmap, AN8855_PVC_P(dp->index),
++					AN8855_PORT_SPEC_REPLACE_MODE | AN8855_PORT_SPEC_TAG);
++		if (ret)
++			return ret;
++		ret = an8855_port_set_vlan_mode(priv, dp->index,
++						AN8855_PORT_SECURITY_MODE,
++						AN8855_VLAN_EG_DISABLED,
++						AN8855_VLAN_USER,
++						AN8855_VLAN_ACC_TAGGED);
++		if (ret)
++			return ret;
++	}
++	for (i = 0; i < ARRAY_SIZE(an8855_8021q_trap_regs); i++) {
++		ret = regmap_update_bits(priv->regmap, an8855_8021q_trap_regs[i].reg,
++					 an8855_8021q_trap_regs[i].mask,
++					 on ? 0 : priv->tag_8021q_trap_state[i]);
++		if (ret && on)
++			return ret;
++		if (ret && !err)
++			err = ret;
++	}
++	return err;
+ }
+ 
+-/* TODO(switch side): user ports for the 8021q mode.
+- * on: every user port in security mode with ingress filtering, its PVID
+- *     the tag_8021q one, and in the broadcast / unknown-unicast /
+- *     unknown-multicast flood masks from the start.
+- * off: back to the port mode a VLAN-unaware port normally has
+- *      (an8855_port_vlan_filtering with the port's current state).
+- */
++/* The VLAN table isolates standalone ports and supplies bridge membership. */
+ static int an8855_8021q_port_mode(struct an8855_priv *priv, bool on)
+ {
+-	return on ? -EOPNOTSUPP : 0;
++	struct dsa_port *dp;
++	u32 ports = dsa_user_ports(priv->ds);
++	int i, err = 0, ret;
++
++	if (!on && !priv->tag_8021q_saved)
++		return 0;
++	dsa_switch_for_each_user_port(dp, priv->ds) {
++		if (on)
++			ret = an8855_port_set_vlan_mode(priv, dp->index,
++							AN8855_PORT_SECURITY_MODE,
++							AN8855_VLAN_EG_DISABLED,
++							AN8855_VLAN_USER,
++							AN8855_VLAN_ACC_ALL);
++		else
++			ret = an8855_8021q_restore_port(priv, dp->index);
++		if (ret && on)
++			return ret;
++		if (ret && !err)
++			err = ret;
++		if (!on) {
++			priv->tag_8021q_pvid[dp->index] = 0;
++			priv->bridge_pvid[dp->index] = 0;
++			clear_bit(dp->index, &priv->vlan_filtering);
++			clear_bit(dp->index, &priv->leave_pending);
++		}
++	}
++	/* CPU-to-port traffic uses flooding, rather than special-tag steering. */
++	for (i = 0; i < ARRAY_SIZE(an8855_8021q_flood_regs); i++) {
++		ret = regmap_update_bits(priv->regmap, an8855_8021q_flood_regs[i],
++					 ports, on ? ports : priv->tag_8021q_flood_state[i]);
++		if (ret && on)
++			return ret;
++		if (ret && !err)
++			err = ret;
++	}
++	return err;
+ }
+ 
+-/* TODO(switch side): install one tag_8021q VID.
+- * A VLAN table entry for @vid with @port a member: untagged on egress if
+- * BRIDGE_VLAN_INFO_UNTAGGED, tagged otherwise (the CPU port always comes
+- * without the flag), IVL, and the port's PVID register set to @vid if
+- * BRIDGE_VLAN_INFO_PVID - unless the port sits in a VLAN-aware bridge,
+- * whose PVID it keeps (remember the tag_8021q one for the way back).
+- * an8855_vlan_add() already does most of this for a bridge VLAN.
+- */
+ static int an8855_tag_8021q_vlan_add(struct dsa_switch *ds, int port,
+ 				     u16 vid, u16 flags)
+ {
+-	return -EOPNOTSUPP;
++	struct an8855_priv *priv = ds->priv;
++	struct an8855_vlan_transaction *state;
++	struct dsa_port *dp = dsa_to_port(ds, port);
++	DECLARE_BITMAP(vids, VLAN_N_VID);
++	u16 old_pvid = priv->tag_8021q_pvid[port];
++	int ret;
++
++	bitmap_zero(vids, VLAN_N_VID);
++	set_bit(vid, vids);
++	mutex_lock(&priv->reg_mutex);
++	ret = an8855_vlan_transaction_begin(priv, port, vids, &state);
++	if (ret)
++		goto out;
++	if (dsa_is_user_port(ds, port) && an8855_8021q_is_filtering(priv, port) &&
++	    vid != dsa_tag_8021q_standalone_vid(dp))
++		ret = an8855_8021q_tag_membership(priv, port, vid, false);
++	else
++		ret = an8855_vlan_add(priv, port, vid, flags & BRIDGE_VLAN_INFO_UNTAGGED);
++	if (ret)
++		goto restore;
++	if (flags & BRIDGE_VLAN_INFO_PVID) {
++		priv->tag_8021q_pvid[port] = vid;
++		ret = an8855_8021q_commit_pvid(priv, port);
++		if (ret)
++			goto restore;
++	}
++	kfree(state);
++	goto out;
++restore:
++	priv->tag_8021q_pvid[port] = old_pvid;
++	an8855_vlan_transaction_restore(priv, port, state);
++	kfree(state);
++out:
++	mutex_unlock(&priv->reg_mutex);
++	return ret;
+ }
+ 
+-/* TODO(switch side): the reverse - @port out of @vid, the entry gone with
+- * its last member.
+- */
+ static int an8855_tag_8021q_vlan_del(struct dsa_switch *ds, int port,
+ 				     u16 vid)
+ {
+-	return -EOPNOTSUPP;
++	struct an8855_priv *priv = ds->priv;
++	struct an8855_vlan_transaction *state;
++	DECLARE_BITMAP(vids, VLAN_N_VID);
++	u16 old_pvid = priv->tag_8021q_pvid[port];
++	int ret;
++
++	bitmap_zero(vids, VLAN_N_VID);
++	set_bit(vid, vids);
++	mutex_lock(&priv->reg_mutex);
++	ret = an8855_vlan_transaction_begin(priv, port, vids, &state);
++	if (ret)
++		goto out;
++	ret = an8855_8021q_tag_membership(priv, port, vid, false);
++	if (ret)
++		goto restore;
++	/* The replacement tagger VID may already have been installed. */
++	if (old_pvid == vid) {
++		priv->tag_8021q_pvid[port] = 0;
++		ret = an8855_8021q_commit_pvid(priv, port);
++		if (ret)
++			goto restore;
++	}
++	kfree(state);
++	goto out;
++restore:
++	priv->tag_8021q_pvid[port] = old_pvid;
++	an8855_vlan_transaction_restore(priv, port, state);
++	kfree(state);
++out:
++	mutex_unlock(&priv->reg_mutex);
++	return ret;
++}
++
++/* Keep a CPU-to-one-port VLAN for frames without offload_fwd_mark. This
++ * is hardware-only membership: tag_8021q owns the normal receive VLAN
++ * references, and bridge_leave reacquires its standalone reference.
++ */
++static int an8855_8021q_port_tx_vlan(struct an8855_priv *priv, int port)
++{
++	struct dsa_switch *ds = priv->ds;
++	u16 vid = dsa_tag_8021q_standalone_vid(dsa_to_port(ds, port));
++	struct dsa_port *dp;
++	int ret;
++
++	ret = an8855_tag_8021q_vlan_add(ds, port, vid, BRIDGE_VLAN_INFO_UNTAGGED);
++	if (ret)
++		return ret;
++	dsa_switch_for_each_cpu_port(dp, ds) {
++		ret = an8855_tag_8021q_vlan_add(ds, dp->index, vid, 0);
++		if (ret)
++			return ret;
++	}
++	return 0;
+ }
+ 
+ /* In 8021q mode the user ports advertise NETIF_F_HW_VLAN_CTAG_FILTER, which
+@@ -1409,7 +2122,18 @@ static int an8855_change_tag_protocol(st
+ 				      enum dsa_tag_protocol proto)
+ {
+ 	struct an8855_priv *priv = ds->priv;
+-	int ret;
++	struct dsa_port *dp;
++	int ret, err, cpu_err;
++
++	if (proto != DSA_TAG_PROTO_MTK && proto != DSA_TAG_PROTO_AN8855_8021Q)
++		return -EPROTONOSUPPORT;
++	if ((proto == DSA_TAG_PROTO_AN8855_8021Q) == an8855_is_8021q(priv))
++		return 0;
++	/* Existing bridges/uppers need VLAN and host FDB replay on a mode change. */
++	dsa_switch_for_each_user_port(dp, ds)
++		if (dsa_port_bridge_dev_get(dp) || dsa_port_is_vlan_filtering(dp) ||
++		    (dp->user && netdev_has_any_upper_dev(dp->user)))
++			return -EBUSY;
+ 
+ 	switch (proto) {
+ 	case DSA_TAG_PROTO_MTK:
+@@ -1418,11 +2142,17 @@ static int an8855_change_tag_protocol(st
+ 
+ 		dsa_tag_8021q_unregister(ds);
+ 		an8855_user_vlan_filter_feature(ds, false);
++		ds->vlan_upper_filtering_always = false;
+ 		priv->tag_8021q = false;
+ 		ret = an8855_8021q_port_mode(priv, false);
+-		if (ret)
++		if (ret) {
++			an8855_8021q_cpu_port_mode(priv, false);
+ 			return ret;
+-		return an8855_8021q_cpu_port_mode(priv, false);
++		}
++		ret = an8855_8021q_cpu_port_mode(priv, false);
++		if (!ret)
++			priv->tag_8021q_saved = false;
++		return ret;
+ 	case DSA_TAG_PROTO_AN8855_8021Q:
+ 		if (an8855_is_8021q(priv))
+ 			return 0;
+@@ -1431,13 +2161,17 @@ static int an8855_change_tag_protocol(st
+ 		 * needs, then the tag_8021q VIDs come in through
+ 		 * an8855_tag_8021q_vlan_add().
+ 		 */
+-		ret = an8855_8021q_cpu_port_mode(priv, true);
++		ret = an8855_8021q_save_state(priv);
+ 		if (ret)
+ 			return ret;
+ 
++		ret = an8855_8021q_cpu_port_mode(priv, true);
++		if (ret)
++			goto restore_ports;
++
+ 		ret = an8855_8021q_port_mode(priv, true);
+ 		if (ret)
+-			goto restore_cpu;
++			goto restore_ports;
+ 
+ 		priv->tag_8021q = true;
+ 		ret = dsa_tag_8021q_register(ds, htons(ETH_P_8021Q));
+@@ -1445,6 +2179,7 @@ static int an8855_change_tag_protocol(st
+ 			goto restore_ports;
+ 
+ 		an8855_user_vlan_filter_feature(ds, true);
++		ds->vlan_upper_filtering_always = true;
+ 		return 0;
+ 	default:
+ 		return -EPROTONOSUPPORT;
+@@ -1452,12 +2187,41 @@ static int an8855_change_tag_protocol(st
+ 
+ restore_ports:
+ 	priv->tag_8021q = false;
+-	an8855_8021q_port_mode(priv, false);
+-restore_cpu:
+-	an8855_8021q_cpu_port_mode(priv, false);
++	err = an8855_8021q_port_mode(priv, false);
++	cpu_err = an8855_8021q_cpu_port_mode(priv, false);
++	if (err || cpu_err)
++		dev_err(priv->dev, "failed to restore tag protocol: %d\n", err ?: cpu_err);
++	else
++		priv->tag_8021q_saved = false;
+ 	return ret;
+ }
+ 
++static int an8855_port_prechangeupper(struct dsa_switch *ds, int port,
++				      struct netdev_notifier_changeupper_info *info)
++{
++	struct netlink_ext_ack *extack = netdev_notifier_info_to_extack(&info->info);
++	struct an8855_priv *priv = ds->priv;
++
++	if (an8855_is_8021q(priv) && info->linking && is_vlan_dev(info->upper_dev)) {
++		if (vlan_dev_vlan_proto(info->upper_dev) != htons(ETH_P_8021Q) ||
++		    !vlan_dev_vlan_id(info->upper_dev)) {
++			NL_SET_ERR_MSG_MOD(extack,
++					   "an8855-8021q supports 802.1Q VLAN uppers with nonzero VID");
++			return -EOPNOTSUPP;
++		}
++	}
++	return 0;
++}
++
++static void an8855_teardown(struct dsa_switch *ds)
++{
++	if (!ds->tag_8021q_ctx)
++		return;
++	rtnl_lock();
++	dsa_tag_8021q_unregister(ds);
++	rtnl_unlock();
++}
++
+ /* Similar to MT7530 also trap link local frame and special frame to CPU */
+ static int an8855_trap_special_frames(struct an8855_priv *priv)
+ {
+@@ -1696,6 +2460,7 @@ static int an8855_setup(struct dsa_switc
+ 		return ret;
+ 
+ 	ds->configure_vlan_while_not_filtering = true;
++	ds->max_num_bridges = DSA_TAG_8021Q_MAX_NUM_BRIDGES;
+ 
+ 	/* Flush the FDB table */
+ 	ret = an8855_fdb_cmd(priv, AN8855_FDB_FLUSH, NULL);
+@@ -2411,6 +3176,8 @@ static const struct phylink_mac_ops an88
+ static const struct dsa_switch_ops an8855_switch_ops = {
+ 	.get_tag_protocol = an8855_get_tag_protocol,
+ 	.change_tag_protocol = an8855_change_tag_protocol,
++	.teardown = an8855_teardown,
++	.port_prechangeupper = an8855_port_prechangeupper,
+ 	.tag_8021q_vlan_add = an8855_tag_8021q_vlan_add,
+ 	.tag_8021q_vlan_del = an8855_tag_8021q_vlan_del,
+ 	.setup = an8855_setup,
+--- a/drivers/net/dsa/an8855.h
++++ b/drivers/net/dsa/an8855.h
+@@ -8,6 +8,8 @@
+ #define __AN8855_H
+ 
+ #include <linux/bitfield.h>
++#include <linux/bitmap.h>
++#include <linux/if_vlan.h>
+ 
+ #define AN8855_NUM_PORTS		6
+ #define AN8855_CPU_PORT			5
+@@ -784,6 +786,27 @@ struct an8855_priv {
+ 
+ 	/* the CPU port speaks plain 802.1Q (tag_an8855_8021q), not tag_mtk */
+ 	bool tag_8021q;
++	u16 tag_8021q_pvid[AN8855_NUM_PORTS];
++	u16 bridge_pvid[AN8855_NUM_PORTS];
++	unsigned long vlan_filtering;
++	unsigned long bridge_vlans[AN8855_NUM_PORTS][BITS_TO_LONGS(VLAN_N_VID)];
++	unsigned long bridge_untagged[AN8855_NUM_PORTS][BITS_TO_LONGS(VLAN_N_VID)];
++	unsigned long upper_vlans[AN8855_NUM_PORTS][BITS_TO_LONGS(VLAN_N_VID)];
++
++	/* Register state to restore when leaving the VLAN tagger or unwinding. */
++	bool tag_8021q_saved;
++	struct {
++		u32 pcr;
++		u32 pvc;
++		u32 ppbv;
++		u32 pvid;
++	} tag_8021q_port_state[AN8855_NUM_PORTS];
++	u32 tag_8021q_flood_state[4];
++	u32 tag_8021q_trap_state[4];
++	/* Ports whose bridge leave failed and still need cleaning up */
++	unsigned long leave_pending;
++	/* Ports whose bridge join is being undone, see an8855_8021q_bridge_dev() */
++	unsigned long bridge_undo;
+ };
+ 
+ #endif /* __AN8855_H */

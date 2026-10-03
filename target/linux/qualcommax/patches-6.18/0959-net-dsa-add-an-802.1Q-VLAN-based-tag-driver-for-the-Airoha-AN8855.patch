@@ -13,14 +13,18 @@ Add the tagger half of the same answer qca8k and rtl8365mb got
 framework. The source port travels in a VLAN tag the switch inserts
 (3072 + port for a standalone port, 3088 + n for bridge n), an 802.1Q
 upper of a port is carried as it is, and a VLAN of a VLAN-aware bridge
-is handed to a port of that bridge. The code is the one the other two
-taggers run; the wire format does not depend on the switch.
+is handed to a port of that bridge. The code follows the other two
+taggers; the wire format does not depend on the switch.
 
 The switch side - what the AN8855 has to do for these frames to look
 that way - is in the driver (an8855_change_tag_protocol and the
 tag_8021q_vlan_add/del hooks).
 
 Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+[adriel: hand a frame in a bridge VLAN only to a port of a VLAN-aware
+ bridge that is learning or forwarding]
+Signed-off-by: Adriel Santos <adriel@adriel.eu>
+Assisted-by: Claude
 --- a/include/net/dsa.h
 +++ b/include/net/dsa.h
 @@ -60,6 +60,7 @@ struct tc_action;
@@ -68,7 +72,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  obj-$(CONFIG_NET_DSA_TAG_DSA_COMMON) += tag_dsa.o
 --- /dev/null
 +++ b/net/dsa/tag_an8855_8021q.c
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,202 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/* Copyright (C) 2026 Stanislaw Pal <kuncy7@gmail.com>
 + *
@@ -77,10 +81,11 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 + * itself inserts, instead of the MediaTek special tag that only the switch
 + * and tag_mtk understand. That keeps the conduit's frames plain 802.1Q,
 + * which any MAC - and any hardware in front of it - parses. Same wire
-+ * format and the same code as tag_qca_8021q and tag_rtl8365mb_8021q; only
-+ * the switch side differs.
++ * format as tag_qca_8021q and tag_rtl8365mb_8021q, and much the same code;
++ * the RX lookup of bridge VLANs and the switch side differ.
 + */
 +#include <linux/dsa/8021q.h>
++#include <linux/if_bridge.h>
 +#include <linux/if_vlan.h>
 +#include <net/dsa.h>
 +
@@ -189,6 +194,27 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	return NULL;
 +}
 +
++/* Inactive VLAN configuration of an unaware bridge must not select RX. */
++static struct net_device *an8855_8021q_find_bridge_vlan(struct net_device *conduit,
++						     u16 vid)
++{
++	struct dsa_port *cpu_dp = conduit->dsa_ptr;
++	struct bridge_vlan_info vinfo;
++	struct dsa_port *dp;
++
++	dsa_tree_for_each_user_port(dp, cpu_dp->dst) {
++		if (dp->cpu_dp != cpu_dp || !dp->user || !dp->bridge ||
++		    !dsa_port_is_vlan_filtering(dp))
++			continue;
++		if (dp->stp_state != BR_STATE_LEARNING &&
++		    dp->stp_state != BR_STATE_FORWARDING)
++			continue;
++		if (!br_vlan_get_info_rcu(dp->user, vid, &vinfo))
++			return dp->user;
++	}
++	return NULL;
++}
++
 +static struct sk_buff *an8855_8021q_rcv(struct sk_buff *skb,
 +				     struct net_device *netdev)
 +{
@@ -218,7 +244,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +		 */
 +		skb->dev = an8855_8021q_find_vlan_upper(netdev, skb->vlan_proto, vid);
 +		if (!skb->dev)
-+			skb->dev = dsa_find_designated_bridge_port_by_vid(netdev, vid);
++			skb->dev = an8855_8021q_find_bridge_vlan(netdev, vid);
 +	} else
 +		skb->dev = dsa_tag_8021q_find_user(netdev, src_port, switch_id,
 +						   vid, vbid);

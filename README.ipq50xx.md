@@ -79,7 +79,7 @@ NSS memory profiles are a build-time choice for the whole image:
 | group | boards | memory profile |
 |---|---|---|
 | `std` | 512 MB and 1 GB boards (the release notes list them) | ath11k 1G, NSS medium |
-| `256m` | Cudy P5, TP-Link EX511 v2 | ath11k 256M, NSS low |
+| `256m` | Cudy P5, TP-Link EX511 v2, Xiaomi AX3000T v2 | ath11k 256M, NSS low |
 
 The exact configuration of each group is in `.github/ci/ipq50xx/` (`common.config`
 + `<group>.config` + `kmods-extra.config`) and, for a given release, in the
@@ -725,8 +725,9 @@ larger (2092 B) than the data frame size the host advertises (2048 B).
 
 ## 256 MB boards
 
-Two IPQ5018 boards on this branch have 256 MB - the TP-Link EX511 v2
-(IPQ5018 + QCN6122) and the Cudy P5 - and the rest 512 MB. The defaults
+Three IPQ5018 boards on this branch have 256 MB - the TP-Link EX511 v2
+(IPQ5018 + QCN6122), the Cudy P5 and the Xiaomi AX3000T v2 - and the rest
+512 MB. The defaults
 tuned for 512 MB do not fit in 256: on the EX511 the first flashed build
 OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the branch and measured on the board
 (2026-09-13) - and what the next 256 MB board will need too:
@@ -782,7 +783,7 @@ OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the bran
     that the cache file is newer than the file you edited.
     `NSS_MEM_PROFILE_LOW` is not in this tree at all - it is a choice in
     the `qca-nss-drv` package of the feed, so a board has to be named in
-    both places - the EX511 v2 and the Cudy P5 are, in both. The firmware
+    both places - the EX511 v2, the Cudy P5 and the AX3000T v2 are, in both. The firmware
     version
   (`NSS_FIRMWARE_VERSION_12_2`) is still chosen by hand, as on every
   ipq50xx board. `qcom,ath11k-fw-memory-mode = <2>` on both radios is in

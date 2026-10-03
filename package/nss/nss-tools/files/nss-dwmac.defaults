@@ -263,19 +263,20 @@ nss_dwmac_board_defaults() {
 
 [ -n "$(uci -q get nss.general.topology)" ] && exit 0
 
-# C-3PO: a board whose switch is driven by qca8k or rtl8365mb gets the dsa
+# C-3PO: a board whose switch is driven by qca8k, rtl8365mb or an8855 gets the dsa
 # topology - the tag_8021q tagger keeps the driver and the ports, and everything the
 # trunk table below carries (VTU, cpu_port, ports, wake_phys, which GMAC
 # is the trunk, fw_mask) is read off the board at every boot instead (see
 # nss_dsa_* in /lib/nss/functions.sh, and nss-dwmac-probe). There is
 # nothing to migrate: the network config stays on the DSA ports exactly
-# as netifd generated it. The switch drivers have probed by now (qca8k is
-# built in, rtl8365mb autoloads at 42), so their device lists are the whole
-# test.
+# as netifd generated it. The switch drivers have probed by now (qca8k and
+# the AN8855 MFD are built in, rtl8365mb autoloads at 42), so their device
+# lists are the whole test.
 c3po_switch_bound() {
 	local d
 	for d in /sys/bus/mdio_bus/drivers/qca8k/*mdio* \
-		 /sys/bus/mdio_bus/drivers/rtl8365mb-mdio/*mdio*; do
+		 /sys/bus/mdio_bus/drivers/rtl8365mb-mdio/*mdio* \
+		 /sys/bus/mdio_bus/drivers/an8855/*mdio*; do
 		[ -e "$d" ] && return 0
 	done
 	return 1
@@ -297,6 +298,14 @@ wifi_fw_memory_mode_2() {
 }
 if c3po_switch_bound; then
 	[ -x /etc/init.d/qca-nss-drv ] && /etc/init.d/qca-nss-drv disable
+	# The AN8855 has no tag_8021q tagger in this tree yet: its traffic stays
+	# in the switch's own tag, which the firmware cannot parse, so a board
+	# with one stays on the host stack until the an8855-8021q tagger exists.
+	case "$(board_name)" in
+	xiaomi,ax3000tv2)
+		[ -n "$(uci -q get nss.general.enabled)" ] || uci set nss.general.enabled='0'
+		;;
+	esac
 	[ -n "$(uci -q get nss.general.enabled)" ] || uci set nss.general.enabled='1'
 	if [ -z "$(uci -q get nss.general.wifi_offload)" ]; then
 		uci set nss.general.wifi_offload='1'

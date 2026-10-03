@@ -142,6 +142,7 @@ nss_dsa_tagger() {
 		case "$drv" in
 		qca8k) echo qca-8021q; return 0 ;;
 		rtl8365mb-mdio|rtl8365mb-smi) echo rtl8365mb-8021q; return 0 ;;
+		an8855-switch) echo an8855-8021q; return 0 ;;
 		esac
 		echo "${drv:-unknown}"
 		return 1

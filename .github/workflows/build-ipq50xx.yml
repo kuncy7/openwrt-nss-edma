@@ -5,7 +5,9 @@ name: Build ipq50xx
 #   draft release -> build std + build 256m -> kmod repositories (gh-pages) -> publish -> prune
 #
 # Images go to a GitHub release tagged ipq50xx-YYYY.MM.DD. Sysupgrade only: a board is
-# expected to run OpenWrt already.
+# expected to run OpenWrt already. The one exception is the 256m group, which also publishes
+# initramfs-factory.ubi: a board whose boot loader only takes a freshly formatted UBI (Xiaomi
+# AX3000T v2) is installed and upgraded from that image.
 #
 # Kernel modules: a kmod depends on kernel=<version>~<vermagic>, so it can only be installed on
 # an image from the same build. Each build's bin/targets/.../packages/ is therefore published on
@@ -76,7 +78,11 @@ jobs:
             echo "over a running OpenWrt; there is no factory image. A board that is not in official"
             echo "OpenWrt needs a plain OpenWrt image built from this tree first."
             echo
-            echo "**Extra kernel modules** (wireguard, tun, SQM/cake, USB storage and USB network,"
+            echo "**SQM in the NSS firmware** (\`sqm-scripts-nss\`, script \`nss-edma.qos\`) is in the image and"
+            echo "switched off: set the queue in \`/etc/config/sqm\` to your WAN port and \`enabled '1'\`"
+            echo "(README, section SQM)."
+            echo
+            echo "**Extra kernel modules** (wireguard, tun, USB storage and USB network,"
             echo "filesystems, GRE/VXLAN/L2TP, bonding, nft extras) are not in the image."
             echo "\`apk update && apk add kmod-<name>\` fetches them from this build's own repository,"
             echo "which the image already lists: \`${PAGES_BASE}/${tag}/<group>/packages.adb\`."
@@ -234,8 +240,13 @@ jobs:
         run: |
           set -euo pipefail
           out="bin/targets/${TARGET}"
-          mapfile -t assets < <(find "$out" -maxdepth 1 -type f -name 'openwrt-*-squashfs-sysupgrade.bin')
-          grep 'sysupgrade.bin' "$out/sha256sums" >"sha256sums-${GROUP}.txt"
+          # initramfs-factory.ubi only where a board needs it to be upgraded at all (256m: Xiaomi)
+          names=(-name 'openwrt-*-squashfs-sysupgrade.bin'); sums='sysupgrade\.bin'
+          if [[ "$GROUP" == 256m ]]; then
+            names+=(-o -name 'openwrt-*-initramfs-factory.ubi'); sums+='|initramfs-factory\.ubi'
+          fi
+          mapfile -t assets < <(find "$out" -maxdepth 1 -type f \( "${names[@]}" \))
+          grep -E "$sums" "$out/sha256sums" >"sha256sums-${GROUP}.txt"
           cp "$out/config.buildinfo" "config-${GROUP}.buildinfo"
           for attempt in 1 2 3; do
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \

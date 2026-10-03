@@ -87,7 +87,7 @@ attached `config-<group>.buildinfo`.
 
 ### Kernel modules that are not in the image
 
-Wireguard, tun, SQM/cake, USB storage and USB network adapters, extra
+Wireguard, tun, USB storage and USB network adapters, extra
 filesystems, GRE/VXLAN/L2TP, bonding, nft extras and the like are built as
 packages, not into the image. The image already lists the repository they
 live in, so on the router it is just:
@@ -673,6 +673,9 @@ forward hook into the ingress rule, so one mark serves both directions). Ingress
 off `eth0`. The qdisc and IGS modules are loaded by `nss-dwmac-up` once the driver is up, and `qca-nss-drv` on
 ipq50xx hands the firmware a 1 MB QoS pool by default (`qos_mem_size`), without which the MP firmware refuses
 `nssfq_codel`.
+
+The release images carry all of it and leave it off: the stock `/etc/config/sqm` has one disabled queue on `eth1`.
+Point it at the WAN port and enable it:
 
 ```
 config queue 'wan'

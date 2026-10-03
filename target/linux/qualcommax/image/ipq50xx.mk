@@ -245,6 +245,7 @@ define Device/linksys_mr5500
 		kmod-usb-ledtrig-usbport \
 		kmod-usb-storage \
 		kmod-usb-storage-uas \
+		input-support \
 		usbutils
 endef
 TARGET_DEVICES += linksys_mr5500
@@ -348,6 +349,7 @@ define Device/tplink_archer-ax55-v1
 		kmod-usb-ledtrig-usbport \
 		kmod-usb-storage \
 		kmod-usb-storage-uas \
+		input-support \
 		usbutils
 ifneq ($(CONFIG_TARGET_ROOTFS_INITRAMFS),)
 ifeq ($(IB),)

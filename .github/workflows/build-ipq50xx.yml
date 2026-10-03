@@ -170,6 +170,28 @@ jobs:
             printf '::error::defconfig dropped %s\n' "${dropped[@]}"
             exit 1
           fi
+          # A board's own packages (DEVICE_PACKAGES) are only built if defconfig could select
+          # them; one that depends on a package nobody enabled stays off without a word and the
+          # build then fails at the very end, when that board's rootfs is assembled.
+          python3 - <<'PY'
+          import os, re, sys
+          cfg = open('.config').read()
+          boards = set(re.findall(r'^CONFIG_TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_([^=]+)=y', cfg, re.M))
+          built = set(re.findall(r'^CONFIG_PACKAGE_([^=]+)=[ym]', cfg, re.M))
+          path = 'tmp/info/.targetinfo-qualcommax'
+          info = open(path if os.path.exists(path) else 'tmp/.targetinfo').read()
+          bad = 0
+          for blk in info.split('Target-Profile: DEVICE_')[1:]:
+              name = blk.split('\n', 1)[0].strip()
+              if name not in boards:
+                  continue
+              m = re.search(r'^Target-Profile-Packages:(.*)$', blk, re.M)
+              for pkg in (m.group(1).split() if m else []):
+                  if not pkg.startswith('-') and pkg not in built:
+                      print(f'::error::{name}: device package {pkg} is not selected')
+                      bad = 1
+          sys.exit(bad)
+          PY
           ./scripts/diffconfig.sh >"diffconfig-${GROUP}.txt"
 
       - name: Download sources

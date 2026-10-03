@@ -778,6 +778,9 @@ struct an8855_priv {
 	u8 port_isolated_map;
 
 	bool phy_require_calib;
+
+	/* the CPU port speaks plain 802.1Q (tag_an8855_8021q), not tag_mtk */
+	bool tag_8021q;
 };
 
 #endif /* __AN8855_H */

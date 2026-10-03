@@ -1,0 +1,31 @@
+From: Adriel Santos <adriel@adriel.eu>
+Subject: [PATCH] linux: capture the tag_8021q DSA taggers as standard Ethernet
+
+libpcap gives a DSA conduit with a tagger it does not know a debug-only
+link type, as such a tagger usually inserts its own header. The
+qca-8021q, rtl8365mb-8021q and an8855-8021q taggers do not: they put
+only a standard 802.1Q header on the conduit and identify the port by
+its VID. Treat them like a conduit without a tagger, so Ethernet
+decoding and VLAN filtering keep working.
+
+Signed-off-by: Adriel Santos <adriel@adriel.eu>
+Assisted-by: Claude
+---
+--- a/pcap-linux.c
++++ b/pcap-linux.c
+@@ -5776,7 +5776,14 @@ iface_dsa_get_proto_info(const char *dev
+ 	 * any tagging protocol configured, and is therefore a standard
+ 	 * Ethernet interface.
+ 	 */
+-	if (strcmp(buf, "none") == 0)
++	/*
++	 * The tag_8021q taggers below put only a standard 802.1Q header on
++	 * the conduit, so it is a standard Ethernet interface as well.
++	 */
++	if (strcmp(buf, "none") == 0 ||
++	    strcmp(buf, "qca-8021q") == 0 ||
++	    strcmp(buf, "rtl8365mb-8021q") == 0 ||
++	    strcmp(buf, "an8855-8021q") == 0)
+ 		return 0;
+ 
+ 	/*

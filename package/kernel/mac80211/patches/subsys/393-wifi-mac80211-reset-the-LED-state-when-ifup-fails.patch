@@ -29,7 +29,7 @@ Signed-off-by: Johannes Berg <johannes.berg@intel.com>
 
 --- a/net/mac80211/iface.c
 +++ b/net/mac80211/iface.c
-@@ -1603,8 +1603,12 @@ int ieee80211_do_open(struct wireless_de
+@@ -1510,8 +1510,12 @@ int ieee80211_do_open(struct wireless_de
   err_del_interface:
  	drv_remove_interface(local, sdata);
   err_stop:
@@ -40,6 +40,6 @@ Signed-off-by: Johannes Berg <johannes.berg@intel.com>
 +					   IEEE80211_TPT_LEDTRIG_FL_RADIO);
  		drv_stop(local, false);
 +	}
- 	if (sdata->vif.type == NL80211_IFTYPE_NAN_DATA)
- 		RCU_INIT_POINTER(sdata->u.nan_data.nmi, NULL);
+  err_del_bss:
+ 	sdata->bss = NULL;
  	if (sdata->vif.type == NL80211_IFTYPE_AP_VLAN)

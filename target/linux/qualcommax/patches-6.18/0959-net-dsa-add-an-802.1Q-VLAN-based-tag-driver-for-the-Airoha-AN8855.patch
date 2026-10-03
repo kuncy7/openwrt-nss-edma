@@ -1,0 +1,251 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Date: Sat, 3 Oct 2026 14:00:00 +0200
+Subject: [PATCH] net: dsa: add an 802.1Q VLAN-based tag driver for the Airoha AN8855
+
+The MediaTek special tag the AN8855 puts on its CPU port is understood
+by the switch and by tag_mtk alone, so a hardware accelerator on the
+conduit's MAC that only parses 802.1Q cannot follow the frame. On the
+IPQ5018 that means the DSA ports of an AN8855 and the NSS firmware
+exclude each other.
+
+Add the tagger half of the same answer qca8k and rtl8365mb got
+(tag_qca_8021q, tag_rtl8365mb_8021q): a tag driver on the tag_8021q
+framework. The source port travels in a VLAN tag the switch inserts
+(3072 + port for a standalone port, 3088 + n for bridge n), an 802.1Q
+upper of a port is carried as it is, and a VLAN of a VLAN-aware bridge
+is handed to a port of that bridge. The code is the one the other two
+taggers run; the wire format does not depend on the switch.
+
+The switch side - what the AN8855 has to do for these frames to look
+that way - is in the driver (an8855_change_tag_protocol and the
+tag_8021q_vlan_add/del hooks).
+
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+--- a/include/net/dsa.h
++++ b/include/net/dsa.h
+@@ -60,6 +60,7 @@ struct tc_action;
+ #define DSA_TAG_PROTO_QCA_8021Q_VALUE		32
+ #define DSA_TAG_PROTO_RTL8365MB_8021Q_VALUE	34
+ #define DSA_TAG_PROTO_OOB_VALUE			33
++#define DSA_TAG_PROTO_AN8855_8021Q_VALUE	35
+ 
+ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_NONE		= DSA_TAG_PROTO_NONE_VALUE,
+@@ -97,6 +98,7 @@ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_QCA_8021Q		= DSA_TAG_PROTO_QCA_8021Q_VALUE,
+ 	DSA_TAG_PROTO_RTL8365MB_8021Q	= DSA_TAG_PROTO_RTL8365MB_8021Q_VALUE,
+ 	DSA_TAG_PROTO_OOB		= DSA_TAG_PROTO_OOB_VALUE,
++	DSA_TAG_PROTO_AN8855_8021Q	= DSA_TAG_PROTO_AN8855_8021Q_VALUE,
+ };
+ 
+ struct dsa_switch;
+--- a/net/dsa/Kconfig
++++ b/net/dsa/Kconfig
+@@ -24,6 +24,14 @@ config NET_DSA_TAG_NONE
+ 	  Say Y or M if you want to enable support for switches which don't tag
+ 	  frames over the CPU port.
+ 
++config NET_DSA_TAG_AN8855_8021Q
++	tristate "Tag driver for the Airoha AN8855 switch, using VLAN"
++	help
++	  Say Y or M if you want to enable support for tagging frames for
++	  the Airoha AN8855 switch using 802.1Q VLAN tags instead of the
++	  MediaTek special tag. The conduit then sees plain VLAN frames,
++	  which anything in front of the CPU can parse.
++
+ config NET_DSA_TAG_AR9331
+ 	tristate "Tag driver for Atheros AR9331 SoC with built-in switch"
+ 	help
+--- a/net/dsa/Makefile
++++ b/net/dsa/Makefile
+@@ -20,6 +20,7 @@ dsa_core-y += \
+ 	user.o
+ 
+ # tagging formats
++obj-$(CONFIG_NET_DSA_TAG_AN8855_8021Q) += tag_an8855_8021q.o
+ obj-$(CONFIG_NET_DSA_TAG_AR9331) += tag_ar9331.o
+ obj-$(CONFIG_NET_DSA_TAG_BRCM_COMMON) += tag_brcm.o
+ obj-$(CONFIG_NET_DSA_TAG_DSA_COMMON) += tag_dsa.o
+--- /dev/null
++++ b/net/dsa/tag_an8855_8021q.c
+@@ -0,0 +1,180 @@
++// SPDX-License-Identifier: GPL-2.0
++/* Copyright (C) 2026 Stanislaw Pal <kuncy7@gmail.com>
++ *
++ * 802.1Q VLAN-based tag driver for the Airoha AN8855 switch, built on the
++ * tag_8021q framework: the source port travels in a VLAN tag the switch
++ * itself inserts, instead of the MediaTek special tag that only the switch
++ * and tag_mtk understand. That keeps the conduit's frames plain 802.1Q,
++ * which any MAC - and any hardware in front of it - parses. Same wire
++ * format and the same code as tag_qca_8021q and tag_rtl8365mb_8021q; only
++ * the switch side differs.
++ */
++#include <linux/dsa/8021q.h>
++#include <linux/if_vlan.h>
++#include <net/dsa.h>
++
++#include "tag.h"
++#include "tag_8021q.h"
++
++#define AN8855_8021Q_NAME "an8855-8021q"
++
++/* @dev's own 802.1Q upper with this VID, if any. Not the deep lookup:
++ * from a port without VLAN state of its own that climbs to the bridge
++ * and answers with the bridge's L3 VLAN interface.
++ */
++static struct net_device *an8855_8021q_vlan_upper_of(struct net_device *dev,
++						 __be16 proto, u16 vid)
++{
++	struct net_device *upper;
++	struct list_head *iter;
++
++	netdev_for_each_upper_dev_rcu(dev, upper, iter) {
++		if (is_vlan_dev(upper) && vlan_dev_vlan_proto(upper) == proto &&
++		    vlan_dev_vlan_id(upper) == vid)
++			return upper;
++	}
++
++	return NULL;
++}
++
++/* Did an 802.1Q upper of this port tag the frame? The tag is hwaccel
++ * metadata, or - a user port offers no VLAN TX offload, so
++ * validate_xmit_vlan() pushes it in - already in the frame. A frame the
++ * bridge forwards (offload_fwd_mark) stays in the bridge's VLAN whatever
++ * it carries inside.
++ */
++static bool an8855_8021q_upper_tagged(struct sk_buff *skb, struct net_device *netdev)
++{
++	u16 tci;
++
++	if (skb_vlan_tag_present(skb))
++		return !vid_is_dsa_8021q(skb_vlan_tag_get_id(skb));
++
++	if (skb->offload_fwd_mark || skb->protocol != htons(ETH_P_8021Q) ||
++	    __vlan_get_tag(skb, &tci))
++		return false;
++
++	tci &= VLAN_VID_MASK;
++	return !vid_is_dsa_8021q(tci) &&
++	       an8855_8021q_vlan_upper_of(netdev, htons(ETH_P_8021Q), tci);
++}
++
++static struct sk_buff *an8855_8021q_xmit(struct sk_buff *skb,
++				      struct net_device *netdev)
++{
++	struct dsa_port *dp = dsa_user_to_port(netdev);
++	u16 queue_mapping = skb_get_queue_mapping(skb);
++	u16 tx_vid = dsa_tag_8021q_standalone_vid(dp);
++	u8 pcp;
++
++	if (skb->offload_fwd_mark) {
++		unsigned int bridge_num = dsa_port_bridge_num_get(dp);
++		struct net_device *br = dsa_port_bridge_dev_get(dp);
++
++		/* A VLAN-aware bridge carries its own VID; the switch
++		 * forwards on that one.
++		 */
++		if (br_vlan_enabled(br))
++			return skb;
++
++		tx_vid = dsa_tag_8021q_bridge_vid(bridge_num);
++	}
++
++	/* An 802.1Q upper of the port (wan.35 for a PPPoE ISP, wan.99 next
++	 * to the port's place in a VLAN-unaware bridge) already tagged the
++	 * frame. The switch carries that VLAN as it is - the port and the
++	 * CPU port are tagged members of it (see an8855_port_vlan_add) -
++	 * so send the frame with that tag alone instead of stacking the
++	 * port's standalone tag_8021q VID in front of it: a bridged port is
++	 * no longer a member of that VID and the switch would drop it.
++	 */
++	if (an8855_8021q_upper_tagged(skb, netdev))
++		return skb;
++
++	pcp = netdev_txq_to_tc(netdev, queue_mapping);
++
++	return dsa_8021q_xmit(skb, netdev, ETH_P_8021Q,
++			      ((pcp << VLAN_PRIO_SHIFT) | tx_vid));
++}
++
++/* The user port that owns an 802.1Q upper with this VID, for a frame the
++ * switch delivered in a VLAN that is not a tag_8021q one. Such a VLAN is
++ * only ever installed for one port (an8855_port_vlan_add refuses a second),
++ * so the first match is the only match.
++ */
++static struct net_device *an8855_8021q_find_vlan_upper(struct net_device *conduit,
++						    __be16 proto, u16 vid)
++{
++	struct dsa_port *cpu_dp = conduit->dsa_ptr;
++	struct dsa_port *dp;
++
++	dsa_tree_for_each_user_port(dp, cpu_dp->dst) {
++		if (dp->cpu_dp != cpu_dp)
++			continue;
++		if (an8855_8021q_vlan_upper_of(dp->user, proto, vid))
++			return dp->user;
++	}
++
++	return NULL;
++}
++
++static struct sk_buff *an8855_8021q_rcv(struct sk_buff *skb,
++				     struct net_device *netdev)
++{
++	int src_port = -1, switch_id = -1, vbid = -1, vid = -1;
++
++	/* The conduit is promiscuous for the sake of the tag_8021q VIDs,
++	 * and a promiscuous MAC passes MAC control frames up as well. The
++	 * switch sends PAUSE at the CPU port whenever a slow user port
++	 * cannot drain what the CPU pushes; they carry no VLAN tag and
++	 * nothing above wants them.
++	 */
++	if (unlikely(eth_hdr(skb)->h_proto == htons(ETH_P_PAUSE)))
++		return NULL;
++
++	dsa_8021q_rcv(skb, &src_port, &switch_id, &vbid, &vid);
++
++	/* A VLAN of an 802.1Q upper: dsa_8021q_rcv left its tag on the skb
++	 * as hwaccel metadata, so once the frame reaches the user port the
++	 * kernel's VLAN demux hands it to the upper; we only pick the port.
++	 */
++	if (vid >= 0 && !vid_is_dsa_8021q(vid) && skb_vlan_tag_present(skb)) {
++		/* An 802.1Q upper of a port, or a VLAN of a VLAN-aware
++		 * bridge: handed to a port of that bridge which is in the
++		 * VLAN, which of them the frame came from is not known
++		 * (imprecise RX, as for a VLAN-unaware bridge), and the
++		 * bridge does its own VLAN handling on the tag.
++		 */
++		skb->dev = an8855_8021q_find_vlan_upper(netdev, skb->vlan_proto, vid);
++		if (!skb->dev)
++			skb->dev = dsa_find_designated_bridge_port_by_vid(netdev, vid);
++	} else
++		skb->dev = dsa_tag_8021q_find_user(netdev, src_port, switch_id,
++						   vid, vbid);
++	if (!skb->dev) {
++		net_warn_ratelimited("%s: dropped frame from %pM proto 0x%04x: src_port=%d switch_id=%d vid=%d vbid=%d\n",
++				     netdev->name, eth_hdr(skb)->h_source,
++				     ntohs(eth_hdr(skb)->h_proto), src_port,
++				     switch_id, vid, vbid);
++		return NULL;
++	}
++
++	dsa_default_offload_fwd_mark(skb);
++
++	return skb;
++}
++
++static const struct dsa_device_ops an8855_8021q_netdev_ops = {
++	.name			= AN8855_8021Q_NAME,
++	.proto			= DSA_TAG_PROTO_AN8855_8021Q,
++	.xmit			= an8855_8021q_xmit,
++	.rcv			= an8855_8021q_rcv,
++	.needed_headroom	= VLAN_HLEN,
++	.promisc_on_conduit	= true,
++};
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("DSA tag driver for the Airoha AN8855 switch, using VLAN");
++MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_AN8855_8021Q, AN8855_8021Q_NAME);
++
++module_dsa_tag_driver(an8855_8021q_netdev_ops);

@@ -1,0 +1,353 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Subject: [PATCH] net: dsa: an8855: add tag_8021q plumbing for an8855-8021q
+
+Wire the AN8855 switch driver up to the an8855-8021q tagger: switch the
+CPU port's protocol in change_tag_protocol with its unwind, register and
+unregister tag_8021q, hand bridge join and leave to it, advertise
+NETIF_F_HW_VLAN_CTAG_FILTER on the user ports, and translate a VID 0 host
+FDB/MDB entry into the tag_8021q VID, with the bridge number taken from a
+port that is in the bridge, since the core zeroes db.bridge.num for a
+switch without FDB isolation.
+
+The switch side is left as four functions marked TODO(switch side) that
+return -EOPNOTSUPP, so the switch refuses the protocol and stays on the
+MediaTek tag until they are filled in.
+
+---
+--- a/drivers/net/dsa/an8855.c
++++ b/drivers/net/dsa/an8855.c
+@@ -5,6 +5,7 @@
+  * Copyright (C) 2024 Christian Marangi <ansuelsmth@gmail.com>
+  */
+ #include <linux/bitfield.h>
++#include <linux/dsa/8021q.h>
+ #include <linux/ethtool.h>
+ #include <linux/etherdevice.h>
+ #include <linux/gpio/consumer.h>
+@@ -319,6 +320,43 @@ static int an8855_set_ageing_time(struct
+ 				  FIELD_PREP(AN8855_AGE_UNIT, age_unit));
+ }
+ 
++/* True once the switch talks to its CPU port in plain 802.1Q
++ * (dsa-tag-protocol "an8855-8021q"), see an8855_change_tag_protocol().
++ */
++static bool an8855_is_8021q(const struct an8855_priv *priv)
++{
++	return priv->tag_8021q;
++}
++
++/* A bridge that is not VLAN-aware hands its FDB and MDB entries over with
++ * VID 0; in 8021q mode the switch learns (IVL) in the tag_8021q VID the
++ * frames are classified into, and that is where the static entries have
++ * to go for the lookups to meet them. The DSA core zeroes db.bridge.num
++ * for a switch without FDB isolation, so the number of the bridge is taken
++ * from a port that is in it - with db.bridge.num every entry of bridge n
++ * lands in the VID of bridge 0 and a station that moved between a port and
++ * the CPU keeps a stale entry (found the hard way on qca8k).
++ */
++static u16 an8855_db_vid(struct an8855_priv *priv, struct dsa_db db, u16 vid)
++{
++	struct dsa_port *dp;
++
++	if (vid || !an8855_is_8021q(priv))
++		return vid;
++
++	switch (db.type) {
++	case DSA_DB_BRIDGE:
++		dsa_switch_for_each_user_port(dp, priv->ds)
++			if (dsa_port_offloads_bridge_dev(dp, db.bridge.dev))
++				return dsa_tag_8021q_bridge_vid(dp->bridge->num);
++		return vid;
++	case DSA_DB_PORT:
++		return dsa_tag_8021q_standalone_vid(db.dp);
++	default:
++		return vid;
++	}
++}
++
+ static int an8855_port_bridge_join(struct dsa_switch *ds, int port,
+ 				   struct dsa_bridge bridge,
+ 				   bool *tx_fwd_offload,
+@@ -331,6 +369,15 @@ static int an8855_port_bridge_join(struc
+ 	if (ret)
+ 		return ret;
+ 
++	/* 8021q mode: the port trades its standalone VID for the bridge's;
++	 * tag_8021q calls an8855_tag_8021q_vlan_del/_add for the swap.
++	 * TODO(switch side): the port must not drop into fallback mode
++	 * below - it stays in the mode an8855_8021q_port_mode() set.
++	 */
++	if (an8855_is_8021q(priv))
++		return dsa_tag_8021q_bridge_join(ds, port, bridge,
++						 tx_fwd_offload, extack);
++
+ 	/* Set to fallback mode for independent VLAN learning if in a bridge */
+ 	return regmap_update_bits(priv->regmap, AN8855_PCR_P(port),
+ 				  AN8855_PORT_VLAN,
+@@ -347,6 +394,17 @@ static void an8855_port_bridge_leave(str
+ 	priv->port_isolated_map &= ~BIT(port);
+ 	an8855_update_port_member(ds, port, bridge.dev, false);
+ 
++	/* 8021q mode: back to the standalone VID.
++	 * TODO(switch side): a VLAN-aware bridge's PVID leaves with the
++	 * bridge and the tag_8021q PVID has to be the one in the register
++	 * again (shadow PVIDs); the port keeps its 8021q port mode instead
++	 * of the matrix mode below.
++	 */
++	if (an8855_is_8021q(priv)) {
++		dsa_tag_8021q_bridge_leave(ds, port, bridge);
++		return;
++	}
++
+ 	/* When a port is removed from the bridge, the port would be set up
+ 	 * back to the default as is at initial boot which is a VLAN-unaware
+ 	 * port.
+@@ -365,6 +423,8 @@ static int an8855_port_fdb_add(struct ds
+ 	u8 port_mask = BIT(port);
+ 	int ret;
+ 
++	vid = an8855_db_vid(priv, db, vid);
++
+ 	/* Set the vid to the port vlan id if no vid is set */
+ 	if (!vid)
+ 		vid = AN8855_PORT_VID_DEFAULT;
+@@ -385,6 +445,8 @@ static int an8855_port_fdb_del(struct ds
+ 	u8 port_mask = BIT(port);
+ 	int ret;
+ 
++	vid = an8855_db_vid(priv, db, vid);
++
+ 	/* Set the vid to the port vlan id if no vid is set */
+ 	if (!vid)
+ 		vid = AN8855_PORT_VID_DEFAULT;
+@@ -806,6 +868,8 @@ an8855_port_mdb_add(struct dsa_switch *d
+ 	u32 val;
+ 	int ret;
+ 
++	vid = an8855_db_vid(priv, db, vid);
++
+ 	/* Set the vid to the port vlan id if no vid is set */
+ 	if (!vid)
+ 		vid = AN8855_PORT_VID_DEFAULT;
+@@ -843,6 +907,8 @@ an8855_port_mdb_del(struct dsa_switch *d
+ 	u32 val;
+ 	int ret;
+ 
++	vid = an8855_db_vid(priv, db, vid);
++
+ 	/* Set the vid to the port vlan id if no vid is set */
+ 	if (!vid)
+ 		vid = AN8855_PORT_VID_DEFAULT;
+@@ -1207,7 +1273,189 @@ static enum dsa_tag_protocol
+ an8855_get_tag_protocol(struct dsa_switch *ds, int port,
+ 			enum dsa_tag_protocol mp)
+ {
+-	return DSA_TAG_PROTO_MTK;
++	struct an8855_priv *priv = ds->priv;
++
++	return an8855_is_8021q(priv) ? DSA_TAG_PROTO_AN8855_8021Q :
++				       DSA_TAG_PROTO_MTK;
++}
++
++/* ---- tag_8021q mode: the switch side ------------------------------------
++ *
++ * SKELETON. The tagger (net/dsa/tag_an8855_8021q.c) and the plumbing in
++ * this file are complete; the three functions marked TODO are where the
++ * AN8855 registers go, and until they are filled in the switch refuses
++ * the protocol (-EOPNOTSUPP) and stays on the MediaTek tag.
++ *
++ * What the tagger expects to see on the conduit, i.e. what the switch has
++ * to be made to do:
++ *
++ *  1. No special tag on the CPU port, in either direction.
++ *  2. Every frame the switch hands the CPU carries exactly one 802.1Q tag:
++ *     the VID of the VLAN it was classified into. The CPU port is a TAGGED
++ *     member of every VLAN in use; a user port is an untagged member of
++ *     its tag_8021q VID.
++ *  3. A frame from the CPU carries the VID to forward in; the switch
++ *     strips it on the way out of a user port (untagged member) and keeps
++ *     it for an 802.1Q upper's VLAN (tagged member).
++ *  4. tag_8021q VIDs: 3072 + port for a standalone port, 3088 + n for the
++ *     VLAN-unaware bridge n. They come in through an8855_tag_8021q_vlan_add
++ *     with BRIDGE_VLAN_INFO_PVID | BRIDGE_VLAN_INFO_UNTAGGED on the user
++ *     port and with neither on the CPU port.
++ *  5. An untagged frame on a user port takes the port's PVID. A tagged one
++ *     is only accepted in a VLAN the port is a member of (ingress
++ *     filtering), otherwise any port could inject into another port's VID.
++ *  6. Flooding (broadcast, unknown unicast, unknown multicast) has to
++ *     reach the CPU port and, from the CPU, the user ports of the VLAN -
++ *     or the first ARP reply never leaves the box.
++ *  7. Trapped frames (BPDU, PAE, LLDP - an8855_trap_special_frames) have
++ *     to arrive with that same single tag. A trap rule that forces its own
++ *     egress tagging delivers them untagged or with the special tag, and
++ *     the tagger then drops them with "dropped frame from ..." in the log.
++ *  8. The switch learns per VLAN (IVL); host FDB/MDB entries go into the
++ *     tag_8021q VID (an8855_db_vid, already wired into fdb/mdb add/del).
++ *
++ * Beyond the first ping (each is a separate, later step):
++ *  - an 802.1Q upper of a port (wan.35 for a PPPoE ISP): the user ports
++ *    advertise NETIF_F_HW_VLAN_CTAG_FILTER in this mode, so the core asks
++ *    for the VLAN through port_vlan_add; port and CPU port both tagged
++ *    members, one port per such VID, and a VID in the tag_8021q range is
++ *    refused. See rtl8365mb_port_vlan_add in generic pending 762.
++ *  - a VLAN-aware bridge: its VLANs go into the table as they are, the CPU
++ *    port a tagged member of each; the port has two PVIDs, the tag_8021q
++ *    one and the bridge's, and vlan_filtering picks which the register
++ *    holds (shadow PVIDs). See 761/762 and README.ipq50xx.md.
++ *  - a station that moves from a wired port to Wi-Fi leaves a dynamic
++ *    entry behind on the old port; the host entry DSA installs has to
++ *    replace it (qca8k needed an explicit purge of the dynamic entry).
++ *
++ * How to check, before the NSS plane is involved at all:
++ *    ip link set eth1 down
++ *    echo an8855-8021q > /sys/class/net/eth1/dsa/tagging
++ *    ip link set eth1 up
++ *    tcpdump -e -i eth1      # every frame: 802.1Q, vlan 3072+port or 3088+n
++ * then ping through a standalone port (wan), through the bridge (lanN),
++ * between two bridge ports (must stay in the switch), and DHCP both ways.
++ */
++
++/* TODO(switch side): CPU port tagging for the 8021q mode.
++ * on: special tag off on the CPU port, egress tagging of the CPU port left
++ *     to the VLAN table (EG_CON/consistent rather than a forced tag
++ *     attribute), CPU port in every VLAN as a tagged member.
++ * off: back to what an8855_setup() programmed for tag_mtk.
++ */
++static int an8855_8021q_cpu_port_mode(struct an8855_priv *priv, bool on)
++{
++	return on ? -EOPNOTSUPP : 0;
++}
++
++/* TODO(switch side): user ports for the 8021q mode.
++ * on: every user port in security mode with ingress filtering, its PVID
++ *     the tag_8021q one, and in the broadcast / unknown-unicast /
++ *     unknown-multicast flood masks from the start.
++ * off: back to the port mode a VLAN-unaware port normally has
++ *      (an8855_port_vlan_filtering with the port's current state).
++ */
++static int an8855_8021q_port_mode(struct an8855_priv *priv, bool on)
++{
++	return on ? -EOPNOTSUPP : 0;
++}
++
++/* TODO(switch side): install one tag_8021q VID.
++ * A VLAN table entry for @vid with @port a member: untagged on egress if
++ * BRIDGE_VLAN_INFO_UNTAGGED, tagged otherwise (the CPU port always comes
++ * without the flag), IVL, and the port's PVID register set to @vid if
++ * BRIDGE_VLAN_INFO_PVID - unless the port sits in a VLAN-aware bridge,
++ * whose PVID it keeps (remember the tag_8021q one for the way back).
++ * an8855_vlan_add() already does most of this for a bridge VLAN.
++ */
++static int an8855_tag_8021q_vlan_add(struct dsa_switch *ds, int port,
++				     u16 vid, u16 flags)
++{
++	return -EOPNOTSUPP;
++}
++
++/* TODO(switch side): the reverse - @port out of @vid, the entry gone with
++ * its last member.
++ */
++static int an8855_tag_8021q_vlan_del(struct dsa_switch *ds, int port,
++				     u16 vid)
++{
++	return -EOPNOTSUPP;
++}
++
++/* In 8021q mode the user ports advertise NETIF_F_HW_VLAN_CTAG_FILTER, which
++ * is what makes the core ask for the VLAN of an 802.1Q upper (wan.35)
++ * through port_vlan_add.
++ */
++static void an8855_user_vlan_filter_feature(struct dsa_switch *ds, bool on)
++{
++	struct dsa_port *dp;
++
++	dsa_switch_for_each_user_port(dp, ds) {
++		if (!dp->user)
++			continue;
++		if (on)
++			dp->user->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
++		else
++			dp->user->features &= ~NETIF_F_HW_VLAN_CTAG_FILTER;
++	}
++}
++
++/* Called by the DSA core with the conduit down, from the device tree
++ * (dsa-tag-protocol = "an8855-8021q" on the CPU port) or through
++ * /sys/class/net/<conduit>/dsa/tagging.
++ */
++static int an8855_change_tag_protocol(struct dsa_switch *ds,
++				      enum dsa_tag_protocol proto)
++{
++	struct an8855_priv *priv = ds->priv;
++	int ret;
++
++	switch (proto) {
++	case DSA_TAG_PROTO_MTK:
++		if (!an8855_is_8021q(priv))
++			return 0;
++
++		dsa_tag_8021q_unregister(ds);
++		an8855_user_vlan_filter_feature(ds, false);
++		priv->tag_8021q = false;
++		ret = an8855_8021q_port_mode(priv, false);
++		if (ret)
++			return ret;
++		return an8855_8021q_cpu_port_mode(priv, false);
++	case DSA_TAG_PROTO_AN8855_8021Q:
++		if (an8855_is_8021q(priv))
++			return 0;
++
++		/* CPU tag off, the VLAN engine in the mode the tagger
++		 * needs, then the tag_8021q VIDs come in through
++		 * an8855_tag_8021q_vlan_add().
++		 */
++		ret = an8855_8021q_cpu_port_mode(priv, true);
++		if (ret)
++			return ret;
++
++		ret = an8855_8021q_port_mode(priv, true);
++		if (ret)
++			goto restore_cpu;
++
++		priv->tag_8021q = true;
++		ret = dsa_tag_8021q_register(ds, htons(ETH_P_8021Q));
++		if (ret)
++			goto restore_ports;
++
++		an8855_user_vlan_filter_feature(ds, true);
++		return 0;
++	default:
++		return -EPROTONOSUPPORT;
++	}
++
++restore_ports:
++	priv->tag_8021q = false;
++	an8855_8021q_port_mode(priv, false);
++restore_cpu:
++	an8855_8021q_cpu_port_mode(priv, false);
++	return ret;
+ }
+ 
+ /* Similar to MT7530 also trap link local frame and special frame to CPU */
+@@ -2162,6 +2410,9 @@ static const struct phylink_mac_ops an88
+ 
+ static const struct dsa_switch_ops an8855_switch_ops = {
+ 	.get_tag_protocol = an8855_get_tag_protocol,
++	.change_tag_protocol = an8855_change_tag_protocol,
++	.tag_8021q_vlan_add = an8855_tag_8021q_vlan_add,
++	.tag_8021q_vlan_del = an8855_tag_8021q_vlan_del,
+ 	.setup = an8855_setup,
+ 	.get_phy_flags = en8855_get_phy_flags,
+ 	.phylink_get_caps = an8855_phylink_get_caps,
+--- a/drivers/net/dsa/an8855.h
++++ b/drivers/net/dsa/an8855.h
+@@ -781,6 +781,9 @@ struct an8855_priv {
+ 	u16 pvid_bridge[AN8855_NUM_PORTS];
+ 
+ 	bool phy_require_calib;
++
++	/* the CPU port speaks plain 802.1Q (tag_an8855_8021q), not tag_mtk */
++	bool tag_8021q;
+ };
+ 
+ #endif /* __AN8855_H */

@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/*
+ * Memory the IPQ5018 Q6 firmware uses at fixed addresses behind its own
+ * region when it runs alone (no QCN6122 on the same Q6). The layout is the
+ * one QSDK ships for the IPQ5018 reference boards with a PCIe radio
+ * (ipq5018-mp03.1) and is the same in its 256M, 512M and 1G profiles.
+ * Without these nodes the range is ordinary RAM and the firmware writes
+ * over whatever Linux keeps there.
+ *
+ * Boards with a QCN6122 use ipq5018-qcn6122.dtsi instead, which carries the
+ * layout of that firmware.
+ */
+
+/ {
+	reserved-memory {
+		m3-dump@4c700000 {
+			reg = <0x0 0x4c700000 0x0 0x100000>;
+			no-map;
+		};
+
+		q6-etr-dump@4c800000 {
+			reg = <0x0 0x4c800000 0x0 0x100000>;
+			no-map;
+		};
+
+		q6-caldb@4c900000 {
+			reg = <0x0 0x4c900000 0x0 0x200000>;
+			no-map;
+		};
+	};
+};

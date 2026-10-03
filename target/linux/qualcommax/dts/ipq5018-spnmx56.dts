@@ -4,6 +4,7 @@
 #include "ipq5018-ess.dtsi"
 #include "ipq5018-nss.dtsi"
 #include "ipq5018-mx-base.dtsi"
+#include "ipq5018-q6-fixed-mem.dtsi"
 
 / {
 	model = "Linksys SPNMX56";

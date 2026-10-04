@@ -1,5 +1,5 @@
-From 184dc09e941ca3c83c9799b0dc9290c9bf6fb72d Mon Sep 17 00:00:00 2001
-From: Mieczyslaw Nalewaj <namiltd@yahoo.com>
+From 7d9e46657e7994eaff1ee0c0066705afa278eb24 Mon Sep 17 00:00:00 2001
+From: Stanislaw Pal <kuncy7@gmail.com>
 Date: Sat, 20 Sep 2026 12:00:00 +0200
 Subject: [PATCH] net: dsa: realtek: rtl8365mb: bring the SerDes up once the
  conduit is up
@@ -46,8 +46,9 @@ revisions, one stacked on another pending rtl8365mb series and one on
 its own, gave 16 of 16 and 17 of 17.
 
 Tested-by: Johan Alvarado <contact@c127.dev>
-Co-developed-by: Stanislaw Pal <kuncy7@gmail.com>
 Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+[namiltd: rebase onto the family D series; family D keeps its own
+ bring-up order and does not defer]
 Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 ---
  drivers/net/dsa/realtek/rtl8365mb_main.c | 225 ++++++++++++++++++++++-

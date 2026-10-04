@@ -1,0 +1,94 @@
+From: Georg Seema <georgseema@gmail.com>
+Subject: [PATCH] PCI: pwrctrl: power off the Cudy P5 modem on shutdown
+
+Stock firmware holds the modem supply off for one second before reboot.
+Apply this board-specific policy through the existing regulator consumer,
+without removing the PCI root port or taking ownership of its GPIO.
+Other slots retain their existing shutdown behavior. This local experiment
+does not implement the vendor panic notifier, which cannot use sleeping
+regulator operations.
+
+Signed-off-by: Georg Seema <georgseema@gmail.com>
+---
+
+--- a/drivers/pci/pwrctrl/slot.c
++++ b/drivers/pci/pwrctrl/slot.c
+@@ -5,9 +5,11 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/device.h>
+ #include <linux/mod_devicetable.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/pci-pwrctrl.h>
+ #include <linux/platform_device.h>
+ #include <linux/regulator/consumer.h>
+@@ -17,13 +19,15 @@
+ 	struct pci_pwrctrl ctx;
+ 	struct regulator_bulk_data *supplies;
+ 	int num_supplies;
++	bool powered;
+ };
+ 
+ static void devm_pci_pwrctrl_slot_power_off(void *data)
+ {
+ 	struct pci_pwrctrl_slot_data *slot = data;
+ 
+-	regulator_bulk_disable(slot->num_supplies, slot->supplies);
++	if (slot->powered)
++		regulator_bulk_disable(slot->num_supplies, slot->supplies);
+ 	regulator_bulk_free(slot->num_supplies, slot->supplies);
+ }
+ 
+@@ -53,6 +57,9 @@
+ 		return ret;
+ 	}
+ 
++	slot->powered = true;
++	platform_set_drvdata(pdev, slot);
++
+ 	ret = devm_add_action_or_reset(dev, devm_pci_pwrctrl_slot_power_off,
+ 				       slot);
+ 	if (ret)
+@@ -73,7 +80,31 @@
+ 	return 0;
+ }
+ 
++/* The P5 modem must lose power before the bootloader resets it again. */
++static void pci_pwrctrl_slot_shutdown(struct platform_device *pdev)
++{
++	struct pci_pwrctrl_slot_data *slot = platform_get_drvdata(pdev);
++	int ret;
++
++	if (!of_device_is_compatible(dev_of_node(&pdev->dev),
++				     "cudy,p5-modem-slot") || !slot->powered)
++		return;
++
++	ret = regulator_bulk_disable(slot->num_supplies, slot->supplies);
++	if (ret) {
++		dev_err(&pdev->dev, "Failed to power off modem: %d\n", ret);
++		return;
++	}
++
++	slot->powered = false;
++	dev_info(&pdev->dev, "Modem power off; waiting 1000 ms before reboot\n");
++	msleep(1000);
++}
++
+ static const struct of_device_id pci_pwrctrl_slot_of_match[] = {
++	{
++		.compatible = "cudy,p5-modem-slot",
++	},
+ 	{
+ 		.compatible = "pciclass,0604",
+ 	},
+@@ -87,6 +118,7 @@
+ 		.of_match_table = pci_pwrctrl_slot_of_match,
+ 	},
+ 	.probe = pci_pwrctrl_slot_probe,
++	.shutdown = pci_pwrctrl_slot_shutdown,
+ };
+ module_platform_driver(pci_pwrctrl_slot_driver);
+ 

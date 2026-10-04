@@ -385,7 +385,11 @@ ports it came from is not known - the same imprecise receive as for a
 VLAN-unaware bridge, and the switch forwards between its own ports by
 itself). The one rule that stays: a VID names one thing on the whole switch
 - the VLAN of one VLAN-aware bridge, or an 802.1Q upper of one port -
-because the VID is all the tagger has.
+because the VID is all the tagger has. The VLANs of a VLAN-unaware bridge
+are not in the switch and do not count: an ordinary `br-lan` with its
+default PVID 1 can sit next to a VLAN-aware bridge that uses VID 1. They
+go into the switch when the bridge has `vlan_filtering` turned on, which is
+refused if one of them is taken by then, and leave it when it is turned off.
 
 Flows through such a bridge are accelerated like the rest. `qca-dsa-nss`
 gives each VLAN of the bridge a firmware VLAN interface on the conduit (the

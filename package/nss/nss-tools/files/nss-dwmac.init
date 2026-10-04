@@ -276,6 +276,29 @@ start_service() {
 		modprobe qca-dwmac-nss 2>/dev/null
 	[ -w /sys/kernel/debug/qca-dwmac-nss/ifmap ] &&
 		echo "$ifmap" > /sys/kernel/debug/qca-dwmac-nss/ifmap
+	# nss.general.fw_csum: let the firmware checksum and segment what the
+	# router itself sends (the glue's fw_csum parameter, off by default).
+	# The glue reads it when it starts a port, and no port starts before
+	# nss-dwmac-up arms the firmware, so it is in time here; set by hand
+	# later it needs the port taken down and up, which closes every DSA
+	# port on it. Through sysfs, for the same reason as the map above.
+	# Unset leaves the parameter alone.
+	local fw_csum
+	fw_csum="$(uci -q get nss.general.fw_csum)"
+	case "$fw_csum" in
+	0|1)
+		if [ -w /sys/module/qca_dwmac_nss/parameters/fw_csum ]; then
+			echo "$fw_csum" > /sys/module/qca_dwmac_nss/parameters/fw_csum
+			[ "$fw_csum" = 0 ] ||
+				logger -t nss "fw_csum=1: the firmware checksums and segments the router's own TX"
+		fi
+		;;
+	'')
+		;;
+	*)
+		logger -p user.warn -t nss "nss.general.fw_csum is '$fw_csum', expected 0 or 1 - left alone"
+		;;
+	esac
 	modprobe qca-nss-drv 2>/dev/null
 	# The NSS qdiscs and the IGS action depend on qca-nss-drv, so they must
 	# not sit in /etc/modules.d: kmodloader would pull the driver in at

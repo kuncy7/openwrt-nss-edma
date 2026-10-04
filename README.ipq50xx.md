@@ -251,8 +251,10 @@ was taken on. The feed defaults to 12.5 on every target, so pick 12.2 by hand.
   notes here did not hold up when they were repeated: that 12.5 refuses VAP
   allocation, and that it ignores the host's TX checksum-generation flags -
   with the glue advertising the firmware's features, TCP from the router
-  itself works with `fw_csum` on, on 12.2 and on 12.5 alike. `fw_csum` still
-  defaults to off: IPv6 and a VLAN on top of a port have not been tried.
+  itself works with `fw_csum` on, on 12.2 and on 12.5 alike, over IPv4 and
+  IPv6 and with a VLAN on top of a port. `fw_csum` still defaults to off: it
+  only helps traffic the router itself sends (`nss.general.fw_csum`, see the
+  `uci` knobs).
 - **11.4-6** refuses VAP allocation.
 
 ## How the plane comes up
@@ -437,6 +439,7 @@ topology alone.
 | `switch_dev` | `90000.mdio-1:11` | the switch's MDIO device, unbound from its DSA driver before the re-arm. `90000.mdio-1:18` on the I-O DATA WN-DAX3000GR and the Elecom WRC-X3000GS2 / GST2; `90000.mdio-1:1d` (address 29) for the RTL8367S on the Archer AX55 v1. |
 | `switch_args` | *(empty)* | further fabric module parameters, passed verbatim. `qca8337-nss`: `cpu_port=`, `ports=`, `wake_phys=`, `bus_via=`; `rtl8367s-nss`: `trunk_port=`, `ports=`, `phys=`, `force_val=`, `pvids=` (its defaults are the AX55 wiring). |
 | `meminfo` | *(empty; GMAC1's rings in SDRAM on the Redmi AX5400, MR5500 and AX6000)* | where the firmware keeps the GMAC descriptor rings, written to `qca-nss-drv`'s `meminfo_user_config` before the core boots, e.g. `<0, gmac_tx_desc_1, SDRAM>, <0, gmac_rx_desc_1, SDRAM>`. With GMAC1's rings in the default `UTCM_SHARED` the port never starts on those three boards (`rs=0 ts=0`, `rx_fw=0`) - worth trying on any other board with that symptom. `default` keeps the firmware's placement on them. `grep gmac /sys/kernel/debug/qca-nss-drv/meminfo/core0` shows where they ended up. |
+| `fw_csum` | *(unset = off)* | `1` lets the firmware compute TX checksums and segment TSO frames for traffic the router itself sends (the glue's `fw_csum` parameter); forwarded traffic never uses either. The service writes it before any port starts, so it applies from boot. Set by hand afterwards (`/sys/module/qca_dwmac_nss/parameters/fw_csum`) it needs the GMAC's netdev taken down and up, and that closes every DSA port on it until each is brought up again. DSA ports keep the offload features they copied from the conduit when they were created, so through a switch port only the checksum is offloaded (seen on an Archer AX55: the conduit shows TSO, its ports do not); TSO needs a GMAC that is a netdev of its own. |
 | `fw_logbuf` | `256` | firmware log ring size, read at `/sys/kernel/debug/qca-nss-drv/logs` |
 
 There is no runtime detach. `/etc/init.d/nss stop` prints how to disable the

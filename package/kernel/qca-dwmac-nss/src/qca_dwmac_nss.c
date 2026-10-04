@@ -495,6 +495,12 @@ static int dwmac_nss_port_start(struct dwmac_nss_port *port)
 		 * advertise its data plane's features (TSO among them, which the
 		 * DWMAC1000 itself lacks), as nss-dp did on takeover. Its generic
 		 * HW_CSUM replaces the GMAC's IP/IPv6 checksum bits.
+		 *
+		 * DSA user ports don't follow: they copied the conduit's
+		 * vlan_features when they were created and DSA ignores
+		 * NETDEV_FEAT_CHANGE, so they keep IP/IPv6 checksum offload and
+		 * no TSO. Through a switch port the firmware therefore only
+		 * fills in checksums; TSO needs a GMAC that is its own netdev.
 		 */
 		port->saved_features = netdev->features;
 		port->saved_hw_features = netdev->hw_features;

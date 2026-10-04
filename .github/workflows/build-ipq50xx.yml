@@ -35,7 +35,7 @@ permissions:
 env:
   TARGET: qualcommax/ipq50xx
   RELEASE_PREFIX: ipq50xx
-  KEEP: "2"                      # releases and kmod directories to keep: current and previous
+  KEEP: "3"                      # releases and kmod directories to keep: current and the two before it
   # What counts as one of these builds when pruning. Anchored, so older releases whose tag also
   # starts with "ipq50xx-" (ipq50xx-b3000-2026.09.07) are never touched.
   TAG_RE: '^ipq50xx-[0-9]{4}\.[0-9]{2}\.[0-9]{2}(-[0-9]+)?$'

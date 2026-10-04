@@ -62,7 +62,7 @@ README).
 
 Ready images are on the [Releases page](https://github.com/kuncy7/openwrt-nss-edma/releases),
 one release per build, tagged `ipq50xx-YYYY.MM.DD` (a second build on the same day
-gets `-2`). The newest two are kept; older ones go away together with their
+gets `-2`). The newest three are kept; older ones go away together with their
 kernel module repository, see below.
 
 **Sysupgrade images only.** Flash `openwrt-qualcommax-ipq50xx-<device>-squashfs-sysupgrade.bin`

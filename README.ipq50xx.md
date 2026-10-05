@@ -272,7 +272,7 @@ A plain reboot is stock OpenWrt on the host stack. The `nss` service
 1. **Makes the CPU port speak plain 802.1Q.** On the `dsa` topology (the
    default, see *Topology*) the switch keeps its DSA driver and the service
    switches the conduit's tag protocol to the switch's tag_8021q tagger
-   (`qca-8021q`, `rtl8365mb-8021q`). On the trunk topology `qca8k` has done
+   (`qca-8021q`, `rtl8365mb-8021q`, `an8855-8021q`). On the trunk topology `qca8k` has done
    the hard bring-up (SerDes, clocks, uniphy) at boot; the service unbinds it
    and loads `qca8337-nss` with the VTU map from `nss.general.vtu`.
 2. Loads `qca-dwmac-nss` and `qca-nss-drv`. Both are inert at this point:
@@ -323,13 +323,36 @@ the switch driver bound and the ports as they are on a stock image -
 PPPoE ISP) as the WAN device. The service
 switches the conduit's tag protocol to the switch's tag_8021q tagger before
 netifd runs - `qca-8021q` for `qca8k` (QCA8337), `rtl8365mb-8021q` for
-`rtl8365mb` (RTL8367S) - so the switch talks to the CPU in plain 802.1Q,
-which the firmware parses, and after the arm `qca-dsa-nss` gives every port,
-bridge, VLAN of a VLAN-aware bridge and 802.1Q upper of a port a firmware
-VLAN interface so ECM can write rules for them.
+`rtl8365mb` (RTL8367S), `an8855-8021q` for the Airoha AN8855 - so the switch
+talks to the CPU in plain 802.1Q, which the firmware parses, and after the
+arm `qca-dsa-nss` gives every port, bridge, VLAN of a VLAN-aware bridge and
+802.1Q upper of a port a firmware VLAN interface so ECM can write rules for
+them.
 
-A board whose switch is driven by `qca8k` or `rtl8365mb` gets the `dsa`
-topology on first boot, and **nothing about the wiring is configured**: the
+What the VID cannot carry on the AN8855: a frame that a port of a bridge
+sends to the CPU, trapped link-local frames included (STP BPDUs, 802.1X,
+LLDP), arrives in the bridge's VLAN, so the host knows the bridge it came
+from but not the port. Per-port STP state, wired 802.1X and LLDP
+neighbours are therefore not reliable on bridged ports of this switch; a
+standalone port keeps its own VID and is not affected. Avoid loops through
+bridged AN8855 ports: STP still runs, but it cannot tell which port a BPDU
+came in on.
+
+Also on the AN8855 in this mode:
+
+- A bridge-wide `vlan_filtering` change is one switch transaction, undone as
+  a whole if a register write fails. Other changes are not transactional
+  across callbacks. If a port fails to leave VLAN filtering when it leaves a
+  bridge, the driver logs it and shuts the port until the filtering reset
+  that follows the leave finishes the job.
+- VID 0, which the 8021q layer adds to every port that comes up, is accepted
+  without touching the switch. Priority-tagged frames (VID 0 on the wire)
+  are untested.
+- Unknown unicast, multicast and broadcast floods include the CPU port, so the
+  host sees flooded traffic of every port.
+
+A board whose switch is driven by `qca8k`, `rtl8365mb` or `an8855` gets the
+`dsa` topology on first boot, and **nothing about the wiring is configured**: the
 switch stays with its driver, so ports, CPU port and VLANs are the kernel's,
 and the rest is read off the board at every boot - the GMACs from the nodes
 their netdevs sit on (`ethernet@39c00000` = GMAC0 = `phys_if 0`,
@@ -382,10 +405,10 @@ TP-Link Archer AX55 v1 (RTL8367S), with nothing in uci but the defaults and
 asks for `qcom,ath11k-fw-memory-mode = <1>` (the AX55, the Xiaomi AX6000 and
 others): wifili runs in that mode - measured on the AX55 and on two AX6000s -
 and the service only logs a warning; `nss.general.wifi_offload=0` keeps the
-radios on the host. Not yet: switches other than these two.
+radios on the host. Not yet: switches other than these three.
 
 **VLAN-aware bridges** (`bridge-vlan` sections, `vlan_filtering`) work on
-both taggers: the bridge's VLANs go into the switch as they are, PVID and
+all three taggers: the bridge's VLANs go into the switch as they are, PVID and
 untagged included, the CPU port is a tagged member of each, and the tagger
 hands a frame in one of them to the bridge by its VID (which of the bridge's
 ports it came from is not known - the same imprecise receive as for a
@@ -397,6 +420,8 @@ are not in the switch and do not count: an ordinary `br-lan` with its
 default PVID 1 can sit next to a VLAN-aware bridge that uses VID 1. They
 go into the switch when the bridge has `vlan_filtering` turned on, which is
 refused if one of them is taken by then, and leave it when it is turned off.
+On the AN8855, a port of a VLAN-unaware bridge forwards tagged frames
+between the bridge's ports as they are, as `mt7530` does.
 
 Flows through such a bridge are accelerated like the rest. `qca-dsa-nss`
 gives each VLAN of the bridge a firmware VLAN interface on the conduit (the

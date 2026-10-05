@@ -397,8 +397,8 @@ json_cleanup() { :; }
 
     # An Airoha AN8855 (Xiaomi AX3000T v2): the switch MFD binds on the MDIO
     # bus as 'an8855', and that alone picks the dsa topology. All four ports
-    # sit on one CPU link, so nothing is consolidated. Until the AN8855 has
-    # a tag_8021q tagger the board stays on the host stack.
+    # sit on one CPU link, so nothing is consolidated, and the plane is on
+    # as on the other dsa boards: the an8855-8021q tagger carries its traffic.
     (tmp / 'mdio' / 'qca8k').rename(tmp / 'mdio' / 'qca8k.off')
     an8855 = tmp / 'mdio' / 'an8855'
     an8855.mkdir()
@@ -406,7 +406,7 @@ json_cleanup() { :; }
     ax3000t_v2 = dict(b3000, **{'network.@device[0].ports': 'lan2 lan3 lan4'})
     r = run_dsa('xiaomi,mi-router-ax3000t-v2', ax3000t_v2)
     check(r, {'nss.general.topology': 'dsa', 'network.@device[0].ports': 'lan2 lan3 lan4',
-              'network.wan.device': 'wan', 'nss.general.enabled': '0'}, 'ax3000t-v2 an8855 dsa')
+              'network.wan.device': 'wan', 'nss.general.enabled': '1'}, 'ax3000t-v2 an8855 dsa')
     assert not [k for k in r if k.endswith('.conduit')], ('ax3000t-v2 an8855 dsa', 'a conduit appeared')
     (an8855 / '90000.mdio-1:01').unlink()
     an8855.rmdir()

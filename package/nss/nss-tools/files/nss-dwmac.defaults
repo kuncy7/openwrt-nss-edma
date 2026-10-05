@@ -1,5 +1,5 @@
 # Pick the topology for the ipq50xx NSS plane. A DSA switch with a tag_8021q
-# tagger (qca8k, rtl8365mb) means C-3PO
+# tagger (qca8k, rtl8365mb, an8855) means C-3PO
 # (topology 'dsa': the driver and the ports stay, nothing below applies).
 # Otherwise migrate the network config from the DSA ports to the VLAN-trunk
 # topology: the switch fabric splits the front ports into VLANs (VTU
@@ -298,14 +298,6 @@ wifi_fw_memory_mode_2() {
 }
 if c3po_switch_bound; then
 	[ -x /etc/init.d/qca-nss-drv ] && /etc/init.d/qca-nss-drv disable
-	# The AN8855 has no tag_8021q tagger in this tree yet: its traffic stays
-	# in the switch's own tag, which the firmware cannot parse, so a board
-	# with one stays on the host stack until the an8855-8021q tagger exists.
-	case "$(board_name)" in
-	xiaomi,mi-router-ax3000t-v2)
-		[ -n "$(uci -q get nss.general.enabled)" ] || uci set nss.general.enabled='0'
-		;;
-	esac
 	[ -n "$(uci -q get nss.general.enabled)" ] || uci set nss.general.enabled='1'
 	if [ -z "$(uci -q get nss.general.wifi_offload)" ]; then
 		uci set nss.general.wifi_offload='1'

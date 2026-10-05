@@ -20,6 +20,7 @@ PKG_CONFIG_DEPENDS += \
 	CONFIG_ATH11K_MEM_PROFILE_1G \
 	CONFIG_ATH11K_MEM_PROFILE_512M \
 	CONFIG_ATH11K_MEM_PROFILE_256M \
+	CONFIG_ATH11K_NSS_MEM_PROFILE_256M \
 	CONFIG_ATH11K_NSS_SUPPORT \
 	CONFIG_ATH11K_NSS_MESH_SUPPORT \
 	CONFIG_PACKAGE_nss-tools-dwmac \
@@ -75,6 +76,7 @@ config-$(CONFIG_ATH11K_MEM_PROFILE_512M) += ATH11K_MEM_PROFILE_512M
 # 256M is the 512M profile plus smaller RXDMA rings: define both symbols.
 config-$(CONFIG_ATH11K_MEM_PROFILE_256M) += ATH11K_MEM_PROFILE_512M ATH11K_MEM_PROFILE_256M
 config-$(CONFIG_ATH11K_NSS_SUPPORT) += ATH11K_NSS_SUPPORT
+config-$(CONFIG_ATH11K_NSS_MEM_PROFILE_256M) += ATH11K_NSS_MEM_PROFILE_256M
 config-$(CONFIG_ATH11K_NSS_MESH_SUPPORT) += ATH11K_NSS_MESH_SUPPORT
 config-$(CONFIG_ATH11K_DEBUGFS_STA) += ATH11K_DEBUGFS_STA
 config-$(CONFIG_ATH11K_DEBUGFS_HTT_STATS) += ATH11K_DEBUGFS_HTT_STATS
@@ -412,6 +414,17 @@ define KernelPackage/ath11k/config
                help
                   Say Y to enable NSS WiFi offload support. Ensure you enable feeds for NSS drivers.
                   https://github.com/qosmio/nss-packages
+
+       config ATH11K_NSS_MEM_PROFILE_256M
+               bool "Smaller NSS allocations for 256 MiB IPQ5018/QCN6122 devices"
+               depends on ATH11K_NSS_SUPPORT && ATH11K_MEM_PROFILE_256M
+               default n
+               help
+                  Skip unused host TX arrays, reduce TX pools and completion
+                  rings, use private RX fragment caches, and reduce CE5 buffers.
+                  Only IPQ5018 and QCN6122 with active NSS use this profile.
+                  TX and CE5 queue capacity is lower. Other hardware and the
+                  host-only data path retain their existing allocations.
 
        config ATH11K_NSS_MESH_SUPPORT
                bool "Enable NSS WiFi Mesh offload"

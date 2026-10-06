@@ -23,6 +23,7 @@ cases = [('xiaomi,redmi-ax5400', None, '', sdram, 0),
          ('linksys,mr5500', custom, '', custom + '\n', 0),
          ('xiaomi,redmi-ax5400', 'default', '', '', 0),
          ('linksys,mr5500', None, '', sdram, 0),
+	 ('linksys,mx5500', None, '', sdram, 0),
          ('xiaomi,ax6000', None, '', sdram, 0)]
 with tempfile.TemporaryDirectory(prefix='ra74-dma-check-') as directory:
     path = Path(directory) / 'parameter'

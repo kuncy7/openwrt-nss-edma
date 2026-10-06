@@ -327,7 +327,10 @@ start_service() {
 		;;
 	'')
 		case "$(board_name)" in
-		linksys,mr5500|xiaomi,ax6000|xiaomi,redmi-ax5400)
+		linksys,mr5500|\
+		linksys,mx5500|\
+		xiaomi,ax6000|\
+		xiaomi,redmi-ax5400)
 			want='<0, gmac_tx_desc_1, SDRAM>, <0, gmac_rx_desc_1, SDRAM>'
 			;;
 		esac

@@ -36,7 +36,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	struct plat_stmmacenet_data *plat;
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
-@@ -43,6 +43,7 @@
+@@ -44,6 +44,7 @@
  #include <net/page_pool/helpers.h>
  #include <net/pkt_cls.h>
  #include <net/xdp_sock_drv.h>
@@ -44,7 +44,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  #include "stmmac_ptp.h"
  #include "stmmac_fpe.h"
  #include "stmmac.h"
-@@ -866,6 +867,9 @@ static void stmmac_mac_link_down(struct
+@@ -867,6 +868,9 @@ static void stmmac_mac_link_down(struct
  {
  	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
  
@@ -54,7 +54,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	stmmac_mac_set(priv, priv->ioaddr, false);
  	if (priv->dma_cap.eee)
  		stmmac_set_eee_pls(priv, priv->hw, false);
-@@ -975,6 +979,9 @@ static void stmmac_mac_link_up(struct ph
+@@ -976,6 +980,9 @@ static void stmmac_mac_link_up(struct ph
  
  	if (priv->plat->flags & STMMAC_FLAG_HWTSTAMP_CORRECT_LATENCY)
  		stmmac_hwtstamp_correct_latency(priv, priv);
@@ -64,7 +64,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  }
  
  static void stmmac_mac_disable_tx_lpi(struct phylink_config *config)
-@@ -2363,6 +2370,103 @@ static void stmmac_stop_all_dma(struct s
+@@ -2368,6 +2375,103 @@ static void stmmac_stop_all_dma(struct s
  }
  
  /**
@@ -168,7 +168,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
   *  stmmac_dma_operation_mode - HW DMA operation mode
   *  @priv: driver private structure
   *  Description: it is used for configuring the DMA operation mode register in
-@@ -4457,6 +4561,9 @@ static netdev_tx_t stmmac_xmit(struct sk
+@@ -4531,6 +4635,9 @@ static netdev_tx_t stmmac_xmit(struct sk
  	dma_addr_t des;
  	u32 sdu_len;
  

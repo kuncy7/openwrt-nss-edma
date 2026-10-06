@@ -778,7 +778,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +++ b/net/dsa/tag_rtl8365mb_8021q.c
 @@ -0,0 +1,179 @@
 +// SPDX-License-Identifier: GPL-2.0
-+/* Copyright (C) 2026 Stanislaw Pal <stefdo61@gmail.com>
++/* Copyright (C) 2026 Stanislaw Pal <kuncy7@gmail.com>
 + *
 + * 802.1Q VLAN-based tag driver for the Realtek RTL8365MB switch family,
 + * built on the tag_8021q framework: the source port travels in a VLAN tag

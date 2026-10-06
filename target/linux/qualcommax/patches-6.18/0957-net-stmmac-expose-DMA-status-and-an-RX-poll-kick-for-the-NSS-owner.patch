@@ -1,4 +1,4 @@
-From: kuncy7 <stefdo61@gmail.com>
+From: kuncy7 <kuncy7@gmail.com>
 Subject: [PATCH] net: stmmac: expose DMA status and an RX poll kick for the NSS data-plane owner
 
 E181 (2026-08-30): with the NSS firmware owning the GMAC ring, a burst of
@@ -8,7 +8,7 @@ never issues the poll demand that would resume it. Give the owner two
 helpers: read the DMA status, and clear RU/TU then write the receive
 poll demand.
 
-Signed-off-by: kuncy7 <stefdo61@gmail.com>
+Signed-off-by: kuncy7 <kuncy7@gmail.com>
 ---
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c

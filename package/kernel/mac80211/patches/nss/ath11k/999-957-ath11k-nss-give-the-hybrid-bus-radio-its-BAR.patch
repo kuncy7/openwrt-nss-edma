@@ -1,4 +1,4 @@
-From: Stefan <kuncy7@gmail.com>
+From: Stanislaw Pal <kuncy7@gmail.com>
 Subject: [PATCH] ath11k_nss: give the hybrid-bus radio its BAR and window offsets
 
 The wifili init message hands the NSS firmware physical register
@@ -21,7 +21,7 @@ no client is needed). Measured on a GL-B3000: without this the core dies
 0.8 s after the VAP is up; with it the radio survives bring-up and the
 firmware reports "hybrid bus BAR 0xa1e00000 size 0x200000".
 
-Signed-off-by: Stefan <kuncy7@gmail.com>
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/net/wireless/ath/ath11k/ahb.c
 +++ b/drivers/net/wireless/ath/ath11k/ahb.c

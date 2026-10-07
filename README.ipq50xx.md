@@ -474,7 +474,7 @@ topology alone.
 | `fabric` | `qca8337` | which switch the trunk goes through: `qca8337` (unbind `qca8k`, re-arm with `qca8337-nss`), `rtl8367s` (an RTL8367S-VB: unbind `rtl8365mb`, re-arm with `rtl8367s-nss` - the Archer AX55 v1), or `none` on a board with no switch, or one whose DSA driver stays bound (EX511 v2): skips the unbind and the fabric module. |
 | `switch_dev` | `90000.mdio-1:11` | the switch's MDIO device, unbound from its DSA driver before the re-arm. `90000.mdio-1:18` on the I-O DATA WN-DAX3000GR and the Elecom WRC-X3000GS2 / GST2; `90000.mdio-1:1d` (address 29) for the RTL8367S on the Archer AX55 v1. |
 | `switch_args` | *(empty)* | further fabric module parameters, passed verbatim. `qca8337-nss`: `cpu_port=`, `ports=`, `wake_phys=`, `bus_via=`; `rtl8367s-nss`: `trunk_port=`, `ports=`, `phys=`, `force_val=`, `pvids=` (its defaults are the AX55 wiring). |
-| `meminfo` | *(empty; GMAC1's rings in SDRAM on the Redmi AX5400, MR5500, MX5500, and AX6000)* | where the firmware keeps the GMAC descriptor rings, written to `qca-nss-drv`'s `meminfo_user_config` before the core boots, e.g. `<0, gmac_tx_desc_1, SDRAM>, <0, gmac_rx_desc_1, SDRAM>`. With GMAC1's rings in the default `UTCM_SHARED` the port never starts on those three boards (`rs=0 ts=0`, `rx_fw=0`) - worth trying on any other board with that symptom. `default` keeps the firmware's placement on them. `grep gmac /sys/kernel/debug/qca-nss-drv/meminfo/core0` shows where they ended up. |
+| `meminfo` | *(empty; GMAC1's rings in SDRAM on the Redmi AX5400, MR5500, MX5500, and AX6000)* | where the firmware keeps the GMAC descriptor rings, written to `qca-nss-drv`'s `meminfo_user_config` before the core boots, e.g. `<0, gmac_tx_desc_1, SDRAM>, <0, gmac_rx_desc_1, SDRAM>`. With GMAC1's rings in the default `UTCM_SHARED` the port never starts on those four boards (`rs=0 ts=0`, `rx_fw=0`) - worth trying on any other board with that symptom. `default` keeps the firmware's placement on them. `grep gmac /sys/kernel/debug/qca-nss-drv/meminfo/core0` shows where they ended up. |
 | `fw_csum` | *(unset = off)* | `1` lets the firmware compute TX checksums and segment TSO frames for traffic the router itself sends (the glue's `fw_csum` parameter); forwarded traffic never uses either. The service writes it before any port starts, so it applies from boot. Set by hand afterwards (`/sys/module/qca_dwmac_nss/parameters/fw_csum`) it needs the GMAC's netdev taken down and up, and that closes every DSA port on it until each is brought up again. DSA ports keep the offload features they copied from the conduit when they were created, so through a switch port only the checksum is offloaded (seen on an Archer AX55: the conduit shows TSO, its ports do not); TSO needs a GMAC that is a netdev of its own. |
 | `fw_logbuf` | `256` | firmware log ring size, read at `/sys/kernel/debug/qca-nss-drv/logs` |
 
@@ -707,9 +707,13 @@ alone: a port like `wan` is a firmware VLAN node and the accelerated flows go pa
 accepted and never sees a packet. `sqm-scripts-nss` (`nss-edma.qos`) handles this itself: with `option interface 'wan'`
 it builds the tree on `eth0` as the first band of an `nssprio` root, leaves the second band unshaped as the default,
 and steers the flows that enter or leave through the WAN port (and the VLAN or PPPoE devices stacked on it) into the
-first band with an nftables chain of its own (`meta priority set 10:0`; ECM carries the value into the rule, the IGS
-forward hook into the ingress rule, so one mark serves both directions). Ingress is an IFB fed by `act_nssmirred`
-off `eth0`. The qdisc and IGS modules are loaded by `nss-dwmac-up` once the driver is up, and `qca-nss-drv` on
+first band with an nftables chain of its own: `meta priority set 10:0` for what leaves through the port and `11:0`
+for what comes in. ECM carries the first into the rule, the IGS forward hook the second into the ingress rule, and
+each tree has a leaf of that number. They have to differ: the conduit also carries the LAN ports, so with one mark
+for both a wired client's download would be shaped by the upload tree and the other way round. Ingress is an IFB
+fed by `act_nssmirred` off `eth0`. The shared queue of each tree is sized for 100 ms of the configured rate, at
+least 200 and at most 2048 packets, so that several connections over an internet path fill the rate before the
+tail is cut; `ilimit` and `elimit` in the queue section override it. The qdisc and IGS modules are loaded by `nss-dwmac-up` once the driver is up, and `qca-nss-drv` on
 ipq50xx hands the firmware a 1 MB QoS pool by default (`qos_mem_size`), without which the MP firmware refuses
 `nssfq_codel`.
 

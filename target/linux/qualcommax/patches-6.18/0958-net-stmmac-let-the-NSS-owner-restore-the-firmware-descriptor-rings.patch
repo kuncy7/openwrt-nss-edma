@@ -23,7 +23,7 @@ gate the MAC while doing so, so no burst wraps the ring in between.
 ---
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
-@@ -2507,6 +2507,143 @@ u32 qca_dwmac_dp_rx_kick(struct net_devi
+@@ -2528,6 +2528,143 @@ u32 qca_dwmac_dp_rx_kick(struct net_devi
  }
  EXPORT_SYMBOL(qca_dwmac_dp_rx_kick);
  

@@ -12,7 +12,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
-@@ -2471,6 +2471,42 @@ int qca_dwmac_dp_release(struct net_devi
+@@ -2492,6 +2492,42 @@ int qca_dwmac_dp_release(struct net_devi
  }
  EXPORT_SYMBOL(qca_dwmac_dp_release);
  

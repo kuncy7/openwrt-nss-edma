@@ -194,13 +194,30 @@ jobs:
           PY
           ./scripts/diffconfig.sh >"diffconfig-${GROUP}.txt"
 
+      # A source that is not on the mirrors is fetched with git, and a stalled clone would hold
+      # the step for hours: git gives up on a transfer that stays below 1 kB/s for a minute,
+      # every attempt has a time limit, and three failed attempts fail the step instead of
+      # leaving the download to the build.
       - name: Download sources
+        timeout-minutes: 75
+        env:
+          GIT_HTTP_LOW_SPEED_LIMIT: 1000
+          GIT_HTTP_LOW_SPEED_TIME: 60
         run: |
           set -euo pipefail
+          ok=0
           for attempt in 1 2 3; do
-            make download -j"$(nproc)" && break
-            echo "download attempt $attempt failed"; sleep 5
+            if timeout --kill-after=60 20m make download -j"$(nproc)"; then
+              ok=1
+              break
+            fi
+            echo "::warning::download attempt $attempt failed or ran into the 20 minute limit"
+            sleep 5
           done
+          if [ "$ok" != 1 ]; then
+            echo "::error::the sources could not be downloaded in three attempts"
+            exit 1
+          fi
 
       # The ccache key covers the toolchain tree and the host compiler; a change there starts
       # from an empty cache (the same scheme as JuliusBairaktaris/Qualcommax_NSS_Builder).

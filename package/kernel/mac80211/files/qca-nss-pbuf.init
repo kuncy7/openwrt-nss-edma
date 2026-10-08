@@ -58,8 +58,32 @@ apply_sysctl() {
 
 }
 
+# The queue the firmware hands the host its packets through: traffic for the
+# router itself, the first packets of a new flow, exceptions. Forwarded
+# (offloaded) traffic does not pass it. The firmware's default of 256 packets
+# overflows when such traffic arrives from a cable in bursts at line rate, and
+# what does not fit is dropped (n2h_rx_queue[0]_drops). Measured on a TP-Link
+# Archer AX55 v1 with four TCP streams from the WAN to the router's own
+# address: drops in two runs of three at 256, in none of nine at 2048, same
+# throughput. A longer queue does not help a host that is saturated for good
+# (UDP at 900 Mbit/s loses the same either way). 2048 is the most the medium
+# memory profile's pools allow; the firmware clamps anything larger.
+#
+# $1 is the default for the memory profile in use; the options
+# n2h_queue_limit_core0 / _core1 in /etc/config/pbuf override it. The driver
+# only lets the queue grow while it runs: a smaller value takes a reboot.
+set_n2h_queue_limit() {
+  local n2h_queue_limit_core0 n2h_queue_limit_core1
+
+  config_get n2h_queue_limit_core0 opt n2h_queue_limit_core0 "$1"
+  config_get n2h_queue_limit_core1 opt n2h_queue_limit_core1 "$1"
+
+  sysctl -w dev.nss.n2hcfg.n2h_queue_limit_core0="$n2h_queue_limit_core0" > /dev/null 2>&1
+  sysctl -w dev.nss.n2hcfg.n2h_queue_limit_core1="$n2h_queue_limit_core1" > /dev/null 2>&1
+}
+
 apply_nss_config() {
-  local auto_scale n2h_queue_limit_core0 n2h_queue_limit_core1 num_cpus
+  local auto_scale num_cpus
   local hash_bitmap
 
   if [ ! -r /sys/module/ath11k/parameters/nss_offload ]; then
@@ -85,13 +109,8 @@ apply_nss_config() {
 
   config_load pbuf
   config_get_bool auto_scale opt auto_scale 0
-  config_get n2h_queue_limit_core0 opt n2h_queue_limit_core0 256
-  config_get n2h_queue_limit_core1 opt n2h_queue_limit_core1 256
 
   sysctl -w dev.nss.clock.auto_scale="$auto_scale" > /dev/null 2>&1
-
-  sysctl -w dev.nss.n2hcfg.n2h_queue_limit_core0="$n2h_queue_limit_core0" > /dev/null 2>&1
-  sysctl -w dev.nss.n2hcfg.n2h_queue_limit_core1="$n2h_queue_limit_core1" > /dev/null 2>&1
 
   local memory_profile memtotal board
   board=$(board_name)
@@ -103,6 +122,7 @@ apply_nss_config() {
         ;;
       off* | false* | disable* | 0)
         logger -s -t $NAME -p user.warn "NSS pbuf option 'memory_profile=off'. Not running. Enable if you have issues connecting more than 65 clients"
+        set_n2h_queue_limit 256
         exit 0
         ;;
       auto)
@@ -114,12 +134,21 @@ apply_nss_config() {
         ;;
       *)
         logger -s -t $NAME -p user.error "Unknown profile $memory_profile. Choose auto, 1gb, 512mb, or 256mb"
+        set_n2h_queue_limit 256
         exit 1
         ;;
     esac
   else
+    set_n2h_queue_limit 256
     exit 0
   fi
+
+  # 256 MB boards keep the firmware's default: their pools are a fraction of
+  # the others' and nobody has run a longer queue on one.
+  case "$memory_profile" in
+    256 | 256m*) set_n2h_queue_limit 256 ;;
+    *) set_n2h_queue_limit 2048 ;;
+  esac
 
   case "$memory_profile" in
     # 1GB+ profile

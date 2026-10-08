@@ -744,9 +744,14 @@ config queue 'wan'
 	option upload '20000'
 ```
 
+With LuCI installed, the stock `luci-app-sqm` does the same from Network -> SQM QoS (`apk add luci-app-sqm`, from the
+regular feed): `nss-edma.qos` is in its script list with its description, and saving the form reloads the shaper. The
+form has no field for this script's own options (`fastlane`), which stay in uci and survive a save from the form; its
+queueing discipline and ECN fields have no effect on this script.
+
 Not available there: `igs_upload` (the firmware refuses a redirect off a switch port). Traffic the router itself
-originates is not marked and goes through the unshaped band. Measured on the GL-B3000 only (fw 12.2-156); the AX55
-and the 256 MB boards have not been tried.
+originates is not marked and goes through the unshaped band. Measured on the GL-B3000 and the Archer AX55 v1
+(fw 12.2-156); the 256 MB boards have not been tried.
 
 ### The single CPU port ceiling
 

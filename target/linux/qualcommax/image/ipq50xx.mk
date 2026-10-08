@@ -231,7 +231,7 @@ define Device/linksys_mr5500
 	$(call Device/linksys_ipq50xx_mx_base)
 	DEVICE_MODEL := MR5500
 	DEVICE_DTS_CONFIG := config@mp03.1
-	DEVICE_PACKAGES := ath11k-firmware-ipq5018 \
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		kmod-ath11k-pci \
 		ath11k-firmware-qcn9074 \
 		ipq-wifi-linksys_mr5500 \
@@ -263,7 +263,7 @@ define Device/linksys_mx5500
 	$(call Device/linksys_ipq50xx_mx_base)
 	DEVICE_MODEL := MX5500
 	DEVICE_DTS_CONFIG := config@mp03.1
-	DEVICE_PACKAGES := ath11k-firmware-ipq5018 \
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		kmod-ath11k-pci \
 		ath11k-firmware-qcn9074 \
 		ipq-wifi-linksys_mx5500
@@ -292,7 +292,7 @@ define Device/linksys_spnmx56
 	$(call Device/linksys_ipq50xx_mx_base)
 	DEVICE_MODEL := SPNMX56
 	DEVICE_DTS_CONFIG := config@mp03.1
-	DEVICE_PACKAGES := ath11k-firmware-ipq5018 \
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		kmod-ath11k-pci \
 		ath11k-firmware-qcn9074 \
 		ipq-wifi-linksys_spnmx56
@@ -437,7 +437,7 @@ define Device/xiaomi_ax6000
 	$(call Device/xiaomi_ipq50xx_ax_base)
 	DEVICE_MODEL := AX6000
 	DEVICE_DTS_CONFIG := config@mp03.1
-	DEVICE_PACKAGES := ath11k-firmware-ipq5018 \
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		kmod-ath11k-pci \
 		ath11k-firmware-qcn9074 \
 		kmod-ath10k-ct-smallbuffers \
@@ -460,7 +460,7 @@ define Device/xiaomi_redmi-ax5400
 	$(call Device/xiaomi_ipq50xx_ax_base)
 	DEVICE_MODEL := Redmi AX5400
 	DEVICE_DTS_CONFIG := config@mp03.1
-	DEVICE_PACKAGES := ath11k-firmware-ipq5018 \
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		kmod-ath11k-pci \
 		ath11k-firmware-qcn9074 \
 		ipq-wifi-xiaomi_redmi-ax5400
@@ -490,7 +490,7 @@ define Device/yuncore_ax850
 	PAGESIZE := 2048
 	SOC := ipq5018
 	DEVICE_DTS_CONFIG := config@mp03.1
-	DEVICE_PACKAGES := ath11k-firmware-ipq5018 \
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		kmod-ath11k-pci \
 		ath11k-firmware-qcn9074 \
 		ipq-wifi-yuncore_ax850

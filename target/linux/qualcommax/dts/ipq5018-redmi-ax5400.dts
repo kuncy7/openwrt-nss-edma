@@ -3,7 +3,7 @@
 #include "ipq5018.dtsi"
 #include "ipq5018-ess.dtsi"
 #include "ipq5018-nss.dtsi"
-#include "ipq5018-q6-fixed-mem.dtsi"
+#include "ipq5018-qcn6122.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
@@ -492,5 +492,6 @@
 
 	qcom,rproc = <&q6v5_wcss>;
 	qcom,ath11k-calibration-variant = "Xiaomi-Redmi-AX5400";
+	/* no QCN6122 on this board: the multi-PD WLAN.HK.2.7.0.1 image with only user PD 1 started, see ipq5018-qcn6122.dtsi */
 	qcom,ath11k-fw-memory-mode = <1>;
 };

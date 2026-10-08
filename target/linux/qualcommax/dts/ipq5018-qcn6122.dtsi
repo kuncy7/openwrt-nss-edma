@@ -2,6 +2,11 @@
 /*
  * IPQ5018 SoC device tree source extension for QCN6122 wifi
  *
+ * Also included by the boards whose second radio is a PCIe one (QCN9074):
+ * they run the same multi-PD Q6 image with only user PD 1 started and both
+ * QCN6122 nodes left disabled. On the single-PD WLAN.HK.2.6.0.1 image the
+ * 2.4 GHz radio stops completing new associations under NSS Wi-Fi offload.
+ *
  * Copyright (c) 2023-2025 The Linux Foundation. All rights reserved.
  */
 

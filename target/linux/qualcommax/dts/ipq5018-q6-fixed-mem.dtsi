@@ -7,8 +7,10 @@
  * Without these nodes the range is ordinary RAM and the firmware writes
  * over whatever Linux keeps there.
  *
- * Boards with a QCN6122 use ipq5018-qcn6122.dtsi instead, which carries the
- * layout of that firmware.
+ * Boards with a QCN6122, and the NSS boards with a PCIe radio, use
+ * ipq5018-qcn6122.dtsi instead, which carries the layout of the multi-PD
+ * firmware. This one is left for boards that run the single-PD image
+ * without NSS Wi-Fi offload (TP-Link EAP650-Outdoor v1).
  */
 
 / {

@@ -244,6 +244,21 @@ package's `WLAN.HK.2.7.0.1` is the one that runs stably here; the stock
 `2.9.r4` blob makes the internal 2.4 GHz radio's Q6 assert (`PHY0M3`) about
 thirteen minutes after the BSS comes up, on this driver, every time.
 
+Every NSS board here runs that image, `ath11k-firmware-ipq5018-qcn6122`,
+including the ones whose second radio is a PCIe QCN9074 and that have no
+QCN6122 at all (Xiaomi AX6000, Redmi AX5400, Linksys MR5500, MX5500 and
+SPNMX56, Yuncore AX850): they start only user PD 1 of it. On the single-PD
+`WLAN.HK.2.6.0.1` image of `ath11k-firmware-ipq5018` the 2.4 GHz radio stops
+completing new associations some minutes after boot once Wi-Fi offload is
+on - a station that leaves does not get back in, the ones already connected
+keep working. The device tree of these boards carries the memory layout of
+the multi-PD image, so the two have to match: a full `.config` kept from an
+older build still has `CONFIG_PACKAGE_ath11k-firmware-ipq5018=y` and the new
+package unset, and gives an image whose 2.4 GHz radio does not come up
+(`ath11k c000000.wifi: segment outside memory range`). Start from a fresh
+`.config`, or unset the first and set
+`CONFIG_PACKAGE_ath11k-firmware-ipq5018-qcn6122=y`.
+
 ### Firmware: why 12.2-156
 
 `NSS_FIRMWARE_VERSION_12_2` selects `NSS.FW.12.2-156-MP.R` from the same

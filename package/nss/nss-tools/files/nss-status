@@ -212,15 +212,46 @@ done
 nss_sqm_section
 sqm_sec=$NSS_SQM_SEC
 sqm_dev=$NSS_SQM_DEV
+
+# Where the egress tree sits. On the EDMA stack that is the section's interface
+# itself. A DSA user port has its conduit as a sysfs lower link (the conduit
+# carries dsa/tagging): there nss-edma.qos builds the trees on the conduit, as
+# a lane, and the port itself keeps its noqueue - looking for nsstbl on the
+# port reported "no NSS shaper" on a shaper that was working. The ingress IFB
+# is named after the port in both cases. Same walk as shaping_point() in
+# nss-edma.qos; a VLAN on the port is one level further up.
+sqm_phys=$sqm_dev
+sqm_lanes=0
+sqm_walk=$sqm_dev
+while [ -n "$sqm_walk" ] && [ "$sqm_lanes" = 0 ]; do
+	sqm_next=""
+	for d in $sqm_walk; do
+		for l in "$R/sys/class/net/$d"/lower_*; do
+			[ -e "$l" ] || continue
+			l=${l##*/lower_}
+			if [ -e "$R/sys/class/net/$l/dsa/tagging" ]; then
+				sqm_phys=$l
+				sqm_lanes=1
+				break 2
+			fi
+			sqm_next="$sqm_next $l"
+		done
+	done
+	sqm_walk=$sqm_next
+done
+
 sqm_active=0
-[ -n "$sqm_dev" ] && tc qdisc show dev "$sqm_dev" 2>/dev/null | grep -q nsstbl && sqm_active=1
+[ -n "$sqm_phys" ] && tc qdisc show dev "$sqm_phys" 2>/dev/null | grep -q nsstbl && sqm_active=1
 
 # Fast lane: nsspfifo band packet counters (egress tree + ingress IFB tree).
+# A lane tree has a second nsspfifo, the default leaf the unshaped traffic of
+# the other ports passes through; that one is not the fast lane.
 fastlane_pkts() {
-	tc -s qdisc show dev "$1" 2>/dev/null | grep -A1 nsspfifo | \
-		sed -n 's/.*Sent [0-9]* bytes \([0-9]*\) pkt.*/\1/p' | head -1
+	tc -s qdisc show dev "$1" 2>/dev/null | awk '
+		/^qdisc / { fl = ($2 == "nsspfifo" && $0 !~ /set_default/) }
+		fl && $1 == "Sent" { print $4; exit }'
 }
-fl_egress=$(fastlane_pkts "$sqm_dev")
+fl_egress=$(fastlane_pkts "$sqm_phys")
 fl_ingress=$(fastlane_pkts "ifb@${sqm_dev}")
 fl_active=0
 [ -n "$fl_egress$fl_ingress" ] && fl_active=1
@@ -240,9 +271,10 @@ done
 # stays up, the carrier stays set, tc still lists a shaper. Name it, because
 # from the outside it looks exactly like a dead port or a dead line.
 sqm_dropping=""
-for d in $sqm_dev "ifb@${sqm_dev}" $(uci -q get "sqm.${sqm_sec}.igs_upload" | sed 's/[^ ]*/ifb-&/g'); do
+for d in $sqm_phys "ifb@${sqm_dev}" $(uci -q get "sqm.${sqm_sec}.igs_upload" | sed 's/[^ ]*/ifb-&/g'); do
 	[ -n "$d" ] || continue
-	tc qdisc show dev "$d" 2>/dev/null | head -n1 | grep -q '^qdisc nsstbl' || continue
+	# nsstbl at the root, or nssprio where the tree is a lane on a conduit
+	tc qdisc show dev "$d" 2>/dev/null | head -n1 | grep -q '^qdisc nss\(tbl\|prio\) ' || continue
 	tc qdisc show dev "$d" 2>/dev/null | grep -q set_default || sqm_dropping="$sqm_dropping $d"
 done
 
@@ -313,7 +345,7 @@ if [ "$JSON" = 1 ]; then
 	"wifi_offload":$wifi_offload,
 	"mesh":{"configured":$mesh_cfg,"offloaded":$mesh_vdev,"fw_capable":$mesh_capable},
 	"kernel_log":{"warns":$kwarns,"oopses":$koops},
-	"sqm":{"active":$sqm_active,"device":"$sqm_dev","igs":$ijson,
+	"sqm":{"active":$sqm_active,"device":"$sqm_dev","shaping_device":"$sqm_phys","lanes":$sqm_lanes,"igs":$ijson,
 	"shaper_fault":$sfjson,
 	"fastlane":{"active":$fl_active,"egress_pkts":${fl_egress:-0},"ingress_pkts":${fl_ingress:-0}},
 	"qos_marking_rules":$qos_rules}}
@@ -511,7 +543,11 @@ esac
 [ -n "$fw_mem_modes" ] && echo "  fw mem mode:$fw_mem_modes (from the device tree; 2 is what a QCN6122 on a GL-B3000 needed, 1 is measured working elsewhere)"
 if [ "$sqm_active" = 1 ]; then
 	igs_human=$(echo "$igs_ports" | sed 's/\([a-z0-9]*\):1/\1/g; s/\([a-z0-9]*\):0/\1(MISSING)/g')
-	echo "  SQM:         nsstbl shaper on $sqm_dev, upload IGS:${igs_human:- none}"
+	if [ "$sqm_lanes" = 1 ]; then
+		echo "  SQM:         nsstbl shaper on $sqm_dev (a lane on the switch conduit $sqm_phys)"
+	else
+		echo "  SQM:         nsstbl shaper on $sqm_dev, upload IGS:${igs_human:- none}"
+	fi
 	[ -n "$sqm_dropping" ] && echo "  SHAPER FAULT: no default leaf below the NSS root on:$sqm_dropping - those devices are dropping every packet they are given (link stays up)"
 	if [ "$fl_active" = 1 ]; then
 		echo "  fast lane:   egress ${fl_egress:-0} pkts / ingress ${fl_ingress:-0} pkts, ${qos_rules} marking rules active"

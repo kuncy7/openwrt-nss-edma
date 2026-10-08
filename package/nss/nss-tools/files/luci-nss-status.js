@@ -122,7 +122,9 @@ function renderStatus(d) {
 			row(_('PPPoE manager'), onoff(d.modules.pppoe)),
 			row(_('Wi-Fi data path'), wifi),
 			row(_('SQM shaper'), d.sqm.active
-				? _('nsstbl on') + ' ' + d.sqm.device + (igs ? ' — ' + _('upload IGS:') + ' ' + igs : '')
+				? _('nsstbl on') + ' ' + d.sqm.device +
+					(d.sqm.lanes ? ' (' + _('a lane on the switch conduit') + ' ' + d.sqm.shaping_device + ')' : '') +
+					(igs ? ' — ' + _('upload IGS:') + ' ' + igs : '')
 				: (d.sqm.device ? _('no NSS shaper on') + ' ' + d.sqm.device : _('no NSS shaper'))),
 			(d.sqm.fastlane && d.sqm.fastlane.active)
 				? row(_('Fast lane'), _('egress') + ' ' + d.sqm.fastlane.egress_pkts + ' pkts / ' +

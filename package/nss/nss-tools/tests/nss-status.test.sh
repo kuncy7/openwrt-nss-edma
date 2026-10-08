@@ -108,7 +108,9 @@ netdev lan1 500 400
 # difference would let a caller that forgot to unquote pass here.
 stub() { printf '#!/bin/sh\n%s\n' "$2" > "$root/bin/$1"; chmod +x "$root/bin/$1"; }
 stub tc  '[ $# -gt 0 ] || { echo STUB; exit 0; }
-cat "$TC_OUT" 2>/dev/null || true'
+dev=; while [ $# -gt 0 ]; do [ "$1" = dev ] && dev=$2; shift; done
+if [ -d "$TC_OUT.d" ]; then cat "$TC_OUT.d/$dev" 2>/dev/null; else cat "$TC_OUT" 2>/dev/null; fi
+true'
 stub uci 'for a in "$@"; do last=$a; done
 case " $* " in
 *" show "*) grep "^$last\." "$UCI_OUT" 2>/dev/null ;;
@@ -360,5 +362,90 @@ check 'dwmac: the text report lists the DSA ports' \
 echo 0 > "$dwg/fw_mask"
 check 'dwmac: an empty mask printed as a bare 0 still reads as host' \
 	'"host"' "$(json_num "$(run_dw -j)" state)"
+
+# ---- SQM on a switch port: the trees sit on the conduit ---------------------
+# nss-edma.qos shapes a DSA port from its conduit, as a lane: the port keeps
+# its noqueue, the egress tree is on the conduit and the ingress IFB is named
+# after the port. Looking for nsstbl on the port reported "no NSS shaper" on a
+# shaper that was shaping. The qdisc lists are a GL-B3000's with the shaper on
+# wan; the lane tree's default leaf (the other ports' unshaped traffic) is an
+# nsspfifo as well and is listed before the fast lane here on purpose, with a
+# count of its own, so the fast lane counter cannot be read off it by position.
+
+echo 0x2 > "$dwg/fw_mask"
+mkdir -p "$dw/sys/class/net/eth0/dsa" "$dw/sys/class/net/wan.35"
+echo 8021q > "$dw/sys/class/net/eth0/dsa/tagging"
+: > "$dw/sys/class/net/wan/lower_eth0"
+: > "$dw/sys/class/net/wan.35/lower_wan"
+sqm_obj() { printf '%s' "$1" | tr -d '\n' | sed -n 's/.*"sqm":{//p'; }
+lane_tree() { # lane_tree <fast lane handle> <fast lane pkts> <default leaf option>
+	printf '%s\n' \
+		'qdisc nssprio 1: root refcnt 9 bands 2 accel_mode 0 ' \
+		' Sent 704162 bytes 2031 pkt (dropped 0, overlimits 0 requeues 0) ' \
+		"qdisc nsspfifo 20: parent 1:2 limit 2048p $3accel_mode 0 " \
+		' Sent 4049 bytes 49 pkt (dropped 0, overlimits 0 requeues 0) ' \
+		'qdisc nssprio 2: parent 3: bands 2 accel_mode 0 ' \
+		' Sent 701653 bytes 2004 pkt (dropped 0, overlimits 0 requeues 0) ' \
+		"qdisc nsspfifo $1: parent 2:1 limit 64p accel_mode 0 " \
+		" Sent 990 bytes $2 pkt (dropped 0, overlimits 0 requeues 0) " \
+		'qdisc nssfq_codel 10: parent 2:2 target 5ms limit 821p interval 100ms flows 1024 quantum 1522 accel_mode 0 ' \
+		' Sent 702353 bytes 2014 pkt (dropped 0, overlimits 0 requeues 0) ' \
+		'qdisc nsstbl 3: parent 1:1 buffer/maxburst 12176b rate 100Mbit mtu 1522b accel_mode 0 ' \
+		' Sent 700113 bytes 1982 pkt (dropped 0, overlimits 4 requeues 0) '
+}
+
+if [ "$stubs_honoured" = 0 ]; then
+	skip 'sqm: the switch conduit cases' \
+		"this shell runs a built-in tc, so the stub never gets asked"
+else
+	mkdir "$root/tc.out.d"
+	printf 'qdisc noqueue 0: root refcnt 2 \n' > "$root/tc.out.d/wan"
+	lane_tree 100 7 'set_default ' > "$root/tc.out.d/eth0"
+	lane_tree 101 5 'set_default ' > "$root/tc.out.d/ifb@wan"
+	printf "sqm.wan=queue\nsqm.wan.enabled='1'\nsqm.wan.interface='wan'\n" > "$root/uci.out"
+
+	sq="$(sqm_obj "$(run_dw -j)")"
+	check 'sqm on a switch port: the shaper on the conduit is found' 1 "$(json_num "$sq" active)"
+	check 'sqm on a switch port: the device is still the configured port' '"wan"' "$(json_num "$sq" device)"
+	check 'sqm on a switch port: the shaping device is the conduit' '"eth0"' "$(json_num "$sq" shaping_device)"
+	check 'sqm on a switch port: reported as a lane' 1 "$(json_num "$sq" lanes)"
+	check 'sqm on a switch port: fast lane egress is not the default leaf' 7 "$(json_num "$sq" egress_pkts)"
+	check 'sqm on a switch port: fast lane ingress comes from the IFB named after the port' \
+		5 "$(json_num "$sq" ingress_pkts | tr -d "}")"
+	check 'sqm on a switch port: the text report names port and conduit' \
+		1 "$(run_dw | grep -c 'nsstbl shaper on wan (a lane on the switch conduit eth0)')"
+	check 'sqm on a switch port: a healthy lane tree is not reported as dropping' \
+		0 "$(run_dw | grep -c 'dropping')"
+
+	lane_tree 100 7 '' > "$root/tc.out.d/eth0"
+	check 'sqm on a switch port: a lane tree with no default leaf is reported, on the conduit' \
+		1 "$(run_dw | grep 'dropping' | grep -c ' eth0')"
+	lane_tree 100 7 'set_default ' > "$root/tc.out.d/eth0"
+
+	printf "sqm.wan=queue\nsqm.wan.enabled='1'\nsqm.wan.interface='wan.35'\n" > "$root/uci.out"
+	lane_tree 101 5 'set_default ' > "$root/tc.out.d/ifb@wan.35"
+	sq="$(sqm_obj "$(run_dw -j)")"
+	check 'sqm on a VLAN of a switch port: the conduit is two levels down' \
+		'"eth0"' "$(json_num "$sq" shaping_device)"
+	check 'sqm on a VLAN of a switch port: active' 1 "$(json_num "$sq" active)"
+
+	printf "sqm.wan=queue\nsqm.wan.enabled='1'\nsqm.wan.interface='wan'\n" > "$root/uci.out"
+	printf 'qdisc mq 0: root \n' > "$root/tc.out.d/eth0"
+	sq="$(sqm_obj "$(run_dw -j)")"
+	check 'sqm on a switch port: no tree on the conduit reads as no shaper' 0 "$(json_num "$sq" active)"
+	check 'sqm on a switch port: and says so, naming the port' \
+		1 "$(run_dw | grep -c 'no NSS shaper on wan')"
+
+	# No conduit below the netdev: it is its own shaping point (the EDMA stack).
+	printf "sqm.wan=queue\nsqm.wan.enabled='1'\nsqm.wan.interface='lan1'\n" > "$root/uci.out"
+	printf 'qdisc nsstbl 1: root refcnt 2 rate 165Mbit\nqdisc nssfq_codel 10: parent 1: set_default\n' \
+		> "$root/tc.out.d/lan1"
+	sq="$(sqm_obj "$(run_dw -j)")"
+	check 'sqm: a netdev with no conduit below it is its own shaping point' \
+		'"lan1"' "$(json_num "$sq" shaping_device)"
+	check 'sqm: and is not a lane' 0 "$(json_num "$sq" lanes)"
+	check 'sqm: and its shaper is found on itself' 1 "$(json_num "$sq" active)"
+	rm -rf "$root/tc.out.d"
+fi
 
 exit "$fail"

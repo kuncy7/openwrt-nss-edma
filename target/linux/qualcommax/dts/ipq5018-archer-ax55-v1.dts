@@ -163,6 +163,16 @@
 		reg = <0>;
 
 		nand-ecc-engine = <&qpic_nand>;
+		/*
+		 * Keep these. The board ships with two NAND chips: an ESMT part
+		 * with a 64-byte OOB area and a GigaDevice part with 128 bytes.
+		 * The TP-Link bootloader and the stock firmware use 4-bit ECC on
+		 * both, while the driver's default picks 8 bits from a 128-byte
+		 * OOB - the flash then reads as ECC errors and the bootloader
+		 * cannot load what sysupgrade writes.
+		 */
+		nand-ecc-strength = <4>;
+		nand-ecc-step-size = <512>;
 		nand-bus-width = <8>;
 
 		partitions {

@@ -17,7 +17,14 @@
 START=95
 NAME=qca-nss-pbuf
 
+# Only reload Wi-Fi when this run actually installed the pool tuning. The pools
+# cannot be resized once allocated, so a second run of this service changes
+# nothing - but an unconditional 'wifi up' here still tears every VAP down and
+# recreates it. On this tree the nss service applies the tuning before ath11k
+# binds, precisely so the radios bind once onto the tuned pool with a single WCSS
+# boot; the S95 rc.d run that follows netifd would otherwise undo exactly that.
 reload_wifi() {
+  [ "${pbuf_applied:-0}" = 1 ] || return 0
   if [ -r /sys/module/ath11k/parameters/nss_offload ]; then
     nss_offload=$(cat /sys/module/ath11k/parameters/nss_offload 2> /dev/null)
     [ "$nss_offload" -eq 1 ] && wifi up
@@ -30,10 +37,21 @@ get_num_cpus() {
   echo "${num_cpus:-1}"
 }
 
-# The SoC, from the device tree's compatible list (NUL-separated strings;
-# the board's own compatible comes first, the SoC's last).
-soc_is_ipq5018() {
-  tr '\0' '\n' 2> /dev/null < /proc/device-tree/compatible | grep -qx 'qcom,ipq5018'
+# The core's top frequency step, which differs across the family. The
+# driver accepts only a value already in its scaling table and reports
+# success for one that is not, so a constant from the wrong SoC is a
+# silent underclock.
+nss_dt_max_freq() {
+  local f hex
+  for f in /proc/device-tree/soc*/nss@*/qcom,max-frequency; do
+    [ -r "$f" ] || continue
+    # Device tree cells are big-endian u32; busybox has hexdump, not od.
+    hex=$(hexdump -v -n 4 -e '4/1 "%02x"' "$f" 2>/dev/null)
+    [ ${#hex} -eq 8 ] || continue
+    printf '%u\n' "$((0x$hex))"
+    return 0
+  done
+  return 1
 }
 
 apply_sysctl() {
@@ -43,7 +61,8 @@ apply_sysctl() {
   # can't be changed if it is allocated, assume it's already been run.
   if [ "$(sysctl -n -e dev.nss.n2hcfg.extra_pbuf_core0)" -eq 0 ]; then
     logger -t $NAME "$board - setting dev.nss.n2hcfg.extra_pbuf_core0=$extra_pbuf_core0"
-    sysctl -w dev.nss.n2hcfg.extra_pbuf_core0="$extra_pbuf_core0" > /dev/null 2>&1
+    sysctl -w dev.nss.n2hcfg.extra_pbuf_core0="$extra_pbuf_core0" > /dev/null 2>&1 &&
+      pbuf_applied=1
   else
     logger -t $NAME "Sysctl key 'extra_pbuf_core0' already set to '""$extra_pbuf_core0""'. Skipping applying wifi nss configs"
   fi
@@ -58,40 +77,12 @@ apply_sysctl() {
 
 }
 
-# The queue the firmware hands the host its packets through: traffic for the
-# router itself, the first packets of a new flow, exceptions. Forwarded
-# (offloaded) traffic does not pass it. The firmware's default of 256 packets
-# overflows when such traffic arrives from a cable in bursts at line rate, and
-# what does not fit is dropped (n2h_rx_queue[0]_drops). Measured on a TP-Link
-# Archer AX55 v1 with four TCP streams from the WAN to the router's own
-# address: drops in two runs of three at 256, in none of nine at 2048, same
-# throughput. A longer queue does not help a host that is saturated for good
-# (UDP at 900 Mbit/s loses the same either way). 2048 is the most the medium
-# memory profile's pools allow; the firmware clamps anything larger.
-#
-# $1 is the default for the memory profile in use; the options
-# n2h_queue_limit_core0 / _core1 in /etc/config/pbuf override it. The driver
-# only lets the queue grow while it runs: a smaller value takes a reboot.
-set_n2h_queue_limit() {
-  local n2h_queue_limit_core0 n2h_queue_limit_core1
-
-  config_get n2h_queue_limit_core0 opt n2h_queue_limit_core0 "$1"
-  config_get n2h_queue_limit_core1 opt n2h_queue_limit_core1 "$1"
-
-  sysctl -w dev.nss.n2hcfg.n2h_queue_limit_core0="$n2h_queue_limit_core0" > /dev/null 2>&1
-  sysctl -w dev.nss.n2hcfg.n2h_queue_limit_core1="$n2h_queue_limit_core1" > /dev/null 2>&1
-}
-
 apply_nss_config() {
-  local auto_scale num_cpus
+  local auto_scale n2h_queue_limit_core0 n2h_queue_limit_core1 num_cpus
   local hash_bitmap
 
   if [ ! -r /sys/module/ath11k/parameters/nss_offload ]; then
-    # Expected during boot: with Wi-Fi offload the ath11k modules are loaded
-    # late, by nss-dwmac-up, which re-runs this script afterwards. Only say
-    # something when nobody is going to come back for us.
-    [ "$(uci -q get nss.general.wifi_offload)" = 1 ] ||
-      logger -t $NAME "Module parameter '/sys/module/ath11k/parameters/nss_offload' does NOT exist. Skipping applying wifi nss configs"
+    logger -t $NAME "Module parameter '/sys/module/ath11k/parameters/nss_offload' does NOT exist. Skipping applying wifi nss configs"
     exit 1
   fi
 
@@ -109,8 +100,34 @@ apply_nss_config() {
 
   config_load pbuf
   config_get_bool auto_scale opt auto_scale 0
+  # The firmware's default N2H delivery queue of 256 packets overflows on
+  # line-rate bursts to host-terminated flows (measured: 9-35% UDP loss at
+  # ~1.4 Gbit/s into the router's own IP, all accounted as
+  # n2h_rx_queue[0]_drops). 2048 is the maximum the medium memory profile's
+  # pbuf pools support (the firmware clamps larger values) and absorbs those
+  # bursts; the transient buffer custody this allows (~8MB at 4KB per
+  # payload) is affordable since the payloads moved to kmalloc backing.
+  config_get n2h_queue_limit_core0 opt n2h_queue_limit_core0 2048
+  config_get n2h_queue_limit_core1 opt n2h_queue_limit_core1 2048
 
   sysctl -w dev.nss.clock.auto_scale="$auto_scale" > /dev/null 2>&1
+
+  # Disabling the auto-scaler freezes the NSS cores at whatever frequency
+  # step the boot-time load had reached (often the lowest); pin them to the
+  # configured maximum in the same step so no later stage has to correct it.
+  if [ "$auto_scale" -eq 0 ]; then
+    local max_freq
+    config_get max_freq opt max_freq "$(nss_dt_max_freq)"
+    if [ -z "$max_freq" ]; then
+      logger -t $NAME "auto_scale off but no qcom,max-frequency in DT - leaving the NSS clock alone"
+    else
+      logger -t $NAME "auto_scale off - pinning NSS clock to $max_freq"
+      sysctl -w dev.nss.clock.current_freq="$max_freq" > /dev/null 2>&1
+    fi
+  fi
+
+  sysctl -w dev.nss.n2hcfg.n2h_queue_limit_core0="$n2h_queue_limit_core0" > /dev/null 2>&1
+  sysctl -w dev.nss.n2hcfg.n2h_queue_limit_core1="$n2h_queue_limit_core1" > /dev/null 2>&1
 
   local memory_profile memtotal board
   board=$(board_name)
@@ -122,7 +139,6 @@ apply_nss_config() {
         ;;
       off* | false* | disable* | 0)
         logger -s -t $NAME -p user.warn "NSS pbuf option 'memory_profile=off'. Not running. Enable if you have issues connecting more than 65 clients"
-        set_n2h_queue_limit 256
         exit 0
         ;;
       auto)
@@ -134,21 +150,12 @@ apply_nss_config() {
         ;;
       *)
         logger -s -t $NAME -p user.error "Unknown profile $memory_profile. Choose auto, 1gb, 512mb, or 256mb"
-        set_n2h_queue_limit 256
         exit 1
         ;;
     esac
   else
-    set_n2h_queue_limit 256
     exit 0
   fi
-
-  # 256 MB boards keep the firmware's default: their pools are a fraction of
-  # the others' and nobody has run a longer queue on one.
-  case "$memory_profile" in
-    256 | 256m*) set_n2h_queue_limit 256 ;;
-    *) set_n2h_queue_limit 2048 ;;
-  esac
 
   case "$memory_profile" in
     # 1GB+ profile
@@ -160,51 +167,8 @@ apply_nss_config() {
       extra_pbuf_core0=3100000 n2h_high_water_core0=30624 n2h_wifi_pool_buf=8192 apply_sysctl
       ;;
       # 256MB profile
-      #
-      # Two sets of values, chosen by SoC. The profile is picked from
-      # MemTotal alone, and this script ships with kmod-ath11k on every
-      # qualcommax target, so a 256 MB IPQ807x or IPQ60xx board lands here
-      # as well: those keep the values this script has always applied
-      # (3100000 / 30258 / 4096 - QSDK's IPQ807x ap-ac02 profile with two
-      # digits transposed in the high-water mark, 30528; left as it is,
-      # nobody has run the corrected value on such a board).
-      #
-      # On an IPQ5018 the values are the ones QSDK's own wifi script
-      # applies to a 256 MB board of that SoC (the MP_256 device-tree
-      # marker, board family ap-mp*):
-      #
-      #   extra_pbuf_core0 = (n2h_high_water_core0 - 11720) * 160
-      #
-      # where 11720 is the firmware's built-in pbuf count and 160 the pbuf
-      # size.
-      #
-      # Each buffer the firmware holds costs the host a kmalloc-4k object
-      # (1984 payload + 64 pad + 320 skb_shared_info rounds to 4096 on
-      # 64-bit), so the counts matter more than they look:
-      #
-      #   n2h_wifi_pool_buf   payloads reserved for the Wi-Fi datapath,
-      #                       pulled from the host on demand and not given
-      #                       back. At 4096 a 256 MiB IPQ5018 with two
-      #                       radios OOM-kills the AP daemon on a single
-      #                       iperf3 run (Slab +18 MB, MemAvailable 0);
-      #                       2048 was measured to survive it. 0 is what
-      #                       QSDK uses here: the Wi-Fi rings draw from
-      #                       the general pool.
-      #   extra_pbuf_core0    pbuf descriptor pages handed to the firmware
-      #                       at init (kzalloc(PAGE_SIZE) each): 757 pages
-      #                       at 3100000, 196 at 800000.
-      #
-      # Measured on a TP-Link EX511 v2 (256 MiB, IPQ5018 + QCN6122),
-      # 2026-09-13: with these values one iperf3 run at ~850/740 Mbit/s
-      # over 5 GHz leaves 20 MB available and Slab at 52 MB; the same run
-      # bottomed at 2 MB available with 2048. If a 256 MB board does drop
-      # Wi-Fi frames under load, 2048 is the tested fallback.
     256 | 256m*)
-      if soc_is_ipq5018; then
-        extra_pbuf_core0=800000 n2h_high_water_core0=16336 n2h_wifi_pool_buf=0 apply_sysctl
-      else
-        extra_pbuf_core0=3100000 n2h_high_water_core0=30258 n2h_wifi_pool_buf=4096 apply_sysctl
-      fi
+      extra_pbuf_core0=3100000 n2h_high_water_core0=30258 n2h_wifi_pool_buf=4096 apply_sysctl
       ;;
   esac
 }
@@ -213,11 +177,10 @@ set_stats_disable() {
 
   local stats_disable
   config_load pbuf
-  config_get stats_disable opt stats_disable 1
-
-  [ -d /sys/kernel/debug/ath11k ] || return 0
+  config_get stats_disable opt stats_disable 0
 
   find /sys/kernel/debug/ath11k -name stats_disable | while read -r stats_file; do
+    [ "$(cat "$stats_file" 2>/dev/null)" = "$stats_disable" ] && continue
     stats_msg_prefix="Disabling"
     [ "$stats_disable" -eq 0 ] && stats_msg_prefix="Enabling"
     logger -t $NAME -p user.notice "$stats_msg_prefix ath11k stats"
@@ -225,36 +188,8 @@ set_stats_disable() {
   done
 }
 
-set_scaling_governor() {
-
-  local scaling_governor num_cpus
-  config_load pbuf
-  config_get scaling_governor opt scaling_governor
-
-  scaling_available_governors=/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors
-
-  if [ -r "$scaling_available_governors" ]; then
-    scaling_available_governors=$(cat $scaling_available_governors)
-  else
-    return 0
-  fi
-
-  if [ -n "$scaling_available_governors" ] && [ -n "$scaling_governor" ]; then
-    if [[ "$scaling_available_governors" =~ $scaling_governor ]]; then
-      logger -t $NAME -p user.notice "Setting CPU scaling governor to '$scaling_governor'"
-      num_cpus=$(get_num_cpus)
-      for num in $(seq 0 $((num_cpus - 1))); do
-        echo "$scaling_governor" > "/sys/devices/system/cpu/cpu${num}/cpufreq/scaling_governor"
-      done
-    else
-      logger -t $NAME -p user.error "'$scaling_governor' not available in CPU governors [ $scaling_available_governors ]"
-    fi
-  fi
-}
-
 start() {
 
-  set_scaling_governor
   set_stats_disable
   apply_nss_config
 

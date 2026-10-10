@@ -22,9 +22,11 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  drivers/net/wireless/ath/ath11k/hal.h |  1 +
  4 files changed, 66 insertions(+), 8 deletions(-)
 
+diff --git a/drivers/net/wireless/ath/ath11k/dp_tx.c b/drivers/net/wireless/ath/ath11k/dp_tx.c
+index 1559b50..1d95e0c 100644
 --- a/drivers/net/wireless/ath/ath11k/dp_tx.c
 +++ b/drivers/net/wireless/ath/ath11k/dp_tx.c
-@@ -770,6 +770,7 @@ void ath11k_dp_tx_completion_handler(str
+@@ -770,6 +770,7 @@ void ath11k_dp_tx_completion_handler(struct ath11k_base *ab, int ring_id)
  	struct sk_buff *msdu;
  	struct hal_tx_status ts = {};
  	struct dp_tx_ring *tx_ring = &dp->tx_ring[ring_id];
@@ -32,7 +34,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  	u32 *desc;
  	u32 msdu_id;
  	u8 mac_id;
-@@ -778,9 +779,18 @@ void ath11k_dp_tx_completion_handler(str
+@@ -778,9 +779,18 @@ void ath11k_dp_tx_completion_handler(struct ath11k_base *ab, int ring_id)
  
  	ath11k_hal_srng_access_begin(ab, status_ring);
  
@@ -52,9 +54,11 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  		memcpy(&tx_ring->tx_status[tx_ring->tx_status_head],
  		       desc, sizeof(struct hal_wbm_release_ring));
  		tx_ring->tx_status_head =
+diff --git a/drivers/net/wireless/ath/ath11k/hal.c b/drivers/net/wireless/ath/ath11k/hal.c
+index 4c17ea9..954a53f 100644
 --- a/drivers/net/wireless/ath/ath11k/hal.c
 +++ b/drivers/net/wireless/ath/ath11k/hal.c
-@@ -670,7 +670,8 @@ u32 *ath11k_hal_srng_dst_get_next_entry(
+@@ -669,7 +669,8 @@ u32 *ath11k_hal_srng_dst_get_next_entry(struct ath11k_base *ab,
  
  	desc = srng->ring_base_vaddr + srng->u.dst_ring.tp;
  
@@ -64,7 +68,7 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  
  	/* wrap around to start of ring*/
  	if (srng->u.dst_ring.tp == srng->ring_size)
-@@ -683,8 +684,63 @@ u32 *ath11k_hal_srng_dst_get_next_entry(
+@@ -682,8 +683,63 @@ u32 *ath11k_hal_srng_dst_get_next_entry(struct ath11k_base *ab,
  	return desc;
  }
  
@@ -129,9 +133,11 @@ Signed-off-by: P Praneesh <ppranees@codeaurora.org>
  {
  	u32 tp, hp;
  
+diff --git a/drivers/net/wireless/ath/ath11k/hal.h b/drivers/net/wireless/ath/ath11k/hal.h
+index ed04004..a38e51f 100644
 --- a/drivers/net/wireless/ath/ath11k/hal.h
 +++ b/drivers/net/wireless/ath/ath11k/hal.h
-@@ -946,8 +946,12 @@ void ath11k_hal_srng_get_params(struct a
+@@ -946,8 +946,12 @@ void ath11k_hal_srng_get_params(struct ath11k_base *ab, struct hal_srng *srng,
  u32 *ath11k_hal_srng_dst_get_next_entry(struct ath11k_base *ab,
  					struct hal_srng *srng);
  u32 *ath11k_hal_srng_dst_peek(struct ath11k_base *ab, struct hal_srng *srng);

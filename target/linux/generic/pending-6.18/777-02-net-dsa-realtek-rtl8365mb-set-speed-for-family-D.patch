@@ -18,7 +18,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 
 --- a/drivers/net/dsa/realtek/rtl8365mb_main.c
 +++ b/drivers/net/dsa/realtek/rtl8365mb_main.c
-@@ -331,6 +331,7 @@
+@@ -334,6 +334,7 @@
  #define RTL8365MB_PORT_SPEED_10M	0
  #define RTL8365MB_PORT_SPEED_100M	1
  #define RTL8365MB_PORT_SPEED_1000M	2
@@ -26,10 +26,10 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  
  /* External interface force configuration registers 0~2 */
  #define RTL8365MB_DIGITAL_INTERFACE_FORCE_REG0		0x1310 /* EXT0 */
-@@ -348,6 +349,20 @@
- #define   RTL8365MB_DIGITAL_INTERFACE_FORCE_LINK_MASK		0x0010
- #define   RTL8365MB_DIGITAL_INTERFACE_FORCE_DUPLEX_MASK		0x0004
- #define   RTL8365MB_DIGITAL_INTERFACE_FORCE_SPEED_MASK		0x0003
+@@ -351,6 +352,20 @@
+ #define   RTL8365MB_DIGITAL_INTERFACE_FORCE_LINK_MASK		BIT(4)
+ #define   RTL8365MB_DIGITAL_INTERFACE_FORCE_DUPLEX_MASK		BIT(2)
+ #define   RTL8365MB_DIGITAL_INTERFACE_FORCE_SPEED_MASK		GENMASK(1, 0)
 +#define   RTL8365MB_DIGITAL_INTERFACE_FORCE_SPEED_WIDTH		2 /* bits[1:0] */
 +
 +/* bits[13:12]; bit 13 reserved, no defined speed value uses it yet */
@@ -47,7 +47,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  
  /* CPU port mask register - controls which ports are treated as CPU ports */
  #define RTL8365MB_CPU_PORT_MASK_REG	0x1219
-@@ -1584,23 +1599,31 @@ static int rtl8365mb_ext_config_forcemod
+@@ -1596,23 +1611,31 @@ static int rtl8365mb_ext_config_forcemod
  	u32 r_duplex;
  	u32 r_speed;
  	u32 r_link;
@@ -84,7 +84,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  			r_speed = RTL8365MB_PORT_SPEED_1000M;
  		} else if (speed == SPEED_100) {
  			r_speed = RTL8365MB_PORT_SPEED_100M;
-@@ -1630,8 +1653,7 @@ static int rtl8365mb_ext_config_forcemod
+@@ -1642,8 +1665,7 @@ static int rtl8365mb_ext_config_forcemod
  		r_duplex = 0;
  	}
  
@@ -94,7 +94,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  			 r_tx_pause) |
  	      FIELD_PREP(RTL8365MB_DIGITAL_INTERFACE_FORCE_RXPAUSE_MASK,
  			 r_rx_pause) |
-@@ -1639,11 +1661,33 @@ static int rtl8365mb_ext_config_forcemod
+@@ -1651,11 +1673,33 @@ static int rtl8365mb_ext_config_forcemod
  	      FIELD_PREP(RTL8365MB_DIGITAL_INTERFACE_FORCE_DUPLEX_MASK,
  			 r_duplex) |
  	      FIELD_PREP(RTL8365MB_DIGITAL_INTERFACE_FORCE_SPEED_MASK, r_speed);

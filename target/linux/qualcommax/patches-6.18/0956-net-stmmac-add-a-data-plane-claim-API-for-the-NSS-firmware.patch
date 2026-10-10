@@ -202,7 +202,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
   *  stmmac_dma_operation_mode - HW DMA operation mode
   *  @priv: driver private structure
   *  Description: it is used for configuring the DMA operation mode register in
-@@ -3596,6 +3720,11 @@ static void stmmac_free_irq(struct net_d
+@@ -3596,6 +3721,11 @@ static void stmmac_free_irq(struct net_d
  			free_irq(priv->sfty_irq, dev);
  		fallthrough;
  	case REQ_IRQ_ERR_WOL:

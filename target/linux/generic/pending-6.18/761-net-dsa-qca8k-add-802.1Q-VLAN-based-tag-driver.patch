@@ -565,7 +565,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  #include "qca8k.h"
  
-@@ -730,8 +732,21 @@
+@@ -730,8 +732,21 @@ int qca8k_port_bridge_join(struct dsa_sw
  			   struct netlink_ext_ack *extack)
  {
  	struct qca8k_priv *priv = ds->priv;
@@ -588,7 +588,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  }
  
  void qca8k_port_bridge_leave(struct dsa_switch *ds, int port,
-@@ -740,6 +755,14 @@
+@@ -740,6 +755,14 @@ void qca8k_port_bridge_leave(struct dsa_
  	struct qca8k_priv *priv = ds->priv;
  	int err;
  
@@ -603,7 +603,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	err = qca8k_update_port_member(priv, port, bridge.dev, false);
  	if (err)
  		dev_err(priv->dev,
-@@ -787,6 +810,14 @@
+@@ -787,6 +810,14 @@ int qca8k_port_enable(struct dsa_switch
  	if (dsa_is_user_port(ds, port))
  		phy_support_asym_pause(phy);
  
@@ -618,7 +618,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	return 0;
  }
  
-@@ -852,6 +883,32 @@
+@@ -852,6 +883,32 @@ int qca8k_port_fdb_insert(struct qca8k_p
  			     QCA8K_ATU_STATUS_STATIC);
  }
  
@@ -651,7 +651,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  int qca8k_port_fdb_add(struct dsa_switch *ds, int port,
  		       const unsigned char *addr, u16 vid,
  		       struct dsa_db db)
-@@ -859,6 +909,11 @@
+@@ -859,6 +916,11 @@ int qca8k_port_fdb_add(struct dsa_switch
  	struct qca8k_priv *priv = ds->priv;
  	u16 port_mask = BIT(port);
  
@@ -663,7 +663,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	/* The ATU forwards a unicast hit to every port set in the
  	 * destination mask, so a host entry spanning multiple CPU ports
  	 * would deliver one copy of each host-bound frame per CPU port.
-@@ -895,6 +950,7 @@
+@@ -895,6 +957,7 @@ int qca8k_port_fdb_del(struct dsa_switch
  	if (dsa_is_cpu_port(ds, port) || dsa_is_dsa_port(ds, port))
  		return 0;
  
@@ -671,7 +671,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	if (!vid)
  		vid = QCA8K_PORT_VID_DEF;
  
-@@ -930,7 +986,7 @@
+@@ -930,7 +993,7 @@ int qca8k_port_mdb_add(struct dsa_switch
  {
  	struct qca8k_priv *priv = ds->priv;
  	const u8 *addr = mdb->addr;
@@ -680,7 +680,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  	if (!vid)
  		vid = QCA8K_PORT_VID_DEF;
-@@ -945,7 +1001,7 @@
+@@ -945,7 +1008,7 @@ int qca8k_port_mdb_del(struct dsa_switch
  {
  	struct qca8k_priv *priv = ds->priv;
  	const u8 *addr = mdb->addr;
@@ -689,7 +689,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  	if (!vid)
  		vid = QCA8K_PORT_VID_DEF;
-@@ -1044,6 +1100,90 @@
+@@ -1044,6 +1107,90 @@ err:
  	dev_err(priv->dev, "Failed to del mirror port from %d", port);
  }
  
@@ -780,7 +780,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  int qca8k_port_vlan_filtering(struct dsa_switch *ds, int port,
  			      bool vlan_filtering,
  			      struct netlink_ext_ack *extack)
-@@ -1051,6 +1191,17 @@
+@@ -1051,6 +1198,17 @@ int qca8k_port_vlan_filtering(struct dsa
  	struct qca8k_priv *priv = ds->priv;
  	int ret;
  
@@ -798,7 +798,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	if (vlan_filtering) {
  		ret = qca8k_rmw(priv, QCA8K_PORT_LOOKUP_CTRL(port),
  				QCA8K_PORT_LOOKUP_VLAN_MODE_MASK,
-@@ -1064,6 +1215,46 @@
+@@ -1064,6 +1222,46 @@ int qca8k_port_vlan_filtering(struct dsa
  	return ret;
  }
  
@@ -845,7 +845,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  int qca8k_port_vlan_add(struct dsa_switch *ds, int port,
  			const struct switchdev_obj_port_vlan *vlan,
  			struct netlink_ext_ack *extack)
-@@ -1073,6 +1264,59 @@
+@@ -1073,6 +1271,59 @@ int qca8k_port_vlan_add(struct dsa_switc
  	struct qca8k_priv *priv = ds->priv;
  	int ret;
  
@@ -905,7 +905,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	ret = qca8k_vlan_add(priv, port, vlan->vid, untagged);
  	if (ret) {
  		dev_err(priv->dev, "Failed to add VLAN to port %d (%d)", port, ret);
-@@ -1080,26 +1324,77 @@
+@@ -1080,26 +1331,77 @@ int qca8k_port_vlan_add(struct dsa_switc
  	}
  
  	if (pvid) {

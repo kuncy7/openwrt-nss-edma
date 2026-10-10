@@ -55,7 +55,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 
 --- a/drivers/net/dsa/realtek/rtl8365mb_main.c
 +++ b/drivers/net/dsa/realtek/rtl8365mb_main.c
-@@ -939,6 +939,15 @@ struct rtl8365mb_port {
+@@ -943,6 +943,15 @@ struct rtl8365mb_port {
   * @pcs: PCS for the SerDes external interface
   * @sds_supported: SerDes tuning parameters match the chip option, so the
   *                 SerDes interface modes can be advertised
@@ -71,7 +71,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
   *
   * Private data for this driver.
   */
-@@ -960,6 +969,14 @@ struct rtl8365mb {
+@@ -972,6 +981,14 @@ struct rtl8365mb {
  	unsigned long sds_relatch_last;		/* last attempt, for the interval */
  	unsigned int sds_relatch_count;		/* attempts this episode, 0 once latched */
  	u32 sds_misc_target_val;
@@ -86,7 +86,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  };
  
  #define pcs_to_rtl8365mb(_pcs) container_of((_pcs), struct rtl8365mb, pcs)
-@@ -1528,20 +1545,22 @@ static void rtl8365mb_sds_relatch_schedu
+@@ -1540,20 +1557,22 @@ static void rtl8365mb_sds_relatch_schedu
  			      time_before(jiffies, due) ? due - jiffies : 0);
  }
  
@@ -114,7 +114,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	bool is_d;
  	u16 val;
  	int ret;
-@@ -1655,6 +1674,25 @@ static int rtl8365mb_pcs_config(struct p
+@@ -1667,6 +1686,25 @@ static int rtl8365mb_pcs_config(struct p
  
  		WRITE_ONCE(mb->sds_misc_target_val, misc_val);
  	} else {
@@ -140,7 +140,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  		mutex_lock(&mb->sds_lock);
  		ret = regmap_update_bits(priv->map, RTL8365MB_SDS_MISC_REG,
  					 misc_mask, misc_val);
-@@ -1925,12 +1963,11 @@ static void rtl8365mb_pcs_get_state(stru
+@@ -1937,12 +1975,11 @@ static void rtl8365mb_pcs_get_state(stru
  	}
  }
  
@@ -157,7 +157,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	struct realtek_priv *priv = mb->priv;
  	u32 mask = RTL8365MB_SDS_MISC_SGMII_FDUP_MASK |
  		   RTL8365MB_SDS_MISC_SGMII_LINK_MASK |
-@@ -1981,6 +2018,161 @@ static void rtl8365mb_pcs_link_up(struct
+@@ -1993,6 +2030,161 @@ static void rtl8365mb_pcs_link_up(struct
  	}
  }
  
@@ -319,7 +319,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  static const struct phylink_pcs_ops rtl8365mb_pcs_ops = {
  	.pcs_inband_caps = rtl8365mb_pcs_inband_caps,
  	.pcs_config = rtl8365mb_pcs_config,
-@@ -3490,6 +3682,7 @@ static int rtl8365mb_setup(struct dsa_sw
+@@ -4025,6 +4217,7 @@ static int rtl8365mb_setup(struct dsa_sw
  	 * (in-band mode with autonegotiation disabled).
  	 */
  	mb->pcs.poll = true;
@@ -327,7 +327,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  
  	if (rtl8365mb_get_family(priv) == RTL8365MB_FAMILY_D)
  		INIT_DELAYED_WORK(&mb->sds_relatch,
-@@ -3681,6 +3874,11 @@ static void rtl8365mb_teardown(struct ds
+@@ -4222,6 +4415,11 @@ static void rtl8365mb_teardown(struct ds
  	struct realtek_priv *priv = ds->priv;
  	struct rtl8365mb *mb = priv->chip_data;
  
@@ -339,7 +339,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	if (rtl8365mb_get_family(priv) == RTL8365MB_FAMILY_D)
  		cancel_delayed_work_sync(&mb->sds_relatch);
  
-@@ -3757,6 +3955,10 @@ static int rtl8365mb_detect(struct realt
+@@ -4298,6 +4496,10 @@ static int rtl8365mb_detect(struct realt
  	if (ret)
  		return ret;
  
@@ -350,7 +350,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	mb->priv = priv;
  	mb->cpu.trap_port = RTL8365MB_MAX_NUM_PORTS;
  	mb->cpu.insert = RTL8365MB_CPU_INSERT_TO_ALL;
-@@ -4037,6 +4202,7 @@
+@@ -4321,6 +4523,7 @@ static const struct dsa_switch_ops rtl83
  	.setup = rtl8365mb_setup,
  	.teardown = rtl8365mb_teardown,
  	.phylink_get_caps = rtl8365mb_phylink_get_caps,

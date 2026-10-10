@@ -81,7 +81,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  		/* remove it from the ppp unit's list */
  		ppp_lock(ppp);
  		list_del_rcu(&pch->clist);
-@@ -3656,6 +3691,262 @@ static void *unit_find(struct idr *p, in
+@@ -3693,6 +3728,262 @@ static void *unit_find(struct idr *p, in
  	return idr_find(p, n);
  }
  

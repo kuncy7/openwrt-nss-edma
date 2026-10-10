@@ -20,7 +20,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/net/dsa/qca/qca8k-8xxx.c
 +++ b/drivers/net/dsa/qca/qca8k-8xxx.c
-@@ -514,7 +514,7 @@
+@@ -514,7 +514,7 @@ qca8k_bulk_read(void *ctx, const void *r
  
  	/* loop count times and increment reg of 4 */
  	for (i = 0; i < count; i++, reg += sizeof(u32)) {

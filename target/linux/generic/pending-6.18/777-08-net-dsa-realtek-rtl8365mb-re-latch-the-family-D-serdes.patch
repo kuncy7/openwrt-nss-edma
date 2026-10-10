@@ -79,7 +79,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
 
 --- a/drivers/net/dsa/realtek/rtl8365mb_main.c
 +++ b/drivers/net/dsa/realtek/rtl8365mb_main.c
-@@ -103,6 +103,7 @@
+@@ -104,6 +104,7 @@
  #include <linux/if_bridge.h>
  #include <linux/if_vlan.h>
  #include <linux/phylink.h>
@@ -87,9 +87,9 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  
  #include "realtek.h"
  #include "realtek-smi.h"
-@@ -285,6 +286,23 @@
- #define   RTL8365MB_SDS_MISC_SGMII_SPD_MASK		0x0180
- #define   RTL8365MB_SDS_MISC_MAC8_SEL_SGMII_MASK	0x0040
+@@ -288,6 +289,23 @@
+ #define   RTL8365MB_SDS_MISC_SGMII_SPD_MASK		GENMASK(8, 7)
+ #define   RTL8365MB_SDS_MISC_MAC8_SEL_SGMII_MASK	BIT(6)
  
 +/* Re-latch retry interval and attempt budget. Each attempt parks the
 + * SerDes for 20 ms, so a far end that never comes up must not be retried
@@ -111,7 +111,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  /* SerDes internal registers, accessed via the SDS_INDACS registers. The BMCR
   * data path reset holds BMCR_ANENABLE | BMCR_ISOLATE while toggling the
   * vendor-specific low bits from phase 1 to phase 2, which triggers a data path
-@@ -930,9 +948,18 @@ struct rtl8365mb {
+@@ -942,9 +960,18 @@ struct rtl8365mb {
  	const struct rtl8365mb_chip_info *chip_info;
  	struct rtl8365mb_cpu cpu;
  	struct mutex mib_lock;
@@ -130,7 +130,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  };
  
  #define pcs_to_rtl8365mb(_pcs) container_of((_pcs), struct rtl8365mb, pcs)
-@@ -1274,43 +1301,53 @@ static int rtl8365mb_ext_config_rgmii(st
+@@ -1286,43 +1313,53 @@ static int rtl8365mb_ext_config_rgmii(st
  static int rtl8365mb_sds_write(struct realtek_priv *priv, u8 index,
  			       u16 addr, u16 data)
  {
@@ -193,7 +193,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  
  	/* Wait for the indirect read to complete: the engine clears the BUSY
  	 * bit once the data register holds the result.
-@@ -1320,15 +1357,19 @@ static int rtl8365mb_sds_read(struct rea
+@@ -1332,15 +1369,19 @@ static int rtl8365mb_sds_read(struct rea
  				       !(val & RTL8365MB_SDS_INDACS_CMD_BUSY_MASK),
  				       10, 1000);
  	if (ret)
@@ -216,7 +216,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  }
  
  /* The vendor driver selects between two sets of SerDes tuning parameters based
-@@ -1429,6 +1470,64 @@ static int rtl8365mb_sds_raise_rate_limi
+@@ -1441,6 +1482,64 @@ static int rtl8365mb_sds_raise_rate_limi
  				  RTL8365MB_PORT6_EGRESSBW_CTRL1_MASK);
  }
  
@@ -281,7 +281,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  static int rtl8365mb_pcs_config(struct phylink_pcs *pcs, unsigned int neg_mode,
  				phy_interface_t interface,
  				const unsigned long *advertising,
-@@ -1450,6 +1549,13 @@ static int rtl8365mb_pcs_config(struct p
+@@ -1462,6 +1561,13 @@ static int rtl8365mb_pcs_config(struct p
  
  	is_d = rtl8365mb_get_family(priv) == RTL8365MB_FAMILY_D;
  
@@ -295,7 +295,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	/* Select the appropriate tuning table and SDS mode */
  	if (interface == PHY_INTERFACE_MODE_2500BASEX) {
  		if (is_d) {
-@@ -1517,10 +1623,6 @@ static int rtl8365mb_pcs_config(struct p
+@@ -1529,10 +1635,6 @@ static int rtl8365mb_pcs_config(struct p
  		if (ret)
  			return ret;
  
@@ -306,7 +306,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  		misc_val  = RTL8365MB_D_SDS_MISC_PA33PC_EN |
  			    RTL8365MB_D_SDS_MISC_PA12PC_EN |
  			    RTL8365MB_D_SDS_MISC_MAC6_SEL_SDS0 | sds_mode;
-@@ -1533,12 +1635,33 @@ static int rtl8365mb_pcs_config(struct p
+@@ -1545,12 +1647,33 @@ static int rtl8365mb_pcs_config(struct p
  			    RTL8365MB_SDS_MISC_MAC8_SEL_HSGMII_MASK;
  	}
  
@@ -345,7 +345,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  		val = sds_mode << RTL8365MB_DIGITAL_INTERFACE_SELECT_MODE_OFFSET(id);
  		ret = regmap_update_bits(priv->map,
  					 RTL8365MB_DIGITAL_INTERFACE_SELECT_REG(id),
-@@ -1585,8 +1708,122 @@ static int rtl8365mb_pcs_config(struct p
+@@ -1597,8 +1720,122 @@ static int rtl8365mb_pcs_config(struct p
  	val &= ~RTL8365MB_SDS_NWAY_EN_MASK;
  	val |= RTL8365MB_SDS_NWAY_RESTART_MASK;
  
@@ -470,7 +470,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  }
  
  static bool rtl8365mb_interface_is_serdes(phy_interface_t interface)
-@@ -1638,20 +1875,33 @@ static void rtl8365mb_pcs_get_state(stru
+@@ -1650,20 +1887,33 @@ static void rtl8365mb_pcs_get_state(stru
  
  	state->link = !!(status & RTL8365MB_SDS_LINK_STATUS_LINK_MASK);
  	state->an_complete = state->link;
@@ -507,7 +507,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	if (ret) {
  		state->link = false;
  		return;
-@@ -1721,7 +1971,9 @@ static void rtl8365mb_pcs_link_up(struct
+@@ -1733,7 +1983,9 @@ static void rtl8365mb_pcs_link_up(struct
  	 * force from rtl8365mb_phylink_mac_link_up(), where the resolved pause
  	 * modes are known.
  	 */
@@ -517,7 +517,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	if (ret) {
  		dev_err(priv->dev, "failed to force SerDes link: %pe\n",
  			ERR_PTR(ret));
-@@ -2021,11 +2273,13 @@ static void rtl8365mb_phylink_mac_link_u
+@@ -2033,11 +2285,13 @@ static void rtl8365mb_phylink_mac_link_u
  			if (rx_pause)
  				val |= RTL8365MB_SDS_MISC_SGMII_RXFC_MASK;
  
@@ -531,7 +531,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  			if (ret)
  				dev_err(priv->dev,
  					"failed to force SerDes pause modes on port %d: %pe\n",
-@@ -3237,6 +3491,10 @@ static int rtl8365mb_setup(struct dsa_sw
+@@ -3772,6 +4026,10 @@ static int rtl8365mb_setup(struct dsa_sw
  	 */
  	mb->pcs.poll = true;
  
@@ -542,7 +542,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  	ret = rtl8365mb_reset_chip(priv);
  	if (ret) {
  		dev_err(priv->dev, "failed to reset chip: %pe\n",
-@@ -3421,6 +3679,10 @@ out_error:
+@@ -3962,6 +4220,10 @@ out_error:
  static void rtl8365mb_teardown(struct dsa_switch *ds)
  {
  	struct realtek_priv *priv = ds->priv;
@@ -553,7 +553,7 @@ Signed-off-by: Mieczyslaw Nalewaj <namiltd@yahoo.com>
  
  	rtl8365mb_stats_teardown(priv);
  	rtl8365mb_irq_teardown(priv);
-@@ -3491,6 +3753,10 @@ static int rtl8365mb_detect(struct realt
+@@ -4032,6 +4294,10 @@ static int rtl8365mb_detect(struct realt
  	else
  		priv->num_ports = RTL8365MB_MAX_NUM_PORTS;
  

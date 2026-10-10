@@ -2,7 +2,8 @@ name: Issue triage
 
 # Routes bug reports that belong to OpenWrt (or another NSS build) back out with
 # the link, tells an incomplete report exactly what it is missing, and closes it
-# a week later if nothing arrives. The judgement lives in
+# a week later if nothing arrives. A report a maintainer has answered is left
+# alone: no checklist, no needs-info label, no closing. The judgement lives in
 # .github/workflows/scripts/issue-triage.js, which has its own test.
 
 on:
@@ -50,7 +51,7 @@ jobs:
       - uses: actions/github-script@v9
         with:
           script: |
-            const { triage } = require(`${process.env.GITHUB_WORKSPACE}/.github/workflows/scripts/issue-triage.js`);
+            const { triage, maintainerAnswered } = require(`${process.env.GITHUB_WORKSPACE}/.github/workflows/scripts/issue-triage.js`);
             const issue = context.payload.issue;
             const has = (n) => issue.labels.some((l) => l.name === n);
             if (has('confirmed')) return;
@@ -64,6 +65,15 @@ jobs:
               : `Everything the report needs is here now - thanks.\n\n${MARK}`;
 
             const { data: comments } = await github.rest.issues.listComments({ ...ref, per_page: 100 });
+
+            // Somebody is already on it: do not ask for more, and take back a
+            // needs-info this check set before they answered.
+            if (r.verdict === 'incomplete' && maintainerAnswered(comments)) {
+              for (const name of ['needs-info', 'no-response'].filter(has))
+                await github.rest.issues.removeLabel({ ...ref, name }).catch(() => {});
+              return;
+            }
+
             const mine = comments.find((c) => c.body.includes(MARK));
             if (mine) {
               if (mine.body !== body)
@@ -88,6 +98,23 @@ jobs:
     permissions:
       issues: write
     steps:
+      - uses: actions/checkout@v7
+      # A comment does not run the check above, so a maintainer's answer to a
+      # report that already carries needs-info is picked up here, before the
+      # clock below looks at the label.
+      - uses: actions/github-script@v9
+        with:
+          script: |
+            const { maintainerAnswered } = require(`${process.env.GITHUB_WORKSPACE}/.github/workflows/scripts/issue-triage.js`);
+            const open = await github.paginate(github.rest.issues.listForRepo,
+              { ...context.repo, state: 'open', labels: 'needs-info', per_page: 100 });
+            for (const issue of open.filter((i) => !i.pull_request)) {
+              const ref = { ...context.repo, issue_number: issue.number };
+              const { data: comments } = await github.rest.issues.listComments({ ...ref, per_page: 100 });
+              if (!maintainerAnswered(comments)) continue;
+              for (const name of ['needs-info', 'no-response'].filter((n) => issue.labels.some((l) => l.name === n)))
+                await github.rest.issues.removeLabel({ ...ref, name }).catch(() => {});
+            }
       - uses: actions/stale@v11
         with:
           only-issue-labels: needs-info

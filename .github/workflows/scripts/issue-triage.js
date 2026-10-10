@@ -153,4 +153,11 @@ function triage(body) {
 	};
 }
 
-module.exports = { parseForm, triage, F };
+// A report a maintainer has already answered is being worked by a person. The
+// checklist is for reports nobody has looked at yet: sent after that answer it
+// tells the reporter to go and collect what the maintainer did not need.
+const MAINTAINERS = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+const maintainerAnswered = (comments) =>
+	(comments || []).some((c) => MAINTAINERS.includes(c.author_association));
+
+module.exports = { parseForm, triage, maintainerAnswered, F };

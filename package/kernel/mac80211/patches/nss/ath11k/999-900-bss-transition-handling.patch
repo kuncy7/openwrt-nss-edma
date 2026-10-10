@@ -25,10 +25,10 @@ Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
 
 diff --git a/drivers/net/wireless/ath/ath11k/core.c b/drivers/net/wireless/ath/ath11k/core.c
-index 74177a4..49f1f2c 100644
+index efe9ea2..974ddcd 100644
 --- a/drivers/net/wireless/ath/ath11k/core.c
 +++ b/drivers/net/wireless/ath/ath11k/core.c
-@@ -2561,10 +2561,10 @@ void ath11k_core_pre_reconfigure_recovery(struct ath11k_base *ab)
+@@ -2602,10 +2602,10 @@ void ath11k_core_pre_reconfigure_recovery(struct ath11k_base *ab)
  		ar->monitor_vdev_id = -1;
  		clear_bit(ATH11K_FLAG_MONITOR_STARTED, &ar->monitor_flags);
  		clear_bit(ATH11K_FLAG_MONITOR_VDEV_CREATED, &ar->monitor_flags);
@@ -40,7 +40,7 @@ index 74177a4..49f1f2c 100644
  
  	reinit_completion(&ab->driver_recovery);
  }
-@@ -2912,7 +2912,6 @@ struct ath11k_base *ath11k_core_alloc(struct device *dev, size_t priv_size,
+@@ -2953,7 +2953,6 @@ struct ath11k_base *ath11k_core_alloc(struct device *dev, size_t priv_size,
  		goto err_free_wq;
  
  	mutex_init(&ab->core_lock);
@@ -48,7 +48,7 @@ index 74177a4..49f1f2c 100644
  	mutex_init(&ab->base_ast_lock);
  	spin_lock_init(&ab->base_lock);
  	mutex_init(&ab->vdev_id_11d_lock);
-@@ -2920,8 +2919,6 @@ struct ath11k_base *ath11k_core_alloc(struct device *dev, size_t priv_size,
+@@ -2961,8 +2960,6 @@ struct ath11k_base *ath11k_core_alloc(struct device *dev, size_t priv_size,
  	init_completion(&ab->reconfigure_complete);
  	init_completion(&ab->recovery_start);
  
@@ -58,10 +58,10 @@ index 74177a4..49f1f2c 100644
  	init_waitqueue_head(&ab->qmi.cold_boot_waitq);
  	INIT_WORK(&ab->restart_work, ath11k_core_restart);
 diff --git a/drivers/net/wireless/ath/ath11k/core.h b/drivers/net/wireless/ath/ath11k/core.h
-index 05a1641..6713889 100644
+index 96d65db..f24fbea 100644
 --- a/drivers/net/wireless/ath/ath11k/core.h
 +++ b/drivers/net/wireless/ath/ath11k/core.h
-@@ -763,9 +763,22 @@ struct ath11k {
+@@ -760,9 +760,22 @@ struct ath11k {
  			iftype[NUM_NL80211_BANDS][NUM_NL80211_IFTYPES];
  	} mac;
  
@@ -84,7 +84,7 @@ index 05a1641..6713889 100644
  	u32 min_tx_power;
  	u32 max_tx_power;
  	u32 txpower_limit_2g;
-@@ -846,6 +859,9 @@ struct ath11k {
+@@ -843,6 +856,9 @@ struct ath11k {
  	struct work_struct wmi_mgmt_tx_work;
  	struct sk_buff_head wmi_mgmt_tx_queue;
  
@@ -94,7 +94,7 @@ index 05a1641..6713889 100644
  	struct ath11k_wow wow;
  	struct completion target_suspend;
  	bool target_suspend_ack;
-@@ -1062,19 +1078,7 @@ struct ath11k_base {
+@@ -1059,19 +1075,7 @@ struct ath11k_base {
  	struct ath11k_hal_reg_capabilities_ext hal_reg_cap[MAX_RADIOS];
  	unsigned long long free_vdev_map;
  
@@ -112,9 +112,9 @@ index 05a1641..6713889 100644
 -	struct list_head peers;
 -	wait_queue_head_t peer_mapping_wq;
  	u8 mac_addr[ETH_ALEN];
- 	int userpd_id;
  	int irq_num[ATH11K_IRQ_NUM_MAX];
-@@ -1473,4 +1477,36 @@ static inline const char *ath11k_bus_str(enum ath11k_bus bus)
+ 	struct ath11k_ext_irq_grp ext_irq_grp[ATH11K_EXT_IRQ_GRP_NUM_MAX];
+@@ -1469,4 +1473,36 @@ static inline const char *ath11k_bus_str(enum ath11k_bus bus)
  
  void ath11k_core_pm_notifier_unregister(struct ath11k_base *ab);
  
@@ -196,7 +196,7 @@ index c656deb..7d2a962 100644
  		ath11k_warn(ab, "failed to find the peer to del rx tid\n");
  		spin_unlock_bh(&ab->base_lock);
 diff --git a/drivers/net/wireless/ath/ath11k/dp_rx.c b/drivers/net/wireless/ath/ath11k/dp_rx.c
-index a05f6aa..14c300d 100644
+index cc911b2..7c5d64e 100644
 --- a/drivers/net/wireless/ath/ath11k/dp_rx.c
 +++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
 @@ -545,7 +545,7 @@ static int ath11k_dp_rxdma_pdev_buf_setup(struct ath11k *ar)
@@ -208,7 +208,7 @@ index a05f6aa..14c300d 100644
  		ath11k_dp_rxdma_ring_buf_setup(ar, rx_ring, HAL_RXDMA_BUF);
  
  	if (ar->ab->hw_params.rxdma1_enable) {
-@@ -1101,17 +1101,17 @@ static int ath11k_peer_rx_tid_reo_update(struct ath11k *ar,
+@@ -1103,17 +1103,17 @@ static int ath11k_peer_rx_tid_reo_update(struct ath11k *ar,
  	return 0;
  }
  
@@ -230,7 +230,7 @@ index a05f6aa..14c300d 100644
  		goto unlock_exit;
  	}
  
-@@ -1119,14 +1119,14 @@ static void ath11k_dp_rx_tid_mem_free(struct ath11k_base *ab,
+@@ -1121,14 +1121,14 @@ static void ath11k_dp_rx_tid_mem_free(struct ath11k_base *ab,
  	if (!rx_tid->active)
  		goto unlock_exit;
  
@@ -247,7 +247,7 @@ index a05f6aa..14c300d 100644
  }
  
  /* Sends WMI config to filter packets to route packets to WBM release ring */
-@@ -1166,7 +1166,7 @@ int ath11k_peer_rx_tid_setup(struct ath11k *ar, const u8 *peer_mac, int vdev_id,
+@@ -1168,7 +1168,7 @@ int ath11k_peer_rx_tid_setup(struct ath11k *ar, const u8 *peer_mac, int vdev_id,
  
  	spin_lock_bh(&ab->base_lock);
  
@@ -256,7 +256,7 @@ index a05f6aa..14c300d 100644
  	if (!peer) {
  		ath11k_warn(ab, "failed to find the peer %pM to set up rx tid\n",
  			    peer_mac);
-@@ -1239,7 +1239,7 @@ int ath11k_peer_rx_tid_setup(struct ath11k *ar, const u8 *peer_mac, int vdev_id,
+@@ -1241,7 +1241,7 @@ int ath11k_peer_rx_tid_setup(struct ath11k *ar, const u8 *peer_mac, int vdev_id,
  	if (ret) {
  		ath11k_warn(ar->ab, "failed to setup rx reorder queue for peer %pM tid %d: %d\n",
  			    peer_mac, tid, ret);
@@ -265,7 +265,7 @@ index a05f6aa..14c300d 100644
  	}
  
  	return ret;
-@@ -1275,7 +1275,7 @@ int ath11k_dp_rx_ampdu_stop(struct ath11k_vif *arvif,
+@@ -1277,7 +1277,7 @@ int ath11k_dp_rx_ampdu_stop(struct ath11k_vif *arvif,
  
  	spin_lock_bh(&ab->base_lock);
  
@@ -274,7 +274,7 @@ index a05f6aa..14c300d 100644
  	if (!peer) {
  		ath11k_warn(ab, "failed to find the peer to stop rx aggregation\n");
  		spin_unlock_bh(&ab->base_lock);
-@@ -1352,7 +1352,7 @@ int ath11k_dp_peer_rx_pn_replay_config(struct ath11k_vif *arvif,
+@@ -1354,7 +1354,7 @@ int ath11k_dp_peer_rx_pn_replay_config(struct ath11k_vif *arvif,
  
  	spin_lock_bh(&ab->base_lock);
  
@@ -283,7 +283,7 @@ index a05f6aa..14c300d 100644
  	if (!peer) {
  		ath11k_warn(ab, "failed to find the peer to configure pn replay detection\n");
  		spin_unlock_bh(&ab->base_lock);
-@@ -1397,7 +1397,7 @@ static inline int ath11k_get_ppdu_user_index(struct htt_ppdu_stats *ppdu_stats,
+@@ -1399,7 +1399,7 @@ static inline int ath11k_get_ppdu_user_index(struct htt_ppdu_stats *ppdu_stats,
  	return -EINVAL;
  }
  
@@ -292,7 +292,7 @@ index a05f6aa..14c300d 100644
  					   u16 tag, u16 len, const void *ptr,
  					   void *data)
  {
-@@ -1622,7 +1622,7 @@ ath11k_update_per_peer_tx_stats(struct ath11k *ar,
+@@ -1624,7 +1624,7 @@ ath11k_update_per_peer_tx_stats(struct ath11k *ar,
  
  	rcu_read_lock();
  	spin_lock_bh(&ab->base_lock);
@@ -301,7 +301,7 @@ index a05f6aa..14c300d 100644
  
  	if (!peer || !peer->sta) {
  		spin_unlock_bh(&ab->base_lock);
-@@ -1771,8 +1771,8 @@ void ath11k_copy_to_bar(struct ath11k_peer *peer,
+@@ -1773,8 +1773,8 @@ void ath11k_copy_to_bar(struct ath11k_peer *peer,
  	peer->delayba_flag = false;
  }
  
@@ -312,7 +312,7 @@ index a05f6aa..14c300d 100644
  				       const void *ptr, void *data),
  			   void *data)
  {
-@@ -1804,7 +1804,7 @@ int ath11k_dp_htt_tlv_iter(struct ath11k_base *ab, const void *ptr, size_t len,
+@@ -1806,7 +1806,7 @@ int ath11k_dp_htt_tlv_iter(struct ath11k_base *ab, const void *ptr, size_t len,
  			return -EINVAL;
  		}
  
@@ -321,7 +321,7 @@ index a05f6aa..14c300d 100644
  		if (ret == -ENOMEM)
  			return ret;
  
-@@ -1850,7 +1850,7 @@ static int ath11k_htt_pull_ppdu_stats(struct ath11k_base *ab,
+@@ -1852,7 +1852,7 @@ static int ath11k_htt_pull_ppdu_stats(struct ath11k_base *ab,
  	}
  
  	ppdu_info->ppdu_id = ppdu_id;
@@ -330,7 +330,7 @@ index a05f6aa..14c300d 100644
  				     ath11k_htt_tlv_ppdu_stats_parse,
  				     (void *)ppdu_info);
  	if (ret) {
-@@ -1866,7 +1866,7 @@ static int ath11k_htt_pull_ppdu_stats(struct ath11k_base *ab,
+@@ -1868,7 +1868,7 @@ static int ath11k_htt_pull_ppdu_stats(struct ath11k_base *ab,
  		for (i = 0; i < ppdu_info->ppdu_stats.common.num_users; i++) {
  			peer_id = ppdu_info->ppdu_stats.user_stats[i].peer_id;
  			spin_lock_bh(&ab->base_lock);
@@ -339,7 +339,7 @@ index a05f6aa..14c300d 100644
  			if (!peer) {
  				spin_unlock_bh(&ab->base_lock);
  				continue;
-@@ -1886,7 +1886,7 @@ static int ath11k_htt_pull_ppdu_stats(struct ath11k_base *ab,
+@@ -1888,7 +1888,7 @@ static int ath11k_htt_pull_ppdu_stats(struct ath11k_base *ab,
  		for (i = 0; i < ppdu_info->bar_num_users; i++) {
  			peer_id = ppdu_info->ppdu_stats.user_stats[i].peer_id;
  			spin_lock_bh(&ab->base_lock);
@@ -348,7 +348,7 @@ index a05f6aa..14c300d 100644
  			if (!peer) {
  				spin_unlock_bh(&ab->base_lock);
  				continue;
-@@ -1985,6 +1985,7 @@ void ath11k_dp_htt_htc_t2h_msg_handler(struct ath11k_base *ab,
+@@ -1987,6 +1987,7 @@ void ath11k_dp_htt_htc_t2h_msg_handler(struct ath11k_base *ab,
  				       struct sk_buff *skb)
  {
  	struct ath11k_dp *dp = &ab->dp;
@@ -356,7 +356,7 @@ index a05f6aa..14c300d 100644
  	struct htt_resp_msg *resp = (struct htt_resp_msg *)skb->data;
  	enum htt_t2h_msg_type type = FIELD_GET(HTT_T2H_MSG_TYPE, *(u32 *)resp);
  	u16 peer_id;
-@@ -2015,7 +2016,16 @@ void ath11k_dp_htt_htc_t2h_msg_handler(struct ath11k_base *ab,
+@@ -2017,7 +2018,16 @@ void ath11k_dp_htt_htc_t2h_msg_handler(struct ath11k_base *ab,
  					 resp->peer_map_ev.info1);
  		ath11k_dp_get_mac_addr(resp->peer_map_ev.mac_addr_l32,
  				       peer_mac_h16, mac_addr);
@@ -374,7 +374,7 @@ index a05f6aa..14c300d 100644
  		break;
  	case HTT_T2H_MSG_TYPE_PEER_MAP2:
  		vdev_id = FIELD_GET(HTT_T2H_PEER_MAP_INFO_VDEV_ID,
-@@ -2032,17 +2042,39 @@ void ath11k_dp_htt_htc_t2h_msg_handler(struct ath11k_base *ab,
+@@ -2034,17 +2044,39 @@ void ath11k_dp_htt_htc_t2h_msg_handler(struct ath11k_base *ab,
  				       resp->peer_map_ev.info1);
  		is_wds = FIELD_GET(HTT_T2H_PEER_MAP_INFO2_NEXT_HOP_M,
  				   resp->peer_map_ev.info2);
@@ -416,7 +416,7 @@ index a05f6aa..14c300d 100644
  		peer_mac_h16 = FIELD_GET(HTT_T2H_PEER_UNMAP_INFO1_MAC_ADDR_H16,
  					 resp->peer_unmap_ev.info1);
  		ath11k_dp_get_mac_addr(resp->peer_map_ev.mac_addr_l32,
-@@ -2051,7 +2083,16 @@ void ath11k_dp_htt_htc_t2h_msg_handler(struct ath11k_base *ab,
+@@ -2053,7 +2085,16 @@ void ath11k_dp_htt_htc_t2h_msg_handler(struct ath11k_base *ab,
  				   resp->peer_unmap_ev.info1);
  		free_wds_count = FIELD_GET(HTT_T2H_PEER_UNMAP_INFO3_WDS_FREE_COUNT,
  					   resp->peer_unmap_ev.info3);
@@ -434,7 +434,7 @@ index a05f6aa..14c300d 100644
  		break;
  	case HTT_T2H_MSG_TYPE_PPDU_STATS_IND:
  		ath11k_htt_pull_ppdu_stats(ab, skb);
-@@ -2704,24 +2745,24 @@ static void ath11k_dp_rx_h_undecap(struct ath11k *ar, struct sk_buff *msdu,
+@@ -2706,24 +2747,24 @@ static void ath11k_dp_rx_h_undecap(struct ath11k *ar, struct sk_buff *msdu,
  }
  
  static struct ath11k_peer *
@@ -465,7 +465,7 @@ index a05f6aa..14c300d 100644
  	return peer;
  }
  
-@@ -2765,7 +2806,7 @@ static bool ath11k_dp_rx_check_fast_rx(struct ath11k *ar,
+@@ -2767,7 +2808,7 @@ static bool ath11k_dp_rx_check_fast_rx(struct ath11k *ar,
  		return false;
  
  	/* check if the msdu needs to be bridged to our connected peer */
@@ -474,7 +474,7 @@ index a05f6aa..14c300d 100644
  
  	if (f_peer && f_peer != peer)
  		return false;
-@@ -2804,7 +2845,7 @@ static void ath11k_dp_rx_h_mpdu(struct ath11k *ar,
+@@ -2806,7 +2847,7 @@ static void ath11k_dp_rx_h_mpdu(struct ath11k *ar,
  	}
  
  	spin_lock_bh(&ar->ab->base_lock);
@@ -483,7 +483,7 @@ index a05f6aa..14c300d 100644
  	if (peer) {
  		/* If the pkt is a valid IP packet and peer supports
  		 * fast rx, deliver directly to net, also note that
-@@ -3032,7 +3073,7 @@ static void ath11k_dp_rx_deliver_msdu(struct ath11k *ar, struct napi_struct *nap
+@@ -3034,7 +3075,7 @@ static void ath11k_dp_rx_deliver_msdu(struct ath11k *ar, struct napi_struct *nap
  		decap = ath11k_dp_rx_h_msdu_start_decap_type(ar->ab, rxcb->rx_desc);
  
  	spin_lock_bh(&ar->ab->base_lock);
@@ -492,7 +492,7 @@ index a05f6aa..14c300d 100644
  	if (peer && peer->sta)
  		pubsta = peer->sta;
  	spin_unlock_bh(&ar->ab->base_lock);
-@@ -3918,7 +3959,7 @@ int ath11k_peer_rx_frag_setup(struct ath11k *ar, const u8 *peer_mac, int vdev_id
+@@ -3920,7 +3961,7 @@ int ath11k_peer_rx_frag_setup(struct ath11k *ar, const u8 *peer_mac, int vdev_id
  
  	spin_lock_bh(&ab->base_lock);
  
@@ -501,7 +501,7 @@ index a05f6aa..14c300d 100644
  	if (!peer) {
  		ath11k_warn(ab, "failed to find the peer to set up fragment info\n");
  		spin_unlock_bh(&ab->base_lock);
-@@ -4337,7 +4378,7 @@ static int ath11k_dp_rx_frag_h_mpdu(struct ath11k *ar,
+@@ -4339,7 +4380,7 @@ static int ath11k_dp_rx_frag_h_mpdu(struct ath11k *ar,
  		return -EINVAL;
  
  	spin_lock_bh(&ab->base_lock);
@@ -510,7 +510,7 @@ index a05f6aa..14c300d 100644
  	if (!peer) {
  		ath11k_warn(ab, "failed to find the peer to de-fragment received fragment peer_id %d\n",
  			    peer_id);
-@@ -4399,7 +4440,7 @@ static int ath11k_dp_rx_frag_h_mpdu(struct ath11k *ar,
+@@ -4401,7 +4442,7 @@ static int ath11k_dp_rx_frag_h_mpdu(struct ath11k *ar,
  	timer_delete_sync(&rx_tid->frag_timer);
  	spin_lock_bh(&ab->base_lock);
  
@@ -519,7 +519,7 @@ index a05f6aa..14c300d 100644
  	if (!peer)
  		goto err_frags_cleanup;
  
-@@ -6058,7 +6099,7 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
+@@ -6060,7 +6101,7 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
  			trace_ath11k_htt_rxdesc(ar, skb->data, log_type, rx_buf_sz);
  
  		ppdu_info->peer_id = HAL_INVALID_PEERID;
@@ -528,7 +528,7 @@ index a05f6aa..14c300d 100644
  
  		if (test_bit(ATH11K_FLAG_MONITOR_STARTED, &ar->monitor_flags) &&
  		    pmon->mon_ppdu_status == DP_PPDU_STATUS_START &&
-@@ -6081,7 +6122,7 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
+@@ -6083,7 +6124,7 @@ int ath11k_dp_rx_process_mon_status(struct ath11k_base *ab, int mac_id,
  
  		rcu_read_lock();
  		spin_lock_bh(&ab->base_lock);

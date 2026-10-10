@@ -1,0 +1,56 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Subject: [PATCH] ath11k: reach the Q6 remoteproc through rproc_info
+
+999-927 keeps the CE interrupt handler and tasklet off the WLAN CE
+registers while the Q6 is not running, and reads the state from
+ab_ahb->tgt_rproc. With the multiPD series (openwrt/openwrt#25393) the
+remoteproc is shared by the radios of a SoC and lives in
+ab_ahb->rproc_info, which is cleared when a radio is deconfigured. Take
+it from there; no rproc_info means there is no Q6 to touch either.
+
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+
+--- a/drivers/net/wireless/ath/ath11k/ahb.c
++++ b/drivers/net/wireless/ath/ath11k/ahb.c
+@@ -573,12 +573,22 @@ static void ath11k_ahb_free_irq(struct ath11k_base *ab)
+ 	ath11k_ahb_free_ext_irq(ab);
+ }
+ 
++/* With multiPD the Q6 remoteproc is shared by the radios and hangs off
++ * rproc_info, which is gone once the radio is deconfigured.
++ */
++static bool ath11k_ahb_q6_running(struct ath11k_base *ab)
++{
++	struct ath11k_ahb_rproc_info *rproc_info = ath11k_ahb_priv(ab)->rproc_info;
++
++	return rproc_info && rproc_info->tgt_rproc &&
++	       rproc_info->tgt_rproc->state == RPROC_RUNNING;
++}
++
+ static void ath11k_ahb_ce_tasklet(struct tasklet_struct *t)
+ {
+ 	struct ath11k_ce_pipe *ce_pipe = from_tasklet(ce_pipe, t, intr_tq);
+-	struct ath11k_ahb *ab_ahb = ath11k_ahb_priv(ce_pipe->ab);
+ 
+-	if (ab_ahb->tgt_rproc->state != RPROC_RUNNING)
++	if (!ath11k_ahb_q6_running(ce_pipe->ab))
+ 		return;
+ 
+ 	ath11k_ce_per_engine_service(ce_pipe->ab, ce_pipe->pipe_num);
+@@ -589,7 +599,6 @@ static void ath11k_ahb_ce_tasklet(struct tasklet_struct *t)
+ static irqreturn_t ath11k_ahb_ce_interrupt_handler(int irq, void *arg)
+ {
+ 	struct ath11k_ce_pipe *ce_pipe = arg;
+-	struct ath11k_ahb *ab_ahb = ath11k_ahb_priv(ce_pipe->ab);
+ 
+ 	/*
+ 	 * While the Q6 is stopped or booting, the WLAN CE register space
+@@ -597,7 +606,7 @@ static irqreturn_t ath11k_ahb_ce_interrupt_handler(int irq, void *arg)
+ 	 * The remoteproc core marks the state before it starts the
+ 	 * TrustZone teardown, so skip the (edge triggered) interrupt.
+ 	 */
+-	if (ab_ahb->tgt_rproc->state != RPROC_RUNNING)
++	if (!ath11k_ahb_q6_running(ce_pipe->ab))
+ 		return IRQ_HANDLED;
+ 
+ 	/* last interrupt received for this CE */

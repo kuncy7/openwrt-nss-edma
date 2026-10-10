@@ -1,0 +1,31 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Subject: [PATCH] ath11k: nss: take the userpd id from the AHB data
+
+With the multiPD series (openwrt/openwrt#25393) the userpd id of a radio
+is a member of struct ath11k_ahb, not of struct ath11k_base, so the line
+ath11k_nss_init() logs when a SoC registers with the firmware no longer
+builds on IPQ5018. Read it through ath11k_ahb_priv() on the AHB bus and
+print 0 for a PCI radio, which has no user PD.
+
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+
+--- a/drivers/net/wireless/ath/ath11k/nss.c
++++ b/drivers/net/wireless/ath/ath11k/nss.c
+@@ -4,6 +4,7 @@
+  */
+ #include <linux/of.h>
+ 
++#include "ahb.h"
+ #include "debug.h"
+ #include "mac.h"
+ #include "nss.h"
+@@ -3084,7 +3085,8 @@ static int ath11k_nss_init(struct ath11k_base *ab)
+ 
+ 	ab->nss.if_num = ath11k_nss_get_interface_type(ab);
+ 
+-	ath11k_info(ab, "nss init soc nss if_num %d userpd_id %d\n", ab->nss.if_num, ab->userpd_id);
++	ath11k_info(ab, "nss init soc nss if_num %d userpd_id %d\n", ab->nss.if_num,
++		    ab->hif.bus == ATH11K_BUS_AHB ? ath11k_ahb_priv(ab)->userpd_id : 0);
+ 
+ 	if (ab->nss.if_num >= NSS_MAX_NET_INTERFACES) {
+ 		ath11k_warn(ab, "NSS invalid interface\n");

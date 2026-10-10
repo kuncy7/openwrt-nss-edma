@@ -49,6 +49,12 @@ WMENU:=Wireless Drivers
 
 # NSS Wi-Fi offload patch sets (applied only with CONFIG_ATH11K_NSS_SUPPORT)
 NSS_PATCH:=subsys ath11k
+# What this tree carries on top of that series: the IPQ5018/QCN6122 half of
+# the wifili bring-up, the 256 MiB NSS profile and the fixes that are not in
+# patches/nss/ yet. A directory of its own, applied after the whole of
+# patches/nss/, which stays a verbatim copy of what mac80211-nss-staging
+# exports (its export tool wipes those directories).
+NSS_EXTRA_PATCH:=ath11k
 
 define KernelPackage/mac80211/Default
   SUBMENU:=$(WMENU)
@@ -398,6 +404,9 @@ ifdef CONFIG_ATH11K_NSS_SUPPORT
 ifdef CONFIG_ATH11K_NSS_MESH_SUPPORT
 	$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/nss/mesh,nss/mesh/)
 endif
+	$(foreach driver,$(NSS_EXTRA_PATCH),
+		$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/nss-extra/$(driver),nss-extra/$(driver)/)
+	)
 endif
 	$(if $(QUILT),touch $(PKG_BUILD_DIR)/.quilt_used)
 endef
@@ -423,6 +432,9 @@ ifdef CONFIG_ATH11K_NSS_SUPPORT
 ifdef CONFIG_ATH11K_NSS_MESH_SUPPORT
 	$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/nss/mesh,nss/mesh/)
 endif
+	$(foreach driver,$(NSS_EXTRA_PATCH),
+		$(call Quilt/RefreshDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/nss-extra/$(driver),nss-extra/$(driver)/)
+	)
 endif
 endef
 

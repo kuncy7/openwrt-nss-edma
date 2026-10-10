@@ -22,6 +22,8 @@ PKG_CONFIG_DEPENDS += \
 	CONFIG_ATH11K_MEM_PROFILE_1G \
 	CONFIG_ATH11K_MEM_PROFILE_512M \
 	CONFIG_ATH11K_MEM_PROFILE_256M \
+	CONFIG_ATH11K_NSS_MEM_PROFILE_256M \
+	CONFIG_PACKAGE_nss-tools-dwmac \
 	CONFIG_ATH11K_DEBUGFS_STA \
 	CONFIG_ATH11K_DEBUGFS_HTT_STATS
 
@@ -74,7 +76,9 @@ config-$(CONFIG_ATH11K_NSS_SUPPORT) += ATH11K_NSS_SUPPORT
 config-$(CONFIG_ATH11K_NSS_MESH_SUPPORT) += ATH11K_NSS_MESH_SUPPORT
 config-$(CONFIG_ATH11K_MEM_PROFILE_1G) += ATH11K_MEM_PROFILE_1G
 config-$(CONFIG_ATH11K_MEM_PROFILE_512M) += ATH11K_MEM_PROFILE_512M
-config-$(CONFIG_ATH11K_MEM_PROFILE_256M) += ATH11K_MEM_PROFILE_256M
+# 256M is the 512M profile plus smaller RXDMA rings: define both symbols.
+config-$(CONFIG_ATH11K_MEM_PROFILE_256M) += ATH11K_MEM_PROFILE_512M ATH11K_MEM_PROFILE_256M
+config-$(CONFIG_ATH11K_NSS_MEM_PROFILE_256M) += ATH11K_NSS_MEM_PROFILE_256M
 config-$(CONFIG_ATH11K_DEBUGFS_STA) += ATH11K_DEBUGFS_STA
 config-$(CONFIG_ATH11K_DEBUGFS_HTT_STATS) += ATH11K_DEBUGFS_HTT_STATS
 
@@ -343,11 +347,27 @@ define KernelPackage/ath11k
   # recursive-dependency cycle through mac80211.
   FILES:=$(PKG_BUILD_DIR)/drivers/net/wireless/ath/ath11k/ath11k.ko
 ifdef CONFIG_ATH11K_NSS_SUPPORT
-  # ath11k needs its own modules.d entry so frame_mode reaches the module at
-  # boot; NSS offload itself stays opt-in (nss_offload defaults to 0 and is
-  # flipped at runtime before rebinding the radio).
+# ipq50xx: the 'nss' service of nss-tools-dwmac loads ath11k itself, after
+# the firmware plane is armed. Autoloading it here means kmodloader probes
+# the radios with nss_offload=1 about fourteen seconds before the core is
+# up; ath11k_nss_setup() then fails with -EINVAL and the radios stay on the
+# host path for the rest of the boot, or the Q6 wedges outright ("failed to
+# wait wlan mode request (mode 4): -110"). On multipd IPQ5018 there is no
+# rmmod to recover with. Reported by @danpawlik on the forum.
+ifneq ($(CONFIG_PACKAGE_nss-tools-dwmac),y)
   AUTOLOAD:=$(call AutoProbe,ath11k)
-  MODPARAMS.ath11k:=frame_mode=2
+ifeq ($(CONFIG_TARGET_qualcommax_ipq50xx),y)
+# ipq50xx without the service: the NSS core only comes up when the service
+# arms a GMAC, so nothing ever enables it here. With nss_offload=1 anyway,
+# ath11k_nss_setup() logs "NSS offload support disabled, falling back to
+# default mode" and still returns -ENOTSUPP, which core.c treats as fatal:
+# "failed to create pdev core: -524", no radios at all (measured on a TP-Link
+# Archer AX55 v1 image built without nss-tools-dwmac). Load them on the host.
+  MODPARAMS.ath11k:=nss_offload=0 frame_mode=2
+else
+  MODPARAMS.ath11k:=nss_offload=1 frame_mode=2
+endif
+endif
 endif
 endef
 
@@ -394,6 +414,17 @@ define KernelPackage/ath11k/config
                   (wifili). Requires the qca-ppe-nss glue to arm the NSS
                   data plane before the firmware is booted; Wi-Fi starts
                   in host mode and is rebound with nss_offload=1 at runtime.
+
+       config ATH11K_NSS_MEM_PROFILE_256M
+               bool "Smaller NSS allocations for 256 MiB IPQ5018/QCN6122 devices"
+               depends on ATH11K_NSS_SUPPORT && ATH11K_MEM_PROFILE_256M
+               default n
+               help
+                  Skip unused host TX arrays, reduce TX pools and completion
+                  rings, use private RX fragment caches, and reduce CE5 buffers.
+                  Only IPQ5018 and QCN6122 with active NSS use this profile.
+                  TX and CE5 queue capacity is lower. Other hardware and the
+                  host-only data path retain their existing allocations.
 
        config ATH11K_NSS_MESH_SUPPORT
                bool "Enable NSS 802.11s mesh offload (requires 11.4 firmware)"
@@ -443,6 +474,7 @@ define KernelPackage/ath11k/config
        choice
             prompt "Memory Profile"
             depends on PACKAGE_kmod-ath11k
+            default ATH11K_MEM_PROFILE_256M if TARGET_qualcommax_ipq50xx_DEVICE_cudy_p5 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_mi-router-ax3000t-v2
             default ATH11K_MEM_PROFILE_1G
             help
             	This option allows you to select the memory profile.
@@ -471,6 +503,10 @@ define KernelPackage/ath11k-ahb
   URL:=https://wireless.wiki.kernel.org/en/users/drivers/ath11k
   DEPENDS+= @TARGET_qualcommax +kmod-ath11k +kmod-qrtr-smd
   FILES:=$(PKG_BUILD_DIR)/drivers/net/wireless/ath/ath11k/ath11k_ahb.ko
+# Loaded by the 'nss' service on ipq50xx, not at boot - see kmod-ath11k.
+ifneq ($(CONFIG_PACKAGE_nss-tools-dwmac),y)
+  AUTOLOAD:=$(call AutoProbe,ath11k_ahb)
+endif
 endef
 
 define KernelPackage/ath11k-ahb/description
@@ -484,6 +520,14 @@ define KernelPackage/ath11k-pci
   URL:=https://wireless.wiki.kernel.org/en/users/drivers/ath11k
   DEPENDS+= @PCI_SUPPORT +kmod-qrtr-mhi +kmod-ath11k
   FILES:=$(PKG_BUILD_DIR)/drivers/net/wireless/ath/ath11k/ath11k_pci.ko
+# Same as kmod-ath11k-ahb: on ipq50xx the 'nss' service loads the bus driver
+# after the arm. Autoloading it here probes the radio while nss_offload is
+# still 0, and ath11k_base takes its nss.enabled from the parameter at probe
+# time - so the PCIe radio silently comes up on the host path and never
+# registers a wifili interface, whatever the service sets afterwards.
+ifneq ($(CONFIG_PACKAGE_nss-tools-dwmac),y)
+  AUTOLOAD:=$(call AutoProbe,ath11k_pci)
+endif
 endef
 
 define KernelPackage/ath11k-pci/description

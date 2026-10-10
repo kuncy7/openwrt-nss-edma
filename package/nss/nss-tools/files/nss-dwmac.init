@@ -31,6 +31,7 @@ START=19
 USE_PROCD=1
 
 NSSOFF=/sys/module/ath11k/parameters/nss_offload
+FRAMEMODE=/sys/module/ath11k/parameters/frame_mode
 FWM=/sys/kernel/debug/qca-dwmac-nss/fw_mask
 GLUE_STATUS=/sys/kernel/debug/qca-dwmac-nss/status
 
@@ -39,6 +40,14 @@ wifi_load() {
 
 	modprobe ath11k 2>/dev/null
 	[ -w $NSSOFF ] && echo "$offload" > $NSSOFF
+	# The firmware carries Wi-Fi as ethernet frames. ath11k defaults to
+	# native Wi-Fi and reads the mode when a radio registers; the
+	# autoload entry that would pass frame_mode=2 does not exist here,
+	# because this service loads the module. In native mode the radios
+	# come up, stations associate and the 4-way handshake never
+	# completes (measured on a GL-B3000). Same mode on the host path,
+	# as these boards have always run it.
+	[ -w $FRAMEMODE ] && echo 2 > $FRAMEMODE
 	# No pbuf tuning here: the NSS core is not up at this point in boot, so
 	# the driver refuses the sysctl with -EAGAIN (feed patch 0142) and the
 	# pools would silently stay at their defaults. nss-dwmac-up sizes them

@@ -142,6 +142,11 @@ wifi_load_now() {
     echo "WARN: enable NSS offloading under Wireless drivers in menuconfig (CONFIG_ATH11K_NSS_SUPPORT), then: make package/kernel/mac80211/clean"
     offload=0
   fi
+  # Ethernet frame mode, before the radios register: see wifi_load() in the
+  # nss init script. Without it the 4-way handshake never completes.
+  if [ -w /sys/module/ath11k/parameters/frame_mode ]; then
+    echo 2 > /sys/module/ath11k/parameters/frame_mode 2>/dev/null || true
+  fi
   # Pools before the radios bind: each offloaded radio pins ~4096 payloads in
   # its RXDMA ring out of the shared N2H pool (E177). Only on the armed path -
   # this function also runs after a failed takeover, where there is no core to

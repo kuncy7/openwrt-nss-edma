@@ -78,6 +78,7 @@ define Device/cmcc_rax3000q
 	NAND_SIZE := 128m
 endef
 TARGET_DEVICES += cmcc_rax3000q
+
 define Device/cudy_p5
 	$(call Device/FitImageLzma)
 	$(call Device/UbiFit)
@@ -397,6 +398,7 @@ define Device/tplink_re700x
 		ipq-wifi-tplink_re700x kmod-phy-realtek
 endef
 TARGET_DEVICES += tplink_re700x
+
 define Device/tplink_ex511-v2
 	$(call Device/FitImageLzma)
 	DEVICE_VENDOR := TP-Link

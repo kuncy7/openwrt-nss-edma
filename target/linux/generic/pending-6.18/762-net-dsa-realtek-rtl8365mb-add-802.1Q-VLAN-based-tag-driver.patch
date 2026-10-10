@@ -734,7 +734,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 @@ -58,6 +58,7 @@ struct tc_action;
  #define DSA_TAG_PROTO_MXL862_VALUE		30
  #define DSA_TAG_PROTO_MXL862_8021Q_VALUE	31
- #define DSA_TAG_PROTO_QCA_8021Q_VALUE		32
+ #define DSA_TAG_PROTO_QCA_8021Q_VALUE		33
 +#define DSA_TAG_PROTO_RTL8365MB_8021Q_VALUE	34
  
  enum dsa_tag_protocol {

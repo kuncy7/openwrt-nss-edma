@@ -97,9 +97,9 @@ Signed-off-by: Maxime Chevallier <maxime.chevallier@bootlin.com>
 +++ b/include/net/dsa.h
 @@ -59,6 +59,7 @@ struct tc_action;
  #define DSA_TAG_PROTO_MXL862_8021Q_VALUE	31
- #define DSA_TAG_PROTO_QCA_8021Q_VALUE		32
+ #define DSA_TAG_PROTO_QCA_8021Q_VALUE		33
  #define DSA_TAG_PROTO_RTL8365MB_8021Q_VALUE	34
-+#define DSA_TAG_PROTO_OOB_VALUE			33
++#define DSA_TAG_PROTO_OOB_VALUE			32
  
  enum dsa_tag_protocol {
  	DSA_TAG_PROTO_NONE		= DSA_TAG_PROTO_NONE_VALUE,

@@ -28,9 +28,9 @@ Assisted-by: Claude
 --- a/include/net/dsa.h
 +++ b/include/net/dsa.h
 @@ -60,6 +60,7 @@ struct tc_action;
- #define DSA_TAG_PROTO_QCA_8021Q_VALUE		32
+ #define DSA_TAG_PROTO_QCA_8021Q_VALUE		33
  #define DSA_TAG_PROTO_RTL8365MB_8021Q_VALUE	34
- #define DSA_TAG_PROTO_OOB_VALUE			33
+ #define DSA_TAG_PROTO_OOB_VALUE			32
 +#define DSA_TAG_PROTO_AN8855_8021Q_VALUE	35
  
  enum dsa_tag_protocol {

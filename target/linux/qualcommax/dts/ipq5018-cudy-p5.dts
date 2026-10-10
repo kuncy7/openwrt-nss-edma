@@ -103,15 +103,13 @@
 
 	/*
 	 * The vendor DT uses GPIO35 as the active-low modem "5g-power" line
-	 * and also exports it as "pwr". The modem needs 30 seconds after this
-	 * supply is enabled before PCIe enumeration.
+	 * and also exports it as "pwr".
 	 */
 	modem_power: regulator-modem-power {
 		compatible = "regulator-fixed";
 		regulator-name = "modem-power";
 		gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
 		regulator-boot-on;
-		startup-delay-us = <30000000>;
 	};
 
 	/*
@@ -532,7 +530,13 @@
 	status = "okay";
 };
 
+/* QCN6122 uses bank 0 directly; keep it out of the generic MSI pool. */
+&v2m0 {
+	/delete-property/ msi-controller;
+};
+
 &pcie1 {
+	msi-map = <0x0 &v2m1 0x0 0xff8>;
 	perst-gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
 	status = "okay";
 
@@ -542,7 +546,7 @@
 	 * GPIO18 is the stock active-low PERST# line.
 	 */
 	pcie@0 {
-		compatible = "pciclass,0604";
+		compatible = "cudy,p5-modem-slot", "pciclass,0604";
 		modem-power-supply = <&modem_power>;
 	};
 };

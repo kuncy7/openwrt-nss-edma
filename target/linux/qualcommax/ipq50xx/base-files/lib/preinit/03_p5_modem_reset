@@ -1,0 +1,28 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+
+p5_modem_early_reset() {
+	[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = "cudy,p5" ] || return 0
+
+	local reset=/sys/class/gpio/modem-reset/value
+	[ -d /sys/bus/pci/devices/0001:00:00.0 ] && [ -w "$reset" ] || {
+		echo "p5-modem: early reset skipped; PCIe host or reset control unavailable"
+		return 0
+	}
+
+	# Keep the pulse and its signal handlers separate from other preinit hooks.
+	(
+		trap 'echo 0 > "$reset"' EXIT
+		trap 'exit 1' HUP INT TERM
+		echo "p5-modem: early reset after PCIe host initialization"
+		echo 1 > "$reset" || exit 1
+		sleep 1
+		echo 0 > "$reset" || exit 1
+		trap - EXIT HUP INT TERM
+		echo "p5-modem: early reset released; modem starts while Wi-Fi initializes"
+	) || echo "p5-modem: early reset failed; startup recovery remains available"
+
+	return 0
+}
+
+boot_hook_add preinit_main p5_modem_early_reset

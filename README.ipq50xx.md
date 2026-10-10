@@ -49,11 +49,12 @@ them:
 | `qualcommax: ipq50xx: debug aids for NSS bring-up work` | `MAGIC_SYSRQ_SERIAL`, `DEVMEM` with `STRICT_DEVMEM` off. **Revert this commit for a build meant to be deployed** - it is one commit precisely so that is easy. |
 
 The companion feed is **[kuncy7/nss-packages](https://github.com/kuncy7/nss-packages/tree/ipq50xx-rebase)**,
-branch `ipq50xx-rebase`: Julius's `nss-packages` (last synced on 21 September
+branch `ipq50xx-rebase`: Julius's `nss-packages` (last synced on 10 October
 2026) with the ipq50xx work on top - the 12.2 firmware line as a selectable
 version, the per-target package split that lets the stack build on ipq50xx,
-the ECM patches for DSA ports (`0046`) and VLAN-aware bridges on them
-(`0047`, `0048`), the 256 MB memory profile for the boards
+the ECM patches for DSA ports (`0051`), VLAN-aware bridges on them
+(`0052`, `0053`) and a guest network behind an access point (`0054` to
+`0057`), the 256 MB memory profile for the boards
 that need it, and the driver fixes met during bring-up (core boot and clocks,
 N2H bounds, offloaded-traffic counters, CPU-load reporting; see the feed
 README).
@@ -135,7 +136,7 @@ make -j$(nproc)
 `feeds.conf.default` already names the companion feed (`nss`, branch
 `ipq50xx-rebase`). A `feeds.conf` of your own takes precedence over it, so
 if you keep one, it needs that same line. Any other NSS feed builds
-`qca-nss-ecm` without `0046`, the patch that lets ECM send a flow through a
+`qca-nss-ecm` without `0051`, the patch that lets ECM send a flow through a
 DSA port: Julius's `nss-packages` at the very same package version, the
 archived `ipq50xx-nss` branch of ours at an older one. That image boots,
 answers ping, and passes LAN<->LAN and Wi-Fi<->Wi-Fi traffic; every TCP flow
@@ -441,11 +442,11 @@ between the bridge's ports as they are, as `mt7530` does.
 Flows through such a bridge are accelerated like the rest. `qca-dsa-nss`
 gives each VLAN of the bridge a firmware VLAN interface on the conduit (the
 firmware hands a tagged frame it has no interface for to the host), and ECM
-writes the rule on the conduit with the flow's VLAN as its tag (`0047`) -
+writes the rule on the conduit with the flow's VLAN as its tag (`0052`) -
 for a tagged and an untagged member port alike, since the conduit carries
 the tag either way. Routing between two VLANs of the one bridge is
 accelerated too: a guest VLAN to the LAN, or the WAN port made a member of
-VLAN 2 and the WAN on `br-lan.2`. Stock ECM refused every such flow; `0048`
+VLAN 2 and the WAN on `br-lan.2`. Stock ECM refused every such flow; `0053`
 gives each side of a routed flow its own VLAN, the one of its `br-lan.N`.
 What stays on the host path: ICMP, GRE, ESP and multicast through a port of
 a VLAN-aware bridge (only the TCP/UDP frontends know the flow's VLAN), and
@@ -458,7 +459,8 @@ br-lan type bridge vlan_filtering 1` on a running bridge: netifd then rebuilds
 the bridge and the switch gets its VLANs, while switched on in place the wired
 ports have no VLAN in the switch and stay dead until the next network reload.
 A bridge with `vlan_filtering` and no `bridge-vlan` section keeps VLAN 1 as
-upstream does (0967; 0966 from QSDK used to drop it, and the LAN with it).
+upstream does (the QSDK bridge patch `0966` used to drop it, and the LAN
+with it; it no longer does).
 
 **The trunk (`vlan-trunk`, `lan-trunk`)** stays supported next to it. A board
 with no such switch gets it on first boot from the board table (see
@@ -707,12 +709,12 @@ Legend as in the [IPQ807x README](/README.md): ✅ offloaded & validated ·
 | IPv4 NAT / routing | ✅ | ECM; ~900 Mbit/s at the single-CPU-port ceiling, host >90 % idle |
 | IPv6 routing | 🟨 | built (`NSS_DRV_IPV6_ENABLE`), not measured |
 | 802.1Q VLAN | ✅ | the trunk itself; `qca-nss-vlan` |
-| VLAN-aware bridge (`bridge-vlan`) | ✅ | `dsa` topology: TCP/UDP routed and bridged through its ports, routing between its VLANs included (`0047`, `0048`); ICMP/GRE/ESP/multicast on the host |
+| VLAN-aware bridge (`bridge-vlan`) | ✅ | `dsa` topology: TCP/UDP routed and bridged through its ports, routing between its VLANs included (`0052`, `0053`); ICMP/GRE/ESP/multicast on the host |
 | L2 between LAN ports | ✅ | in the switch fabric (same VLAN), never reaches the SoC |
 | PPPoE | ✅ | Kernel patch `0961` gained the lockless `__ppp_hold_channels()` / `__ppp_is_multilink()` that ECM's deadlock fix needs, `kmod-qca-nss-drv-pppoe` is selected, and `nss-dwmac-up` **loads it** after the arm - without the manager in memory ECM tracks the PPPoE flows, marks every rule invalid and the WAN silently stays on the host path (measured: 0 rules, 22k exceptions in 20 s; the same silent failure AugustoAmaral hit before the package was selected at all, ~950 Mbit/s at 84-95 % idle on an AX6000 once it was in). Measured here on the `dsa` topology with the ISP's VLAN on the WAN port (`wan.35`, PPPoE server on the bench): rules created, 120k-157k firmware hits per 15-20 s, 0-65 exceptions, 2 % CPU, at the 100 Mbit/s ceiling of the bench client. On the trunk topology LS3434 runs it as `eth0.35` with `vtu='...;35:6t,2t'` (#154, #156): 890-950 down / 310 up at 1-5 % CPU. |
 | Wi-Fi (wifili) | ✅ | both radios; 734/447 Mbit/s over 5 GHz through the router, host ~90 % idle. Needs the core-clock fix - see below |
 | SQM / NSS qdiscs | ✅ | `dsa` topology: `sqm-scripts-nss` shapes the WAN flows in a lane on the conduit (`eth0`), the other ports' traffic passes unshaped; nsstbl + nssfq_codel in the firmware both ways (IGS for ingress). Measured on the GL-B3000: 91/91 Mbit/s at a 100/100 limit, 18/45 at 20/50, ~3 ms ping under load, host 97 % idle. See "SQM" below |
-| Multicast snooping (`qca-mcs`) | ⬜ | not carried for ipq50xx |
+| Multicast through ECM | ⬜ | built off on ipq50xx until it is measured with the DSA port nodes; the feed reads the bridge MDB now, `qca-mcs` is gone |
 | MAP-T / DS-Lite | 🟨 | `kmod-nat46` staging from the base; untested here |
 
 ### SQM

@@ -2,7 +2,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { parseForm, triage, F } = require('./issue-triage.js');
+const { parseForm, triage, maintainerAnswered, F } = require('./issue-triage.js');
 
 const form = fs.readFileSync(path.join(__dirname, '../../ISSUE_TEMPLATE/bug.yml'), 'utf8');
 
@@ -93,3 +93,11 @@ for (const note of ['serial console output:\n[ 81.2] Unable to handle kernel pag
 assert.ok(!triage(body({ [F.what]: 'Mesh peers drop after a reconnect.' })).add.includes('as-is'));
 
 console.log('issue-triage: ok');
+
+// A maintainer's answer takes the report out of the checklist's hands; the
+// reporter's own comments and the bot's do not.
+assert.strictEqual(maintainerAnswered([]), false);
+assert.strictEqual(maintainerAnswered(undefined), false);
+assert.strictEqual(maintainerAnswered([{ author_association: 'NONE' }, { author_association: 'CONTRIBUTOR' }]), false);
+for (const who of ['OWNER', 'MEMBER', 'COLLABORATOR'])
+	assert.strictEqual(maintainerAnswered([{ author_association: 'NONE' }, { author_association: who }]), true, who);

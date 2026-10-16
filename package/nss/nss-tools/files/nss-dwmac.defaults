@@ -167,7 +167,8 @@ nss_dwmac_board_defaults() {
 		switch_args='cpu_port=0 ports=0x1f wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
 		vtu='1:0t,1u,2u,3u;2:0t,4u'
 		;;
-	cmcc,mr3000d-ci)
+	cmcc,mr3000d-ci|\
+	ruijie,rg-ma3063)
 		# Run on the board (forum #313): the wired plane and 5 GHz Wi-Fi
 		# offload come up on this entry unchanged. Port 6 = CPU (SGMII,
 		# GMAC1), 4 = wan, 1-3 = lan3/lan2/lan1. GMAC0 is wired to the

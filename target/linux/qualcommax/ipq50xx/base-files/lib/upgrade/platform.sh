@@ -553,6 +553,13 @@ platform_do_upgrade() {
 		remove_oem_ubi_volume kernel
 		nand_do_upgrade "$1"
 		;;
+	ruijie,rg-ma3063)
+		# The stock bootipq loader picks the A/B slot from BOOTCONFIG,
+		# not from U-Boot env: always rewrite the OpenWrt "rootfs"
+		# partition in place.
+		CI_UBIPART="rootfs"
+		nand_do_upgrade "$1"
+		;;
 	*)
 		default_do_upgrade "$1"
 		;;

@@ -89,7 +89,7 @@ NSS memory profiles are a build-time choice for the whole image:
 | group | boards | memory profile |
 |---|---|---|
 | `std` | 512 MB and 1 GB boards (the release notes list them) | ath11k 1G, NSS medium |
-| `256m` | Cudy P5, TP-Link EX511 v2, Xiaomi Mi Router AX3000T v2 | ath11k 256M, NSS low |
+| `256m` | Cudy P5, Ruijie RG-MA3063, TP-Link EX511 v2, Xiaomi Mi Router AX3000T v2 | ath11k 256M, NSS low |
 
 The exact configuration of each group is in `.github/ci/ipq50xx/` (`common.config`
 + `<group>.config` + `kmods-extra.config`) and, for a given release, in the
@@ -866,8 +866,9 @@ What it needed, in this branch:
 
 ## 256 MB boards
 
-Three IPQ5018 boards on this branch have 256 MB - the TP-Link EX511 v2
-(IPQ5018 + QCN6122), the Cudy P5 and the Xiaomi Mi Router AX3000T v2 - and the rest
+Four IPQ5018 boards on this branch have 256 MB - the TP-Link EX511 v2
+(IPQ5018 + QCN6122), the Cudy P5, the Xiaomi Mi Router AX3000T v2 and the
+Ruijie RG-MA3063 (IPQ5018 + QCN6122 + QCA8337) - and the rest
 512 MB. The defaults
 tuned for 512 MB do not fit in 256: on the EX511 the first flashed build
 OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the branch and measured on the board
@@ -937,6 +938,14 @@ Result: ~850 / ~740 Mbit/s on 5 GHz with 4 streams (stock: 843 / 906),
 `vm.min_free_kbytes` (OpenWrt's init sets 16384 on anything over 64 MB,
 stock uses 2048), and ~50 MB of used memory that no `/proc/meminfo` counter
 names on this kernel config - attributing it needs `CONFIG_PAGE_OWNER`.
+
+### Ruijie RG-MA3063 notes
+
+The RG-MA3063 ships in several NAND and hardware revisions; only the
+Macronix NAND has been tried. Back up ART and both rootfs slots over
+serial before flashing, and keep the second slot on stock firmware as a
+fallback - the stock `bootipq` loader picks the slot from BOOTCONFIG.
+Sysupgrade always rewrites the OpenWrt `rootfs` partition in place.
 
 ## Fixes worth knowing about
 

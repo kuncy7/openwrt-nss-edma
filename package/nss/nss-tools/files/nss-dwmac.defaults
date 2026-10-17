@@ -167,8 +167,7 @@ nss_dwmac_board_defaults() {
 		switch_args='cpu_port=0 ports=0x1f wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
 		vtu='1:0t,1u,2u,3u;2:0t,4u'
 		;;
-	cmcc,mr3000d-ci|\
-	ruijie,rg-ma3063)
+	cmcc,mr3000d-ci)
 		# Run on the board (forum #313): the wired plane and 5 GHz Wi-Fi
 		# offload come up on this entry unchanged. Port 6 = CPU (SGMII,
 		# GMAC1), 4 = wan, 1-3 = lan3/lan2/lan1. GMAC0 is wired to the
@@ -179,6 +178,20 @@ nss_dwmac_board_defaults() {
 		trunk_if='1'
 		switch_args='cpu_port=6 ports=0x5e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
 		vtu='1:6t,1u,2u,3u;2:6t,4u'
+		;;
+	ruijie,rg-ma3063)
+		# WAN is GMAC0's own GE PHY (netdev 'wan', case label LAN1).
+		# GMAC1 is the switch trunk (eth1), ports 1-3 = lan2/lan3/lan4
+		# per case labels. No VTU: one untagged LAN, br-lan on eth1.
+		# fw_mask 0x3 arms both GMACs so LAN<->WAN routing is
+		# accelerated (with 0x2 the WAN sat on the host, 90-100% CPU).
+		fw_mask='0x3'
+		trunk='eth1'
+		trunk_if='1'
+		extra_ports='0:wan'
+		wan_on_trunk=0
+		switch_args='cpu_port=6 ports=0x4e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02'
+		vtu=''
 		;;
 	zyxel,scr50axe|\
 	iodata,wn-dax3000gr|\

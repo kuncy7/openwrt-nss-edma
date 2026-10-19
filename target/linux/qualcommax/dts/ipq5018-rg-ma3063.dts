@@ -165,6 +165,8 @@
 
 	label = "wan";
 
+	phy-mode = "sgmii";
+
 	nvmem-cells = <&hw_mac_addr 0>;
 	nvmem-cell-names = "mac-address";
 };
@@ -184,10 +186,6 @@
 
 &mdio0 {
 	status = "okay";
-};
-
-&ge_phy {
-	qcom,dac-preset-short-cable;
 };
 
 &mdio1 {
@@ -246,7 +244,6 @@
 				label = "lan4";
 				phy-handle = <&qca8337_2>;
 			};
-
 
 			port@6 {
 				reg = <6>;
@@ -333,11 +330,11 @@
 
 &wifi {
 	status = "okay";
+	ieee80211-freq-limit = <2400000 2483000>;
 
 	qcom,rproc = <&q6v5_wcss>;
 	qcom,ath11k-calibration-variant = "Ruijie-RG-MA3063";
 	qcom,ath11k-fw-memory-mode = <2>;
-	ieee80211-freq-limit = <2400000 2483000>;
 };
 
 &wifi1 {
@@ -346,7 +343,7 @@
 	qcom,rproc = <&q6v5_wcss>;
 	qcom,ath11k-calibration-variant = "Ruijie-RG-MA3063";
 	qcom,ath11k-fw-memory-mode = <2>;
-	ieee80211-freq-limit = <5150000 5730000>;
+	ieee80211-freq-limit = <5150000 5850000>;
 
 	memory-region = <&q6_region_qcn6122_1>, <&q6_region_ipq5018>, <&m3_dump_qcn6122_1>;
 	memory-region-names = "q6-region", "m3-region", "m3-dump";

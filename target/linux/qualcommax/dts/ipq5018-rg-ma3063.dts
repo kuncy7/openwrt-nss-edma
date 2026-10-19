@@ -165,10 +165,14 @@
 
 	label = "wan";
 
-	phy-mode = "sgmii";
 
 	nvmem-cells = <&hw_mac_addr 0>;
 	nvmem-cell-names = "mac-address";
+};
+
+
+&ge_phy {
+	qcom,dac-preset-short-cable;
 };
 
 &gmac1 {

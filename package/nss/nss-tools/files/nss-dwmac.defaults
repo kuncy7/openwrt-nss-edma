@@ -27,8 +27,12 @@
 # switch hangs off GMAC0), extra_ports lists any other GMAC in use as
 # '<if>:<netdev>' (a WAN PHY on the other GMAC), and fw_mask says which of
 # them the firmware gets - bit N = GMAC N. fabric='none' on a board with no
-# switch at all. Entries marked UNTESTED come straight from the DTS in
-# openwrt main and have not run on the board: the first report decides.
+# switch at all. keep_bridge=1 leaves br-lan as board.d made it: for a board
+# with no switch whose bridge already holds the netdev of every GMAC, where
+# putting the trunk alone into br-lan would drop the other port (Netgear
+# WAX630E: lan1 and lan2, both in br-lan). Entries marked UNTESTED come
+# straight from the DTS in openwrt main and have not run on the board: the
+# first report decides.
 
 . /lib/functions.sh
 
@@ -239,6 +243,23 @@ nss_dwmac_board_defaults() {
 		wan_on_trunk=0
 		switch_args='cpu_port=255 ports=0x1e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03'
 		vtu=''
+		;;
+	netgear,wax630e)
+		# Access point, no switch: GMAC1 = 'lan1' on a QCA8081
+		# (2500base-x, PoE uplink), GMAC0 = 'lan2' on the GE PHY.
+		# Both sit in br-lan and both go to the firmware;
+		# keep_bridge leaves br-lan with both ports. Run on the
+		# board 2026-10-20: both ports started, bridged Wi-Fi <->
+		# lan1 accelerated by ECM, ~940 Mbit/s at 1 GbE.
+		fw_mask='0x3'
+		trunk='lan1'
+		trunk_if='1'
+		extra_ports='0:lan2'
+		wan_on_trunk=0
+		fabric='none'
+		switch_args=''
+		vtu=''
+		keep_bridge=1
 		;;
 	yuncore,ax830|\
 	yuncore,ax850)
@@ -557,9 +578,10 @@ if [ "$known_board" = 1 ]; then
 		uci set nss.general.topology='lan-trunk'
 	fi
 
-	# br-lan: replace the DSA user ports with the trunk (or its lan VLAN).
+	# br-lan: replace the DSA user ports with the trunk (or its lan VLAN),
+	# unless the board entry keeps the bridge as board.d made it.
 	lan_dev="$(uci -q get network.@device[0].name)"
-	if [ "$lan_dev" = "br-lan" ]; then
+	if [ "$lan_dev" = "br-lan" ] && [ "${keep_bridge:-0}" != 1 ]; then
 		uci -q delete network.@device[0].ports
 		uci add_list network.@device[0].ports="$lan_port"
 	fi

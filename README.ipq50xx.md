@@ -622,7 +622,9 @@ The board side is small. The parts, in order of effort:
    MX6200, Xunison D50, CMCC MR3000D-CI (wired plane and 5 GHz offload on
    the table entry as written), Redmi AX5400 (both CPU links: LAN on
    `eth1.1`, WAN on `eth0.2`, Wi-Fi on the host), TP-Link EX511 v2
-   (RTL8367D, both radios, see the switch note below), Xiaomi AX6000.
+   (RTL8367D, both radios, see the switch note below), Xiaomi AX6000,
+   Netgear WAX630E (no switch, both GMACs in `br-lan`, all three radios
+   offloaded, see its notes below).
    Straight from the DTS, untested on the trunk: Linksys MX5500 and MR5500,
    Zyxel SCR50AXE, CMCC PZ-L8, I-O DATA WN-DAX3000GR, Elecom WRC-X3000GS2 /
    GST2, Yuncore AX830 and AX850, AVM FRITZ!Box 4050. On those the settings apply themselves on
@@ -976,6 +978,34 @@ Macronix NAND has been tried. Back up ART and both rootfs slots over
 serial before flashing, and keep the second slot on stock firmware as a
 fallback - the stock `bootipq` loader picks the slot from BOOTCONFIG.
 Sysupgrade always rewrites the OpenWrt `rootfs` partition in place.
+
+### Netgear WAX630E notes
+
+An access point: IPQ5018, IPQ5018 2.4 GHz + QCN6122 6 GHz on the Q6, a
+QCN9024 for 5 GHz on PCIe, 1 GB RAM, 256 MB SPI-NAND, no switch. `lan1`
+is a QCA8081 on GMAC1 (2.5G, PoE in), `lan2` the GE PHY on GMAC0; both
+are in `br-lan` with DHCP on `lan`, and the table entry's `keep_bridge`
+leaves them there. Both GMACs are armed (`fw_mask=0x3`), and all three
+radios register with the firmware, the QCN9024 on PCIe included. Bridged
+Wi-Fi <-> `lan1` flows are accelerated by ECM without `bridge-mgr`.
+Measured with iperf3 `-P 8` between a phone and a wired host behind a
+1 GbE switch: 6 GHz and 5 GHz (both 160 MHz) plateau at 920-960 Mbit/s
+each way, the 1 GbE ceiling, with short dips (open) and the CPU
+92-98 % idle (6 GHz without NSS: ~250 down, 350-400 up, both cores
+saturated). 2.5G on `lan1` has not been tried. Unlike the AX6000 with
+the same QCA8081 on GMAC1, `lan1` runs with its rings in the default
+`UTCM_SHARED`.
+
+The stock `bootipq` loader boots the active slot (`rootfs`, chosen by
+BOOTCONFIG) and increments `boot_count` before every boot from flash;
+once its first digit is above 3 it switches slots, so the board's
+`bootcount` script resets the counter on every boot from flash. Install
+OpenWrt from the stock web UI with `ui-factory.tar` (Management ->
+Maintenance -> Upgrade -> Firmware Upgrade, Local) or over serial (TFTP
+the initramfs, then `sysupgrade`). The stock upgrade carries its own
+configuration over, so after the web UI install hold the reset button
+for about 10 s once OpenWrt has booted. Either way the other slot keeps
+stock firmware; `fw_setenv boot_count 4` and a reboot go back to it.
 
 ## Fixes worth knowing about
 

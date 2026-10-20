@@ -253,6 +253,25 @@ json_cleanup() { :; }
               'wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02'}, 'rg-ma3063')
     assert not r.get('nss.general.vtu'), ('rg-ma3063', r.get('nss.general.vtu'))
 
+    # Netgear WAX630E: an access point with no switch and no WAN - lan1
+    # (QCA8081 on GMAC1) and lan2 (GE PHY on GMAC0) are both in br-lan, and
+    # keep_bridge leaves them there instead of putting the trunk in alone.
+    wax630e = {k: v for k, v in b3000.items() if not k.startswith('network.wan')}
+    wax630e.update({'network.lan.proto': 'dhcp', 'network.@device[0].ports': 'lan1 lan2'})
+    r = run('netgear,wax630e', wax630e)
+    check(r, {'network.@device[0].ports': 'lan1 lan2', 'network.lan.device': 'br-lan',
+              'network.lan.proto': 'dhcp', 'nss.general.topology': 'lan-trunk',
+              'nss.general.fw_mask': '0x3', 'nss.general.trunk': 'lan1',
+              'nss.general.trunk_if': '1', 'nss.general.extra_ports': '0:lan2',
+              'nss.general.fabric': 'none', 'nss.general.wifi_offload': '1'}, 'wax630e')
+    for key in ('nss.general.vtu', 'nss.general.switch_args', 'nss.general.switch_dev'):
+        assert key not in r, ('wax630e', key, r[key])
+    assert not [k for k in r if k.startswith('network.wan')], ('wax630e', 'a wan appeared')
+    assert run('netgear,wax630e', r) == r, 'WAX630E second run must change nothing'
+    # Control: an entry without keep_bridge still puts its trunk into br-lan alone.
+    r = run('yuncore,ax830', wax630e)
+    check(r, {'network.@device[0].ports': 'lan'}, 'ax830 without keep_bridge')
+
     # TP-Link Archer AX55 v1: an RTL8367S-VB on the unbind route - fabric
     # rtl8367s with the switch device at address 29, WAN on VLAN 2 of the
     # trunk like a QCA8337 board, no switch_args (the module's defaults are
@@ -434,6 +453,7 @@ json_cleanup() { :; }
 
 print('PASS: RA74 and Cudy P5 dual link, rerun, Wi-Fi choice kept, tagged WAN, '
       'no wan6, migrated config, B3000 MAC clone, D50 LAN-only trunk, RG-MA3063, '
+      'WAX630E keeps br-lan, '
       'EX511 headerless switch, dsa conduit consolidation (AX5400 fresh from board.json, '
       'existing wan section, uci override, LuCI sections, B3000, even split), '
       'Wi-Fi offload on with firmware memory mode 1, AN8855 picks dsa')

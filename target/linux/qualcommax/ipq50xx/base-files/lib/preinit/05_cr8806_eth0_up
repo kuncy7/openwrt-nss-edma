@@ -1,0 +1,16 @@
+# Xiaomi CR8806: GMAC0 (eth0) reaches the QCA8337 through its GE PHY and PHY4,
+# a PHY-to-PHY link. PHY4 starts autoneg at probe time (~2s); if the GE PHY
+# is not yet advertising 1000BASE-T, PHY4 gives up gigabit after ~13s and the
+# link never comes up. Opening eth0 early attaches the GE PHY in time.
+#
+# This is a property of the link, not of the board: it is needed only where
+# nothing else opens eth0 early. Here the WAN port is on eth1 and nothing
+# opens eth0. On a board with the same link and the WAN on eth0 (the Redmi
+# AX5400 by its DTS, not tested) netifd opens eth0 early and this hook should
+# not be needed; do not copy it there without checking the PHY4 link first.
+cr8806_eth0_up() {
+	[ "$(board_name)" = "xiaomi,cr8806" ] || return 0
+	ip link set eth0 up
+}
+
+boot_hook_add preinit_main cr8806_eth0_up

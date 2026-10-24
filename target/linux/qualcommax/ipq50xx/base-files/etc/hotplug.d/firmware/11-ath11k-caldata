@@ -92,7 +92,8 @@ case "$FIRMWARE" in
 		ath11k_patch_mac $(mtd_get_mac_binary 0:mfgdata 0x6) 0
 		ath11k_set_macflag
 		;;
-	tplink,archer-ax55-v1)
+	tplink,archer-ax55-v1|\
+	tplink,archer-ax58-v2)
 		caldata_extract "0:ART" 0x1000 0x20000
 		label_mac=$(get_mac_binary "/tmp/tp_data/default-mac" 0)
 		[ -n "$label_mac" ] && ath11k_patch_mac "$(macaddr_add "$label_mac" 2)" 0
@@ -203,7 +204,8 @@ case "$FIRMWARE" in
 		ath11k_patch_mac $(macaddr_add $(mtd_get_mac_binary 0:mfgdata 0x6) 64) 0
 		ath11k_set_macflag
 		;;
-	tplink,archer-ax55-v1)
+	tplink,archer-ax55-v1|\
+	tplink,archer-ax58-v2)
 		caldata_extract "0:ART" 0x26800 0x20000
 		label_mac=$(get_mac_binary "/tmp/tp_data/default-mac" 0)
 		[ -n "$label_mac" ] && ath11k_patch_mac "$(macaddr_add "$label_mac" 3)" 0

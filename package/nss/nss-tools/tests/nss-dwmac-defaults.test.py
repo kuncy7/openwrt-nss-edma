@@ -289,6 +289,9 @@ json_cleanup() { :; }
                                                      'network.wan6.device': 'eth0.35'}))
     check(r, {'network.wan.device': 'eth0.35', 'nss.general.vtu': '1:6t,1u,2u,3u,4u;35:6t,0u'},
           'ax55 vid 35')
+    # TP-Link Archer AX58 v2 shares the AX55 v1 entry.
+    r = run('tplink,archer-ax58-v2', b3000)
+    assert r == run('tplink,archer-ax55-v1', b3000), 'ax58 must match ax55'
 
     # TP-Link EX511 v2: a headerless RTL8367D that keeps its DSA driver. One
     # flat LAN on the untagged trunk, no VTU, no fabric module; the five DSA

@@ -61,7 +61,11 @@ nss_dwmac_board_defaults() {
 		switch_args='cpu_port=6 ports=0x7e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03,90000.mdio-1:04'
 		vtu='1:6t,1u,2u,3u,4u;2:6t,5u'
 		;;
-	tplink,archer-ax55-v1)
+	tplink,archer-ax55-v1|\
+	tplink,archer-ax58-v2)
+		# The AX58 v2 has the same switch and wiring (its rtl8365mb probe
+		# reports family C); it runs the dsa topology, and this fallback
+		# entry has not been run on it yet.
 		# RTL8367S-VB at MDIO address 29 on mdio1, driven by the rtl8365mb
 		# DSA driver. port 6 = CPU (2500base-x into GMAC1 = eth0), 0 = wan,
 		# 1-4 = lan1-4. Unlike the RTL8367D on the EX511 this one takes

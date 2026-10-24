@@ -13,6 +13,7 @@ ipq50xx_setup_interfaces()
 	linksys,mr2000|\
 	linksys,mr5500|\
 	tplink,archer-ax55-v1|\
+	tplink,archer-ax58-v2|\
 	tplink,ex511-v2|\
 	zyxel,scr50axe)
 		ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "wan"
@@ -87,7 +88,8 @@ ipq50xx_setup_macs()
 		[ -n "$lan_mac" ] && ucidef_set_label_macaddr "$lan_mac"
 		;;
 	mercusys,mr80x-v2|\
-	tplink,archer-ax55-v1)
+	tplink,archer-ax55-v1|\
+	tplink,archer-ax58-v2)
 		# factory MAC is 6 raw bytes in tp_data/default-mac, mounted
 		# read-only during preinit (see lib/preinit/09_mount_tp_data)
 		label_mac=$(get_mac_binary "/tmp/tp_data/default-mac" 0)

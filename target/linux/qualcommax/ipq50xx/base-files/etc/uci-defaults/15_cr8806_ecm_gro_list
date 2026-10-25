@@ -1,0 +1,15 @@
+#!/bin/sh
+# Xiaomi CR8806 (256 MiB): turn fraglist GRO off through ECM's own option.
+# NSS forwards established flows; only the first packets of each flow take
+# the Linux path, but their fraglist segments leave order-3 kmalloc-4k slabs
+# half used, so several MiB stay pinned after each burst of new flows.
+
+. /lib/functions.sh
+
+[ "$(board_name)" = "xiaomi,cr8806" ] || exit 0
+uci -q get ecm.general > /dev/null || exit 0
+
+uci -q set ecm.general.disable_gro_list='1'
+uci -q commit ecm
+
+exit 0

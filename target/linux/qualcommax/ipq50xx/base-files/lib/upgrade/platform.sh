@@ -503,6 +503,7 @@ platform_do_upgrade() {
 		remove_oem_ubi_volume kernel
 		nand_do_upgrade "$1"
 		;;
+	tplink,archer-ax53-v2|\
 	tplink,archer-ax55-v1|\
 	tplink,archer-ax58-v2|\
 	tplink,eap650-outdoor-v1|\

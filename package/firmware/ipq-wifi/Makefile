@@ -104,6 +104,7 @@ ALLWIFIBOARDS:= \
 	skspruce_wia3300-20 \
 	spectrum_sax1v1k \
 	tcl_linkhub-hh500v \
+	tplink_archer-ax53-v2 \
 	tplink_archer-ax55-v1 \
 	tplink_archer-ax58-v2 \
 	tplink_archer-c59-v1 \
@@ -324,6 +325,7 @@ $(eval $(call generate-ipq-wifi-package,ruijie_rg-ma3063,Ruijie RG-MA3063))
 $(eval $(call generate-ipq-wifi-package,skspruce_wia3300-20,SKSpruce WIA3300-20))
 $(eval $(call generate-ipq-wifi-package,spectrum_sax1v1k,Spectrum SAX1V1K))
 $(eval $(call generate-ipq-wifi-package,tcl_linkhub-hh500v,TCL LINKHUB HH500V))
+$(eval $(call generate-ipq-wifi-package,tplink_archer-ax53-v2,TP-Link Archer AX53 v2))
 $(eval $(call generate-ipq-wifi-package,tplink_archer-ax55-v1,TP-Link Archer AX55 v1))
 $(eval $(call generate-ipq-wifi-package,tplink_archer-ax58-v2,TP-Link Archer AX58 v2))
 $(eval $(call generate-ipq-wifi-package,tplink_archer-c59-v1,TP-Link Archer C59 V1))

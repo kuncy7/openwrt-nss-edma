@@ -8,7 +8,7 @@
 
 preinit_mount_tp_data() {
 	case "$(board_name)" in
-	mercusys,mr80x-v2|tplink,archer-ax55-v1|tplink,archer-ax58-v2) ;;
+	mercusys,mr80x-v2|tplink,archer-ax53-v2|tplink,archer-ax55-v1|tplink,archer-ax58-v2) ;;
 	*) return ;;
 	esac
 

@@ -47,6 +47,7 @@ netgear,wax630e)
 	ucidef_set_led_netdev "lan1" "LAN1" "green:lan-1" "lan1" "link tx rx"
 	ucidef_set_led_netdev "lan2" "LAN2" "green:lan-2" "lan2" "link tx rx"
 	;;
+tplink,archer-ax53-v2|\
 tplink,archer-ax55-v1|\
 tplink,archer-ax58-v2)
 	ucidef_set_led_netdev "lan" "LAN" "green:lan" "br-lan"

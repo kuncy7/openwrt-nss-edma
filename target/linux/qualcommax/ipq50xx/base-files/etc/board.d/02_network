@@ -12,6 +12,7 @@ ipq50xx_setup_interfaces()
 	iodata,wn-dax3000gr|\
 	linksys,mr2000|\
 	linksys,mr5500|\
+	tplink,archer-ax53-v2|\
 	tplink,archer-ax55-v1|\
 	tplink,archer-ax58-v2|\
 	tplink,ex511-v2|\
@@ -91,6 +92,7 @@ ipq50xx_setup_macs()
 		[ -n "$lan_mac" ] && ucidef_set_label_macaddr "$lan_mac"
 		;;
 	mercusys,mr80x-v2|\
+	tplink,archer-ax53-v2|\
 	tplink,archer-ax55-v1|\
 	tplink,archer-ax58-v2)
 		# factory MAC is 6 raw bytes in tp_data/default-mac, mounted

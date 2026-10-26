@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+/dts-v1/;
+
+#include "ipq5018-tplink-ax5x-256m.dtsi"
+
+/ {
+	model = "TP-Link Archer AX53 v2";
+	compatible = "tplink,archer-ax53-v2", "qcom,ipq5018";
+};
+
+&wifi {
+	qcom,ath11k-calibration-variant = "TP-Link-Archer-AX53-v2";
+};
+
+&wifi1 {
+	qcom,ath11k-calibration-variant = "TP-Link-Archer-AX53-v2";
+};

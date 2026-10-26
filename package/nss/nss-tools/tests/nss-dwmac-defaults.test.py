@@ -272,26 +272,25 @@ json_cleanup() { :; }
     r = run('yuncore,ax830', wax630e)
     check(r, {'network.@device[0].ports': 'lan'}, 'ax830 without keep_bridge')
 
-    # TP-Link Archer AX55 v1: an RTL8367S-VB on the unbind route - fabric
+    # TP-Link Archer AX53 v2 / AX55 v1: an RTL8367S-VB on the unbind route - fabric
     # rtl8367s with the switch device at address 29, WAN on VLAN 2 of the
     # trunk like a QCA8337 board, no switch_args (the module's defaults are
     # this wiring), and a tagged ISP handover moves the VTU's wan block.
-    r = run('tplink,archer-ax55-v1', b3000)
-    check(r, {'nss.general.fw_mask': '0x2', 'nss.general.trunk': 'eth0',
-              'nss.general.fabric': 'rtl8367s', 'nss.general.switch_dev': '90000.mdio-1:1d',
-              'nss.general.vtu': '1:6t,1u,2u,3u,4u;2:6t,0u', 'nss.general.topology': 'vlan-trunk',
-              'nss.general.wifi_offload': '1', 'network.wan.device': 'eth0.2',
-              'network.wan6.device': 'eth0.2', 'network.@device[0].ports': 'eth0.1'}, 'ax55')
-    for key in ('nss.general.switch_args', 'nss.general.extra_ports', 'nss.general.trunk_if'):
-        assert key not in r, ('ax55', key, r[key])
-    assert run('tplink,archer-ax55-v1', r) == r, 'second run must change nothing'
-    r = run('tplink,archer-ax55-v1', dict(b3000, **{'network.wan.device': 'eth0.35',
-                                                     'network.wan6.device': 'eth0.35'}))
-    check(r, {'network.wan.device': 'eth0.35', 'nss.general.vtu': '1:6t,1u,2u,3u,4u;35:6t,0u'},
-          'ax55 vid 35')
-    # TP-Link Archer AX58 v2 shares the AX55 v1 entry.
-    r = run('tplink,archer-ax58-v2', b3000)
-    assert r == run('tplink,archer-ax55-v1', b3000), 'ax58 must match ax55'
+    for board in ('tplink,archer-ax53-v2', 'tplink,archer-ax55-v1', 'tplink,archer-ax58-v2'):
+        tag = 'ax53' if 'ax53' in board else ('ax58' if 'ax58' in board else 'ax55')
+        r = run(board, b3000)
+        check(r, {'nss.general.fw_mask': '0x2', 'nss.general.trunk': 'eth0',
+                  'nss.general.fabric': 'rtl8367s', 'nss.general.switch_dev': '90000.mdio-1:1d',
+                  'nss.general.vtu': '1:6t,1u,2u,3u,4u;2:6t,0u', 'nss.general.topology': 'vlan-trunk',
+                  'nss.general.wifi_offload': '1', 'network.wan.device': 'eth0.2',
+                  'network.wan6.device': 'eth0.2', 'network.@device[0].ports': 'eth0.1'}, tag)
+        for key in ('nss.general.switch_args', 'nss.general.extra_ports', 'nss.general.trunk_if'):
+            assert key not in r, (tag, key, r[key])
+        assert run(board, r) == r, 'second run must change nothing'
+        r = run(board, dict(b3000, **{'network.wan.device': 'eth0.35',
+                                      'network.wan6.device': 'eth0.35'}))
+        check(r, {'network.wan.device': 'eth0.35', 'nss.general.vtu': '1:6t,1u,2u,3u,4u;35:6t,0u'},
+              f'{tag} vid 35')
 
     # TP-Link EX511 v2: a headerless RTL8367D that keeps its DSA driver. One
     # flat LAN on the untagged trunk, no VTU, no fabric module; the five DSA

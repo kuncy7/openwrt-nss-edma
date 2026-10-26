@@ -41,8 +41,14 @@
 		 * Xiaomi's U-Boot passes ubi.mtd=rootfs or ubi.mtd=rootfs_1
 		 * depending on flag_boot_rootfs. Keep it, so OpenWrt can live
 		 * in either slot, and only override the root device.
+		 *
+		 * coherent_pool sizes the three atomic DMA pools (kernel, DMA,
+		 * DMA32). 2M was needed while the MPD firmware loader took its
+		 * segment buffers from the atomic pool. That loader is no longer
+		 * in the kernel (multiPD is done in ath11k), so 512K is enough,
+		 * as on the other 256 MiB boards.
 		 */
-		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=2M";
+		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=512K";
 		stdout-path = "serial0:115200n8";
 	};
 

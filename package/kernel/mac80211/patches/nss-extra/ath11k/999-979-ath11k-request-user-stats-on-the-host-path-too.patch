@@ -1,0 +1,28 @@
+From: Adriel Santos <adriel@adriel.eu>
+Subject: [PATCH] wifi: ath11k: request USER_STATS on the host path too
+
+On the host path a station's signal reads 0, with an average of -95 dBm:
+the noise floor added to an empty average. 087 updates a peer's PPDU
+statistics, RSSI included, only when fc_valid is set, and only the
+PPDU_END_USER_STATS TLV sets it. The default monitor status filter does
+not request that TLV; ath11k_nss_ext_rx_stats() adds it only with NSS
+offload, which is why NSS mode shows a real signal.
+
+Request it in the default filter. NSS mode already runs with exactly this
+mask. Three of the five places that restore the default filter (dp_tx.c
+and two in debugfs.c) don't go through ath11k_nss_ext_rx_stats(), so
+they lose the TLV in NSS mode too; with this they keep it.
+
+Signed-off-by: Adriel Santos <adriel@adriel.eu>
+Assisted-by: Claude:claude-opus-5-5
+---
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -230,6 +230,7 @@ ath11k_phymodes[NUM_NL80211_BANDS][ATH11
+ 
+ const struct htt_rx_ring_tlv_filter ath11k_mac_mon_status_filter_default = {
+ 	.rx_filter = HTT_RX_FILTER_TLV_FLAGS_MPDU_START |
++		     HTT_RX_FILTER_TLV_FLAGS_PPDU_END_USER_STATS |
+ 		     HTT_RX_FILTER_TLV_FLAGS_PPDU_END |
+ 		     HTT_RX_FILTER_TLV_FLAGS_PPDU_END_STATUS_DONE,
+ 	.pkt_filter_flags0 = HTT_RX_FP_MGMT_FILTER_FLAGS0,

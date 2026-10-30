@@ -1,0 +1,45 @@
+From: Adriel Santos <adriel@adriel.eu>
+Subject: [PATCH] net: dsa: an8855: leave room for a second 802.1Q tag
+
+The switch's global RX length (GMACCR) is sized for one tag: MTU +
+ETH_HLEN + MTK_TAG_LEN + ETH_FCS_LEN, 1522 bytes at MTU 1500. The
+an8855-8021q tagger sends a VLAN upper's frame with its own tag only, so
+a port and a single VLAN upper of it fit. A VLAN upper of a VLAN upper
+(QinQ, wan.20.30) is [20][30] on the CPU link and on the wire: a
+1500-byte packet makes a 1526-byte frame.
+
+The switch drops such frames at the MAC RX of the port they enter, the
+CPU port included, and counts them in RxBadPktBytes. Measured on a
+Xiaomi AX3000T v2 with wan.20.30 at MTU 1500: pings passed up to a
+1522-byte frame and failed from 1523, and TCP over the QinQ interface
+moved no data in either direction, on the host path and offloaded alike
+(ECM installs the rules, the switch drops the frames). With this patch
+every size passed, the drop counters stayed at 0, and TCP ran at 936
+Mbit/s each way, offloaded.
+
+Add one VLAN_HLEN, which selects the 1536-byte setting at MTU 1500. Do it
+in either tag mode: the NSS bring-up switches the conduit from mtk to
+an8855-8021q at run time, after DSA programmed the CPU port's MTU, and
+the register is only rewritten on an MTU change. (A version that added
+the tag in 8021q mode only was measured to change nothing for that
+reason.) From reading the code, not measured: a customer-tagged frame
+through a VLAN-unaware bridge carries two tags as well, and so does a
+QinQ frame in mtk mode.
+
+Signed-off-by: Adriel Santos <adriel@adriel.eu>
+Assisted-by: Claude:claude-opus-5-5
+---
+--- a/drivers/net/dsa/an8855.c
++++ b/drivers/net/dsa/an8855.c
+@@ -1446,6 +1446,11 @@ an8855_port_change_mtu(struct dsa_switch
+ 
+ 	/* RX length also includes Ethernet header, MTK tag, and FCS length */
+ 	length = new_mtu + ETH_HLEN + MTK_TAG_LEN + ETH_FCS_LEN;
++	/* ...and a second 802.1Q tag, for QinQ: the limit applies at every
++	 * port's MAC RX, the CPU port included. In either tag mode, since the
++	 * tagger can change at run time without this being rewritten.
++	 */
++	length += VLAN_HLEN;
+ 	if (length <= 1522)
+ 		val = AN8855_MAX_RX_PKT_1518_1522;
+ 	else if (length <= 1536)

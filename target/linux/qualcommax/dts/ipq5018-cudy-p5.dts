@@ -102,26 +102,22 @@
 	};
 
 	/*
-	 * The vendor DT uses GPIO35 as the active-low modem "5g-power" line
-	 * and also exports it as "pwr". The modem needs 30 seconds after this
-	 * supply is enabled before PCIe enumeration.
-	 */
-	modem_power: regulator-modem-power {
-		compatible = "regulator-fixed";
-		regulator-name = "modem-power";
-		gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
-		regulator-boot-on;
-		startup-delay-us = <30000000>;
-	};
-
-	/*
-	 * GPIO30 is an active-high modem reset trigger.
-	 * Rising edge restarts the modem,
-	 * a falling edge causes no observed action.
+	 * GPIO35 is the active-low modem power line (vendor "5g-power"/"pwr").
+	 * gpio-export,output is applied as a raw level: <0> keeps the modem
+	 * powered from boot; in sysfs, value 1 = on.
+	 *
+	 * GPIO30 is an active-high modem reset trigger. A rising edge restarts
+	 * the modem, a falling edge causes no observed action.
 	 */
 	gpio-export {
 		compatible = "gpio-export";
 		#size-cells = <0>;
+
+		modem-power {
+			gpio-export,name = "modem-power";
+			gpio-export,output = <0>;
+			gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
+		};
 
 		modem-reset {
 			gpio-export,name = "modem-reset";
@@ -535,16 +531,6 @@
 &pcie1 {
 	perst-gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
 	status = "okay";
-
-	/*
-	 * This is the root port defined by ipq5018.dtsi. PCI slot power control
-	 * owns GPIO35 and rescans the bus after enabling the modem supply.
-	 * GPIO18 is the stock active-low PERST# line.
-	 */
-	pcie@0 {
-		compatible = "pciclass,0604";
-		modem-power-supply = <&modem_power>;
-	};
 };
 
 &watchdog {

@@ -1,0 +1,78 @@
+From: Tribhoon <amoapo0@gmail.com>
+Subject: [PATCH] wifi: ath11k: defer REO TID cleanup until after NSS peer delete
+
+With NSS Wi-Fi offload enabled, the NSS wifili firmware owns the
+QCN6122 REO ring. ath11k_mac_station_remove() previously called
+ath11k_dp_peer_cleanup() before ath11k_peer_delete().
+ath11k_dp_peer_cleanup() issues HAL_REO_CMD_UPDATE_RX_QUEUE (VLD=0)
+for every TID, marking the REO queue descriptors invalid in hardware.
+
+When a client drops uncleanly (out-of-range, low ACKs, inactivity),
+if those commands reach hardware while the NSS firmware still has
+in-flight REO entries for the departing peer, the firmware's REO
+processing loop stalls: it cannot advance past a descriptor whose
+queue is now marked invalid. The stall is total: reo_reaped stops
+advancing, rx_desc_in_use accumulates orphaned RXDMA buffers, and
+the 5 GHz radio is dead until ath11k_ahb is reloaded.
+
+Moving ath11k_dp_peer_cleanup() after ath11k_peer_delete() in
+ath11k_mac_station_remove() fails because ath11k_peer_delete() ends
+by waiting for the HTT PEER_UNMAP event, which deletes and frees the
+peer struct (kfree(peer)). Calling dp_peer_cleanup() after
+peer_delete() would find NULL from ath11k_peer_find() and silently
+abort without invalidating or freeing the REO TID queues.
+
+Instead, when NSS offload is enabled:
+1. In ath11k_mac_station_remove(), skip the pre-delete dp_peer_cleanup
+   (keeping the non-NSS path untouched).
+2. In __ath11k_peer_delete(), call ath11k_dp_peer_cleanup() immediately
+   after ath11k_nss_peer_delete() returns.
+
+ath11k_nss_peer_delete() sends NSS_WIFILI_PEER_DELETE_MSG and waits
+synchronously for the firmware's acknowledgment. By the time it
+returns, the NSS firmware has completed peer deletion and drained all
+in-flight work. The peer struct remains valid and active in the peer
+list at this point, allowing ath11k_dp_peer_cleanup() to safely mark
+the REO queues invalid in hardware and reclaim them before WMI peer
+delete and HTT unmap free the peer.
+
+Fixes: #53
+Signed-off-by: Tribhoon <amoapo0@gmail.com>
+
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -10556,7 +10556,13 @@ static int ath11k_mac_station_remove(st
+ 		}
+ 	}
+ 
+-	ath11k_dp_peer_cleanup(ar, arvif->vdev_id, sta->addr);
++	/*
++	 * For NSS Wi-Fi offload, dp_peer_cleanup is deferred until inside
++	 * __ath11k_peer_delete() after ath11k_nss_peer_delete() completes,
++	 * preventing in-flight REO descriptor stalls in NSS firmware.
++	 */
++	if (!ar->ab->nss.enabled)
++		ath11k_dp_peer_cleanup(ar, arvif->vdev_id, sta->addr);
+ 
+ 	ret = ath11k_peer_delete(ar, arvif->vdev_id, sta->addr);
+ 	if (ret)
+--- a/drivers/net/wireless/ath/ath11k/peer.c
++++ b/drivers/net/wireless/ath/ath11k/peer.c
+@@ -737,6 +737,17 @@ static int __ath11k_peer_delete(struct a
+ 	reinit_completion(&ar->peer_delete_done);
+ 	ath11k_nss_peer_delete(ar, vdev_id, addr);
+ 
++	/*
++	 * With NSS Wi-Fi offload, the NSS wifili firmware owns the QCN6122 REO
++	 * ring. ath11k_nss_peer_delete() sends NSS_WIFILI_PEER_DELETE_MSG and
++	 * synchronously waits for the firmware's completion (handled by
++	 * ath11k_nss_peer_mem_free() once in-flight work has drained).
++	 * Invalidate REO TID queues now, while NSS firmware has finished with
++	 * this peer and before WMI delete / HTT unmap frees the peer struct.
++	 */
++	if (ar->ab->nss.enabled)
++		ath11k_dp_peer_cleanup(ar, vdev_id, addr);
++
+ #ifdef CPTCFG_ATH11K_NSS_SUPPORT
+ 	mutex_lock(&ab->base_ast_lock);
+ #endif

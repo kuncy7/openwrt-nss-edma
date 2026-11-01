@@ -1,0 +1,74 @@
+From: Łukasz Szczur <lukasz2317@gmail.com>
+Subject: [PATCH] GPIO: gpio-export: optional level to drive on restart
+
+Some boards need an exported GPIO driven to a defined level right before
+the SoC resets, e.g. to cut power to a modem that otherwise keeps the
+SoC from booting after a warm reset. Add two optional child properties:
+
+  gpio-export,restart-value     raw level to drive from the restart chain
+  gpio-export,restart-delay-ms  busy-wait after driving it (default 0)
+
+The handler is registered with SYS_OFF_PRIO_HIGH so it runs before the
+default-priority platform reset handlers (PSCI uses 129).
+
+Signed-off-by: Łukasz Szczur <lukasz2317@gmail.com>
+--- a/drivers/gpio/gpiolib-of.c
++++ b/drivers/gpio/gpiolib-of.c
+@@ -1307,5 +1307,30 @@
+ #ifdef CONFIG_GPIO_SYSFS
+ 
++#include <linux/delay.h>
++#include <linux/reboot.h>
++
++struct gpio_export_restart {
++	struct gpio_desc *desc;
++	int value;
++	u32 delay_ms;
++};
++
++/*
++ * Runs from the restart handler chain, after device_shutdown() and before
++ * the platform (e.g. PSCI) reset. Interrupts are off, so only non-sleeping
++ * GPIO accessors and busy-wait delays may be used here.
++ */
++static int gpio_export_restart_cb(struct sys_off_data *data)
++{
++	struct gpio_export_restart *r = data->cb_data;
++
++	gpiod_set_raw_value(r->desc, r->value);
++	if (r->delay_ms)
++		mdelay(r->delay_ms);
++
++	return NOTIFY_DONE;
++}
++
+ static const struct of_device_id gpio_export_ids[] = {
+ 	{ .compatible = "gpio-export" },
+ 	{ /* sentinel */ }
+@@ -1344,6 +1369,26 @@
+ 
+ 			dmc = fwnode_property_present(child, "gpio-export,direction_may_change");
+ 			gpio_export_with_name(desc, dmc, name);
++
++			if (!fwnode_property_read_u32(child, "gpio-export,restart-value", &val)) {
++				struct gpio_export_restart *r;
++
++				r = devm_kzalloc(dev, sizeof(*r), GFP_KERNEL);
++				if (!r)
++					return -ENOMEM;
++
++				r->desc = desc;
++				r->value = !!val;
++				fwnode_property_read_u32(child, "gpio-export,restart-delay-ms",
++							 &r->delay_ms);
++
++				err = devm_register_sys_off_handler(dev, SYS_OFF_MODE_RESTART,
++								    SYS_OFF_PRIO_HIGH,
++								    gpio_export_restart_cb, r);
++				if (err)
++					dev_warn(dev, "%s: failed to register restart handler: %d\n",
++						 name ? name : fwnode_get_name(child), err);
++			}
+ 			nb++;
+ 			i++;
+ 		}

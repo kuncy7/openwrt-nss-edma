@@ -522,6 +522,11 @@
 	status = "okay";
 };
 
+/* QCN6122 uses bank 0 directly; keep it out of the generic MSI pool. */
+&v2m0 {
+	/delete-property/ msi-controller;
+};
+
 /*
  * QCN6122 is managed by WCSS multi-PD firmware. Linux leaves PCIe0 at the
  * disabled state inherited from ipq5018.dtsi; the M.2 modem uses PCIe1.
@@ -531,6 +536,7 @@
 };
 
 &pcie1 {
+	msi-map = <0x0 &v2m1 0x0 0xff8>;
 	perst-gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
 	status = "okay";
 };

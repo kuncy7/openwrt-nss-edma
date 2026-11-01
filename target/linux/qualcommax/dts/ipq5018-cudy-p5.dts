@@ -115,7 +115,9 @@
 
 		modem-power {
 			gpio-export,name = "modem-power";
-			gpio-export,output = <0>;
+			gpio-export,output = <0>;		/* raw low at boot = modem on */
+			gpio-export,restart-value = <1>;	/* raw high before reset = modem off */
+			gpio-export,restart-delay-ms = <1000>;
 			gpios = <&tlmm 35 GPIO_ACTIVE_LOW>;
 		};
 

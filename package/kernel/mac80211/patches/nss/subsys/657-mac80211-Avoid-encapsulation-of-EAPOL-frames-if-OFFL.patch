@@ -23,11 +23,9 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  net/mac80211/tx.c          | 58 ++++++++++++++++++++++++++------------
  2 files changed, 45 insertions(+), 18 deletions(-)
 
-diff --git a/net/mac80211/ieee80211_i.h b/net/mac80211/ieee80211_i.h
-index 809c72f..2ea8c94 100644
 --- a/net/mac80211/ieee80211_i.h
 +++ b/net/mac80211/ieee80211_i.h
-@@ -2248,6 +2248,11 @@ netdev_tx_t ieee80211_subif_start_xmit(struct sk_buff *skb,
+@@ -2323,6 +2323,11 @@ netdev_tx_t ieee80211_subif_start_xmit(s
  				       struct net_device *dev);
  netdev_tx_t ieee80211_subif_start_xmit_8023(struct sk_buff *skb,
  					    struct net_device *dev);
@@ -39,8 +37,6 @@ index 809c72f..2ea8c94 100644
  void __ieee80211_subif_start_xmit(struct sk_buff *skb,
  				  struct net_device *dev,
  				  u32 info_flags,
-diff --git a/net/mac80211/tx.c b/net/mac80211/tx.c
-index 932c84f..3895e96 100644
 --- a/net/mac80211/tx.c
 +++ b/net/mac80211/tx.c
 @@ -40,7 +40,8 @@
@@ -49,11 +45,11 @@ index 932c84f..3895e96 100644
  				struct net_device *dev, struct sta_info *sta,
 -				struct ieee80211_key *key, struct sk_buff *skb);
 +				struct ieee80211_key *key, struct sk_buff *skb,
-+				u32 info_flags, u32 ctrl_flags, u64 *cookie);
++				u32 info_flags, u32 tx_ctrl_flags, u64 *cookie);
  /* misc utils */
  
  static __le16 ieee80211_duration(struct ieee80211_tx_data *tx,
-@@ -4433,7 +4434,7 @@ void __ieee80211_subif_start_xmit(struct sk_buff *skb,
+@@ -4609,7 +4610,7 @@ void __ieee80211_subif_start_xmit(struct
  		    !is_multicast_ether_addr(skb->data)) {
  			if (sta)
  				key = rcu_dereference(sta->ptk[sta->ptk_idx]);
@@ -62,17 +58,17 @@ index 932c84f..3895e96 100644
  			rcu_read_unlock();
  			return;
  		}
-@@ -4775,7 +4776,8 @@ static bool ieee80211_tx_8023(struct ieee80211_sub_if_data *sdata,
+@@ -4970,7 +4971,8 @@ static bool ieee80211_tx_8023(struct iee
  
  static void ieee80211_8023_xmit(struct ieee80211_sub_if_data *sdata,
  				struct net_device *dev, struct sta_info *sta,
 -				struct ieee80211_key *key, struct sk_buff *skb)
 +				struct ieee80211_key *key, struct sk_buff *skb,
-+				u32 info_flags, u32 ctrl_flags, u64 *cookie)
++				u32 info_flags, u32 tx_ctrl_flags, u64 *cookie)
  {
  	struct ieee80211_tx_info *info;
  	struct ethhdr *ehdr = (struct ethhdr *)skb->data;
-@@ -4834,6 +4836,7 @@ static void ieee80211_8023_xmit(struct ieee80211_sub_if_data *sdata,
+@@ -5035,6 +5037,7 @@ static void ieee80211_8023_xmit(struct i
  	info = IEEE80211_SKB_CB(skb);
  	memset(info, 0, sizeof(*info));
  
@@ -80,14 +76,14 @@ index 932c84f..3895e96 100644
  	info->hw_queue = sdata->vif.hw_queue[queue];
  
  	if (sdata->vif.type == NL80211_IFTYPE_AP_VLAN &&
-@@ -4864,10 +4867,11 @@ static void ieee80211_8023_xmit(struct ieee80211_sub_if_data *sdata,
+@@ -5066,10 +5069,11 @@ static void ieee80211_8023_xmit(struct i
  			memcpy(IEEE80211_SKB_CB(seg), info, sizeof(*info));
  	}
  
 -	if (unlikely(sk_requests_wifi_status(skb->sk) &&
 -		     !ieee80211_hw_check(&local->hw, SUPPORTS_NSS_OFFLOAD))) {
 +	if (unlikely((sk_requests_wifi_status(skb->sk) ||
-+		  ((ctrl_flags & IEEE80211_TX_CTL_REQ_TX_STATUS) && !multicast)) &&
++		  ((tx_ctrl_flags & IEEE80211_TX_CTL_REQ_TX_STATUS) && !multicast)) &&
 +		  !ieee80211_hw_check(&local->hw, SUPPORTS_NSS_OFFLOAD))) {
  		info->status_data = ieee80211_store_ack_skb(local, skb,
 -							    &info->flags, NULL);
@@ -95,7 +91,7 @@ index 932c84f..3895e96 100644
  		if (info->status_data)
  			info->status_data_idr = 1;
  	}
-@@ -4891,7 +4895,8 @@ out_free:
+@@ -5093,7 +5097,8 @@ out_free:
  
  void ieee80211_8023_xmit_ap(struct ieee80211_sub_if_data *sdata,
  			    struct net_device *dev, struct sta_info *sta,
@@ -105,7 +101,7 @@ index 932c84f..3895e96 100644
  {
  	struct ieee80211_tx_info *info;
  	struct ieee80211_local *local = sdata->local;
-@@ -4900,6 +4905,9 @@ void ieee80211_8023_xmit_ap(struct ieee80211_sub_if_data *sdata,
+@@ -5102,6 +5107,9 @@ void ieee80211_8023_xmit_ap(struct ieee8
  	unsigned long flags;
  	int q;
  	u16 q_map;
@@ -115,7 +111,7 @@ index 932c84f..3895e96 100644
  
  	/*
  	 * If the skb is shared we need to obtain our own copy.
-@@ -4911,11 +4919,15 @@ void ieee80211_8023_xmit_ap(struct ieee80211_sub_if_data *sdata,
+@@ -5113,11 +5121,15 @@ void ieee80211_8023_xmit_ap(struct ieee8
  
  	info = IEEE80211_SKB_CB(skb);
  	memset(info, 0, sizeof(*info));
@@ -134,7 +130,7 @@ index 932c84f..3895e96 100644
  
  	info->flags |= IEEE80211_TX_CTL_HW_80211_ENCAP;
  	info->control.vif = &sdata->vif;
-@@ -4970,14 +4982,18 @@ static bool ieee80211_check_mcast_offload(struct ieee80211_sub_if_data *sdata,
+@@ -5172,14 +5184,18 @@ static bool ieee80211_check_mcast_offloa
  	return true;
  }
  
@@ -155,7 +151,7 @@ index 932c84f..3895e96 100644
  
  	rcu_read_lock();
  
-@@ -4985,6 +5001,7 @@ static void __ieee80211_subif_start_xmit_8023(struct sk_buff *skb,
+@@ -5187,6 +5203,7 @@ static void __ieee80211_subif_start_xmit
  		kfree_skb(skb);
  		goto out;
  	}
@@ -163,7 +159,7 @@ index 932c84f..3895e96 100644
  
  	if (ieee80211_hw_check(&sdata->local->hw, SUPPORTS_NSS_OFFLOAD)) {
  		if (unlikely(IS_ERR_OR_NULL(sta) || !sta->uploaded))
-@@ -5008,8 +5025,8 @@ static void __ieee80211_subif_start_xmit_8023(struct sk_buff *skb,
+@@ -5210,8 +5227,8 @@ static void __ieee80211_subif_start_xmit
  		link = &sdata->deflink;
  		key = rcu_dereference(link->default_multicast_key);
  	} else if (unlikely(IS_ERR_OR_NULL(sta) || !sta->uploaded ||
@@ -174,7 +170,7 @@ index 932c84f..3895e96 100644
  		goto skip_offload;
  	} else {
  		key = rcu_dereference(sta->ptk[sta->ptk_idx]);
-@@ -5022,13 +5039,13 @@ static void __ieee80211_subif_start_xmit_8023(struct sk_buff *skb,
+@@ -5224,13 +5241,13 @@ static void __ieee80211_subif_start_xmit
  		goto skip_offload;
  
  	if (sdata->vif.type == NL80211_IFTYPE_AP) {
@@ -190,7 +186,7 @@ index 932c84f..3895e96 100644
  	goto out;
  
  skip_offload:
-@@ -5058,9 +5075,9 @@ netdev_tx_t ieee80211_subif_start_xmit_8023(struct sk_buff *skb,
+@@ -5260,9 +5277,9 @@ netdev_tx_t ieee80211_subif_start_xmit_8
  		__skb_queue_head_init(&queue);
  		ieee80211_convert_to_unicast(skb, dev, &queue);
  		while ((skb = __skb_dequeue(&queue)))
@@ -202,7 +198,7 @@ index 932c84f..3895e96 100644
  	}
  
  	return NETDEV_TX_OK;
-@@ -6806,7 +6823,10 @@ int ieee80211_tx_control_port(struct wiphy *wiphy, struct net_device *dev,
+@@ -7093,7 +7110,10 @@ int ieee80211_tx_control_port(struct wip
  
  start_xmit:
  	local_bh_disable();

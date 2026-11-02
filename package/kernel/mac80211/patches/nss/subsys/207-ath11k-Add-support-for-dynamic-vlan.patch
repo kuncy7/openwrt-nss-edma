@@ -17,8 +17,6 @@ Signed-off-by: Gautham Kumar Senthilkumaran <quic_gauthamk@quicinc.com>
  net/mac80211/tx.c                       |  14 +++
  1 files changed, 14 insertions(+)
 
-diff --git a/net/mac80211/tx.c b/net/mac80211/tx.c
-index 2fbae59..84b0cf2 100644
 --- a/net/mac80211/tx.c
 +++ b/net/mac80211/tx.c
 @@ -38,6 +38,9 @@
@@ -31,7 +29,7 @@ index 2fbae59..84b0cf2 100644
  /* misc utils */
  
  static __le16 ieee80211_duration(struct ieee80211_tx_data *tx,
-@@ -4397,6 +4400,8 @@ void __ieee80211_subif_start_xmit(struct sk_buff *skb,
+@@ -4573,6 +4576,8 @@ void __ieee80211_subif_start_xmit(struct
  	struct sta_info *sta;
  	struct sk_buff *next;
  	int len = skb->len;
@@ -40,7 +38,7 @@ index 2fbae59..84b0cf2 100644
  
  	if (unlikely(!ieee80211_sdata_running(sdata) || skb->len < ETH_HLEN)) {
  		kfree_skb(skb);
-@@ -4418,6 +4423,19 @@ void __ieee80211_subif_start_xmit(struct sk_buff *skb,
+@@ -4594,6 +4599,19 @@ void __ieee80211_subif_start_xmit(struct
  	if (IS_ERR(sta))
  		sta = NULL;
  
@@ -57,6 +55,6 @@ index 2fbae59..84b0cf2 100644
 +		}
 +	}
 +
- 	skb_set_queue_mapping(skb, ieee80211_select_queue(sdata, sta, skb));
+ 	skb_set_queue_mapping(skb, ieee80211_select_queue(sdata, sta, skb,
+ 							   &ctrl_flags));
  	ieee80211_aggr_check(sdata, sta, skb);
- 

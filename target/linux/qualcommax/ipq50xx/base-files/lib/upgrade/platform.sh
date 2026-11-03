@@ -538,6 +538,7 @@ platform_do_upgrade() {
 		remove_oem_ubi_volume wifi_fw
 		nand_do_upgrade "$1"
 		;;
+	redmi,ax3000|\
 	xiaomi,cr8806)
 		# Keep the stock dual-boot layout: upgrade the slot we are
 		# running from and leave the other slot untouched.

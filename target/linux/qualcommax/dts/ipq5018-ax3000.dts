@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+/dts-v1/;
+
+#include "ipq5018-cr8806.dts"
+
+/ {
+	model = "Redmi AX3000 (M81)";
+	compatible = "redmi,ax3000", "xiaomi,cr8806", "qcom,ipq5018";
+};
+

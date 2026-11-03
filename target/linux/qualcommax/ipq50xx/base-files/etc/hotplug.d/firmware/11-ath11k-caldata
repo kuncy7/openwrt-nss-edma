@@ -132,6 +132,7 @@ case "$FIRMWARE" in
 		;;
 	xiaomi,mi-router-ax3000t-v2|\
 	xiaomi,ax6000|\
+	redmi,ax3000|\
 	xiaomi,cr8806|\
 	xiaomi,redmi-ax5400)
 		caldata_extract "0:art" 0x1000 0x20000
@@ -257,6 +258,7 @@ case "$FIRMWARE" in
 	xiaomi,mi-router-ax3000t-v2)
 		caldata_extract "0:art" 0x26800 0x20000
 		;;
+	redmi,ax3000|\
 	xiaomi,cr8806)
 		caldata_extract "0:art" 0x26800 0x20000
 		;;

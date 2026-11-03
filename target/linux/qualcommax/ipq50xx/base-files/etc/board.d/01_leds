@@ -55,6 +55,7 @@ tplink,archer-ax58-v2)
 	ucidef_set_led_netdev "wlan2g" "WLAN2G" "green:wlan-2ghz" "phy0-ap0" "link tx rx"
 	ucidef_set_led_netdev "wlan5g" "WLAN5G" "green:wlan-5ghz" "phy1-ap0" "link tx rx"
 	;;
+redmi,ax3000|\
 xiaomi,cr8806)
 	ucidef_set_led_netdev "internet-blue" "INTERNET-BLUE" "blue:wan" "wan" "link"
 	;;

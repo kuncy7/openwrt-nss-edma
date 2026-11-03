@@ -9,7 +9,10 @@
 # AX5400 by its DTS, not tested) netifd opens eth0 early and this hook should
 # not be needed; do not copy it there without checking the PHY4 link first.
 cr8806_eth0_up() {
-	[ "$(board_name)" = "xiaomi,cr8806" ] || return 0
+	case "$(board_name)" in
+	redmi,ax3000|xiaomi,cr8806) ;;
+	*) return 0 ;;
+	esac
 	ip link set eth0 up
 }
 

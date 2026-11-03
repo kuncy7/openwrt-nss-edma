@@ -253,6 +253,24 @@ define Device/xiaomi_cr8806
 endef
 TARGET_DEVICES += xiaomi_cr8806
 
+define Device/redmi_ax3000
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := Redmi
+	DEVICE_MODEL := AX3000
+	DEVICE_VARIANT := M81
+	DEVICE_DTS := ipq5018-ax3000
+	DEVICE_DTS_CONFIG := config@mp02.1
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	NAND_SIZE := 128m
+	DEVICE_PACKAGES := \
+		ath11k-firmware-ipq5018-qcn6122 \
+		ipq-wifi-xiaomi_cr8806
+endef
+TARGET_DEVICES += redmi_ax3000
+
 define Device/glinet_gl-x2000
 	$(call Device/FitImage)
 	DEVICE_VENDOR := GL.iNet

@@ -6,7 +6,10 @@
 
 . /lib/functions.sh
 
-[ "$(board_name)" = "xiaomi,cr8806" ] || exit 0
+case "$(board_name)" in
+redmi,ax3000|xiaomi,cr8806) ;;
+*) exit 0 ;;
+esac
 uci -q get ecm.general > /dev/null || exit 0
 
 uci -q set ecm.general.disable_gro_list='1'

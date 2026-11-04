@@ -8,9 +8,9 @@
 };
 
 &wifi {
-	qcom,calibration-variant = "H3C-Magic-NX30";
+	qcom,ath11k-calibration-variant = "H3C-Magic-NX30";
 };
 
 &wifi1 {
-	qcom,calibration-variant = "H3C-Magic-NX30";
+	qcom,ath11k-calibration-variant = "H3C-Magic-NX30";
 };

@@ -87,10 +87,10 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  struct qca8k_priv;
  
  struct qca8k_info_ops {
-@@ -410,8 +459,27 @@ struct qca8k_mib_eth_data {
+@@ -411,8 +460,27 @@ struct qca8k_mib_eth_data {
  	struct mutex mutex; /* Process one command at time */
  	spinlock_t lock; /* Protects the request against the rx handler */
- 	refcount_t port_parsed; /* Counter to track parsed port */
+ 	unsigned long ports_seen; /* Ports whose frame arrived, under lock */
 -	u8 req_port;
 -	u64 *data; /* pointer to ethtool data, NULL with no request pending */
 +	u8 req_port; /* or QCA8K_MIB_ALL_PORTS */
@@ -117,7 +117,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  };
  
  struct qca8k_ports_config {
-@@ -487,6 +555,7 @@ struct qca8k_priv {
+@@ -492,6 +560,7 @@ struct qca8k_priv {
  	 */
  	u16 tag_8021q_pvid[QCA8K_NUM_PORTS];
  	u16 bridge_pvid[QCA8K_NUM_PORTS];
@@ -125,7 +125,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  };
  
  struct qca8k_mib_desc {
-@@ -532,6 +601,7 @@ int qca8k_rmw(struct qca8k_priv *priv, u
+@@ -538,6 +607,7 @@ int qca8k_rmw(struct qca8k_priv *priv, u
  void qca8k_fdb_flush(struct qca8k_priv *priv);
  
  /* Common ethtool stats function */
@@ -135,7 +135,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  			     uint64_t *data);
 --- a/drivers/net/dsa/qca/qca8k-8xxx.c
 +++ b/drivers/net/dsa/qca/qca8k-8xxx.c
-@@ -1423,6 +1423,7 @@ qca8k_phylink_mac_link_down(struct phyli
+@@ -1434,6 +1434,7 @@ qca8k_phylink_mac_link_down(struct phyli
  	struct dsa_port *dp = dsa_phylink_to_port(config);
  	struct qca8k_priv *priv = dp->ds->priv;
  
@@ -143,7 +143,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	qca8k_port_set_status(priv, dp->index, 0);
  }
  
-@@ -1468,6 +1469,7 @@ qca8k_phylink_mac_link_up(struct phylink
+@@ -1479,6 +1480,7 @@ qca8k_phylink_mac_link_up(struct phylink
  	reg |= QCA8K_PORT_STATUS_TXMAC | QCA8K_PORT_STATUS_RXMAC;
  
  	qca8k_write(priv, QCA8K_REG_PORT_STATUS(port), reg);
@@ -151,7 +151,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  }
  
  static struct qca8k_pcs *pcs_to_qca8k_pcs(struct phylink_pcs *pcs)
-@@ -1643,6 +1645,7 @@ static void qca8k_mib_autocast_handler(s
+@@ -1654,6 +1656,7 @@ static void qca8k_mib_autocast_handler(s
  	struct mib_ethhdr *mib_ethhdr;
  	unsigned int len = 0;
  	__le32 *data2;
@@ -159,7 +159,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	u8 port;
  	int i;
  
-@@ -1655,11 +1658,16 @@ static void qca8k_mib_autocast_handler(s
+@@ -1666,13 +1669,17 @@ static void qca8k_mib_autocast_handler(s
  	if (!mib_eth_data->data)
  		goto unlock;
  
@@ -169,9 +169,10 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	 * every port into its own row for QCA8K_MIB_ALL_PORTS.
  	 */
  	port = FIELD_GET(QCA_HDR_RECV_SOURCE_PORT, ntohs(mib_ethhdr->hdr));
+ 	if (port >= QCA8K_NUM_PORTS)
+ 		goto unlock;
 -	if (port != mib_eth_data->req_port)
-+	if (mib_eth_data->req_port == QCA8K_MIB_ALL_PORTS &&
-+	    port < QCA8K_NUM_PORTS)
++	if (mib_eth_data->req_port == QCA8K_MIB_ALL_PORTS)
 +		data = mib_eth_data->data + port * QCA8K_QCA833X_MIB_COUNT;
 +	else if (port == mib_eth_data->req_port)
 +		data = mib_eth_data->data;
@@ -179,7 +180,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		goto exit;
  
  	/* Past the first 3, the counters follow the header. Leave a short
-@@ -1679,15 +1687,15 @@ static void qca8k_mib_autocast_handler(s
+@@ -1692,15 +1699,15 @@ static void qca8k_mib_autocast_handler(s
  
  		/* First 3 mib are present in the skb head */
  		if (i < 3) {
@@ -198,7 +199,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  		data2 += mib->size;
  	}
-@@ -1702,12 +1710,9 @@ unlock:
+@@ -1719,12 +1726,9 @@ unlock:
  	spin_unlock(&mib_eth_data->lock);
  }
  
@@ -212,16 +213,16 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	int ret;
  
  	mib_eth_data = &priv->mib_eth_data;
-@@ -1717,7 +1722,7 @@ qca8k_get_ethtool_stats_eth(struct dsa_s
+@@ -1746,7 +1750,7 @@ qca8k_get_ethtool_stats_eth(struct dsa_s
  	reinit_completion(&mib_eth_data->rw_done);
  
  	spin_lock_bh(&mib_eth_data->lock);
 -	mib_eth_data->req_port = dp->index;
 +	mib_eth_data->req_port = req_port;
  	mib_eth_data->data = data;
- 	refcount_set(&mib_eth_data->port_parsed, QCA8K_NUM_PORTS);
+ 	mib_eth_data->ports_seen = 0;
  	spin_unlock_bh(&mib_eth_data->lock);
-@@ -1750,6 +1755,14 @@ exit:
+@@ -1778,6 +1782,14 @@ out:
  	return ret;
  }
  
@@ -236,7 +237,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  static u32 qca8k_get_phy_flags(struct dsa_switch *ds, int port)
  {
  	struct qca8k_priv *priv = ds->priv;
-@@ -2156,6 +2169,141 @@ static void qca8k_setup_hol_fixup(struct
+@@ -2170,6 +2182,141 @@ static void qca8k_setup_hol_fixup(struct
  			   mask);
  }
  
@@ -378,7 +379,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  static int
  qca8k_setup(struct dsa_switch *ds)
  {
-@@ -2208,6 +2356,7 @@ qca8k_setup(struct dsa_switch *ds)
+@@ -2222,6 +2369,7 @@ qca8k_setup(struct dsa_switch *ds)
  	ret = qca8k_mib_init(priv);
  	if (ret)
  		dev_warn(priv->dev, "mib init failed");
@@ -386,7 +387,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  	/* Initial setup of all ports */
  	dsa_switch_for_each_port(dp, ds) {
-@@ -2327,6 +2476,10 @@ qca8k_setup(struct dsa_switch *ds)
+@@ -2341,6 +2489,10 @@ qca8k_setup(struct dsa_switch *ds)
  	priv->tag_proto = DSA_TAG_PROTO_QCA;
  	ds->max_num_bridges = DSA_TAG_8021Q_MAX_NUM_BRIDGES;
  
@@ -397,7 +398,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	return 0;
  }
  
-@@ -2341,9 +2494,11 @@ static const struct dsa_switch_ops qca8k
+@@ -2355,9 +2507,11 @@ static const struct dsa_switch_ops qca8k
  	.get_tag_protocol	= qca8k_get_tag_protocol,
  	.change_tag_protocol	= qca8k_change_tag_protocol,
  	.setup			= qca8k_setup,
@@ -409,7 +410,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	.set_ageing_time	= qca8k_set_ageing_time,
  	.support_eee		= dsa_supports_eee,
  	.set_mac_eee		= qca8k_set_mac_eee,
-@@ -2438,6 +2593,9 @@ qca8k_sw_probe(struct mdio_device *mdiod
+@@ -2452,6 +2606,9 @@ qca8k_sw_probe(struct mdio_device *mdiod
  	spin_lock_init(&priv->mib_eth_data.lock);
  	init_completion(&priv->mib_eth_data.rw_done);
  
@@ -419,7 +420,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	priv->ds->dev = &mdiodev->dev;
  	priv->ds->num_ports = QCA8K_NUM_PORTS;
  	priv->ds->priv = priv;
-@@ -2471,6 +2629,8 @@ static void qca8k_sw_shutdown(struct mdi
+@@ -2485,6 +2642,8 @@ static void qca8k_sw_shutdown(struct mdi
  	if (!priv)
  		return;
  
@@ -428,7 +429,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	dsa_switch_shutdown(priv->ds);
  
  	dev_set_drvdata(&mdiodev->dev, NULL);
-@@ -2497,6 +2657,7 @@ static int qca8k_suspend(struct device *
+@@ -2511,6 +2670,7 @@ static int qca8k_suspend(struct device *
  {
  	struct qca8k_priv *priv = dev_get_drvdata(dev);
  
@@ -436,7 +437,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	qca8k_set_pm(priv, 0);
  
  	return dsa_switch_suspend(priv->ds);
-@@ -2507,6 +2668,9 @@ static int qca8k_resume(struct device *d
+@@ -2521,6 +2681,9 @@ static int qca8k_resume(struct device *d
  	struct qca8k_priv *priv = dev_get_drvdata(dev);
  
  	qca8k_set_pm(priv, 1);

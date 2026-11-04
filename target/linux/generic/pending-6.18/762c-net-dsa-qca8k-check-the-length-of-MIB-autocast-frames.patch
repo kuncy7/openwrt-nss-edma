@@ -1,6 +1,7 @@
+From 9ffdeee85c35014f91ee7a6e34761435c2861719 Mon Sep 17 00:00:00 2001
 From: Stanislaw Pal <kuncy7@gmail.com>
-Subject: [PATCH net 3/3] net: dsa: qca8k: check the length of MIB autocast
- frames
+Date: Thu, 22 Oct 2026 20:11:52 +0200
+Subject: [PATCH 3/4] net: dsa: qca8k: check the length of MIB autocast frames
 
 qca_tag_rcv() makes only the 2 byte tag linear before it hands a MIB
 frame to qca8k_mib_autocast_handler(). The handler then reads the
@@ -12,9 +13,16 @@ Pull the counters into the linear area before reading them. A frame
 that is too short is left uncounted, so the request times out and
 the caller reads the counters from the registers instead.
 
+An LLM assistant (Claude, claude-fable-5-1) helped write the change
+and this description; I reviewed both and built them with W=1 on
+arm64.
+
 Fixes: 5c957c7ca78c ("net: dsa: qca8k: add support for mib autocast in Ethernet packet")
-Assisted-by: Claude:claude-opus-5-5
 Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+---
+ drivers/net/dsa/qca/qca8k-8xxx.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
 --- a/drivers/net/dsa/qca/qca8k-8xxx.c
 +++ b/drivers/net/dsa/qca/qca8k-8xxx.c
 @@ -1641,6 +1641,7 @@ static void qca8k_mib_autocast_handler(s
@@ -25,7 +33,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	__le32 *data2;
  	u8 port;
  	int i;
-@@ -1661,6 +1662,16 @@ static void qca8k_mib_autocast_handler(s
+@@ -1663,6 +1664,16 @@ static void qca8k_mib_autocast_handler(s
  	if (port != mib_eth_data->req_port)
  		goto exit;
  

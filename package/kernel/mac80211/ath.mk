@@ -483,7 +483,7 @@ define KernelPackage/ath11k/config
        choice
             prompt "Memory Profile"
             depends on PACKAGE_kmod-ath11k
-            default ATH11K_MEM_PROFILE_256M if TARGET_qualcommax_ipq50xx_DEVICE_cudy_p5 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_archer-ax53-v2 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_archer-ax58-v2 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_cr8806 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_mi-router-ax3000t-v2 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_redmi-ax3000-ubootmod
+            default ATH11K_MEM_PROFILE_256M if TARGET_qualcommax_ipq50xx_DEVICE_cudy_p5 || TARGET_qualcommax_ipq50xx_DEVICE_h3c_magic-nx30 || TARGET_qualcommax_ipq50xx_DEVICE_h3c_magic-rc3000-v1 || TARGET_qualcommax_ipq50xx_DEVICE_h3c_magic-rc3000-v2 || TARGET_qualcommax_ipq50xx_DEVICE_h3c_magic-rc3000-v3 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_archer-ax53-v2 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_archer-ax58-v2 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_cr8806 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_mi-router-ax3000t-v2 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_redmi-ax3000-ubootmod
             default ATH11K_MEM_PROFILE_1G
             help
             	This option allows you to select the memory profile.

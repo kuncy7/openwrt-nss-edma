@@ -5,12 +5,25 @@
 #include "ipq5018.dtsi"
 #include "ipq5018-ess.dtsi"
 #include "ipq5018-qcn6122.dtsi"
+#include "ipq5018-nss.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/leds/common.h>
 
 / {
+	reserved-memory {
+		q6_region_qcn6122_1: q6-region-qcn6122-1@4d200000 {
+			reg = <0x0 0x4d200000 0x0 0xd00000>;
+			no-map;
+		};
+
+		m3_dump_qcn6122_1: m3-dump-qcn6122-1@4df00000 {
+			reg = <0x0 0x4df00000 0x0 0x100000>;
+			no-map;
+		};
+	};
+
 	aliases {
 		serial0 = &blsp1_uart1;
 		label-mac-device = &gmac0;
@@ -21,7 +34,7 @@
 	};
 
 	chosen {
-		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=2M";
+		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=512K";
 		stdout-path = "serial0:115200n8";
 	};
 
@@ -277,15 +290,15 @@
 &q6v5_wcss {
 	/* QCN6122 on PCIe1 as user PD 2, reset on GPIO27 (stock mp02.1) */
 	boot-args = <0x2 4 2 27 0 0>;
+	status = "okay";
 };
 
 /* 256 MiB of RAM: low-memory firmware mode */
 &wifi {
 	status = "okay";
 
-	qcom,rproc = <&q6_wcss_pd1>;
+	qcom,rproc = <&q6v5_wcss>;
 	qcom,ath11k-fw-memory-mode = <2>;
-	qcom,bdf-addr = <0x4c400000>;
 
 	ieee80211-freq-limit = <2400000 2483000>;
 };
@@ -293,11 +306,16 @@
 &wifi1 {
 	status = "okay";
 
-	qcom,rproc = <&q6_wcss_pd2>;
-	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
+	qcom,rproc = <&q6v5_wcss>;
 	qcom,ath11k-fw-memory-mode = <2>;
-	qcom,bdf-addr = <0x4d100000>;
-	qcom,m3-dump-addr = <0x4df00000>;
 
 	ieee80211-freq-limit = <5150000 5850000>;
+
+	memory-region = <&q6_region_qcn6122_1>, <&q6_region_ipq5018>, <&m3_dump_qcn6122_1>;
+	memory-region-names = "q6-region", "m3-region", "m3-dump";
+};
+
+/* 256 MiB of RAM: NSS heap 8 MiB, as in the stock reserved-memory */
+&nss_region {
+	reg = <0x0 0x40000000 0x0 0x800000>;
 };

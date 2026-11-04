@@ -10,9 +10,9 @@
 };
 
 &wifi {
-	qcom,calibration-variant = "H3C-Magic-RC3000-v1";
+	qcom,ath11k-calibration-variant = "H3C-Magic-RC3000-v1";
 };
 
 &wifi1 {
-	qcom,calibration-variant = "H3C-Magic-RC3000-v1";
+	qcom,ath11k-calibration-variant = "H3C-Magic-RC3000-v1";
 };

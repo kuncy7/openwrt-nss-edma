@@ -1,0 +1,53 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Subject: [PATCH] ath11k: nss: route the REO hash buckets to SW1
+
+In NSS offload mode ath11k_hw_ipq5018_reo_setup() leaves the four
+HAL_REO1_DEST_RING_CTRL_IX registers alone, so the hash buckets keep
+their reset values (0x66543210, 0x66666666 on the QCN6122): some of
+them point at ring 6, the REO2FW ring, which nothing drains in NSS
+mode. Each peer gets a default route to REO2SW1 with hashing disabled
+(ath11k_dp_peer_setup()), so the buckets only matter for frames REO
+cannot tie to a peer route, around association and disassociation.
+Those frames land on REO2FW (ring 19) and keep their RX buffers: the
+ring fills up over hours and the 5 GHz RX path stalls (issue #53 on
+the 256 MB AX53 v2; ring 19 head at 1008, tail at 0).
+
+Point every bucket at REO2SW1 in NSS mode, where the peer routes go
+anyway. Found and first fixed by tribhoon (PR #60); this is the
+bucket change on its own, without the fragment ring part, so that the
+effect of each can be told apart.
+
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+---
+--- a/drivers/net/wireless/ath/ath11k/hw.c
++++ b/drivers/net/wireless/ath/ath11k/hw.c
+@@ -1089,9 +1089,27 @@ static void ath11k_hw_ipq5018_reo_setup(
+ 	ath11k_hif_write32(ab, reo_base + HAL_REO1_AGING_THRESH_IX_3(ab),
+ 			   HAL_DEFAULT_REO_TIMEOUT_USEC);
+ 
+-	/* REO Dest ring setup is not required in NSS offload case */
+-	if (ab->nss.enabled)
++	/* In NSS offload mode every peer is routed to REO2SW1 with hashing
++	 * off, so the buckets only see frames without a peer route. Left at
++	 * their reset values some of them point at REO2FW, which nothing
++	 * drains here: send them all to REO2SW1 too.
++	 */
++	if (ab->nss.enabled) {
++		u32 sw1_map = HAL_HASH_ROUTING_RING_SW1 << 0 |
++			      HAL_HASH_ROUTING_RING_SW1 << 4 |
++			      HAL_HASH_ROUTING_RING_SW1 << 8 |
++			      HAL_HASH_ROUTING_RING_SW1 << 12 |
++			      HAL_HASH_ROUTING_RING_SW1 << 16 |
++			      HAL_HASH_ROUTING_RING_SW1 << 20 |
++			      HAL_HASH_ROUTING_RING_SW1 << 24 |
++			      HAL_HASH_ROUTING_RING_SW1 << 28;
++
++		ath11k_hif_write32(ab, reo_base + HAL_REO1_DEST_RING_CTRL_IX_0, sw1_map);
++		ath11k_hif_write32(ab, reo_base + HAL_REO1_DEST_RING_CTRL_IX_1, sw1_map);
++		ath11k_hif_write32(ab, reo_base + HAL_REO1_DEST_RING_CTRL_IX_2, sw1_map);
++		ath11k_hif_write32(ab, reo_base + HAL_REO1_DEST_RING_CTRL_IX_3, sw1_map);
+ 		return;
++	}
+ 
+ 	ath11k_hif_write32(ab, reo_base + HAL_REO1_DEST_RING_CTRL_IX_0,
+ 			   ring_hash_map);

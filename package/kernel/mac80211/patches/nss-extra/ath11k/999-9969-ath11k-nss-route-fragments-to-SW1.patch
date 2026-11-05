@@ -1,0 +1,71 @@
+From: Tribhoon <amoapo0@gmail.com>
+Subject: [PATCH] wifi: ath11k: nss: route fragments to REO2SW1 via HAL_REO1_MISC_CTL in NSS mode
+
+In Qualcomm REO hardware architecture, fragment routing was changed
+between IPQ8074 and newer SoCs (IPQ5018, QCN6122, WCN6750):
+- On IPQ8074, fragment destination ring was configured in HAL_REO1_GEN_ENABLE
+  bits 25:23 (HAL_REO1_GEN_ENABLE_FRAG_DST_RING).
+- On IPQ5018 and QCN6122 (as on WCN6750), fragment destination ring control
+  was moved to HAL_REO1_MISC_CTL (offset 0x000005d8), bits 20:17
+  (HAL_REO1_MISC_CTL_FRAGMENT_DST_RING), while bits 25:23 in GEN_ENABLE
+  are ignored by hardware.
+
+Upstream ath11k defined .hal_reo1_misc_ctl = 0x000005d8 for wcn6750_regs,
+but omitted it for both ipq5018_regs and qcn6122_regs (left as 0).
+Because ath11k never programmed HAL_REO1_MISC_CTL on IPQ5018/QCN6122,
+offset 0x05d8 remains at its power-on reset value on both radios:
+  0x000c0000 = FIELD_PREP(GENMASK(20, 17), 6) -> HAL_HASH_ROUTING_RING_FW
+
+HAL_HASH_ROUTING_RING_FW routes all fragments to Ring 19 (REO2FW), an
+unserviced 64-descriptor dead-end firmware ring. In NSS offload mode,
+firmware never drains Ring 19. When clients transmit 802.11 MPDU
+fragments, Ring 19 fills to capacity (head 1008, tail 0) after 63
+fragments, asserting global REO hardware backpressure and permanently
+freezing the 5 GHz RX pipeline.
+
+Fix this under NSS offload mode by:
+1. Setting .hal_reo1_misc_ctl = 0x000005d8 in ipq5018_regs and qcn6122_regs.
+2. In ath11k_hw_ipq5018_reo_setup(), under if (ab->nss.enabled), programming
+   HAL_REO1_MISC_CTL with HAL_HASH_ROUTING_RING_SW1 (1). Note that we
+   explicitly use the hardware ring enum HAL_HASH_ROUTING_RING_SW1 (1), which
+   matches the hardware reset encoding 6 = FW and directs frames to REO2SW1
+   where NSS reaps them; upstream wcn6855_reo_setup() writes
+   HAL_SRNG_RING_ID_REO2SW1 (0, which selects TCL in this register).
+
+Signed-off-by: Tribhoon <amoapo0@gmail.com>
+---
+--- a/drivers/net/wireless/ath/ath11k/hw.c
++++ b/drivers/net/wireless/ath/ath11k/hw.c
+@@ -1104,6 +1104,12 @@ static void ath11k_hw_ipq5018_reo_setup(
+ 			      HAL_HASH_ROUTING_RING_SW1 << 24 |
+ 			      HAL_HASH_ROUTING_RING_SW1 << 28;
+ 
++		val = ath11k_hif_read32(ab, reo_base + HAL_REO1_MISC_CTL(ab));
++		val &= ~HAL_REO1_MISC_CTL_FRAGMENT_DST_RING;
++		val |= FIELD_PREP(HAL_REO1_MISC_CTL_FRAGMENT_DST_RING,
++				  HAL_HASH_ROUTING_RING_SW1);
++		ath11k_hif_write32(ab, reo_base + HAL_REO1_MISC_CTL(ab), val);
++
+ 		ath11k_hif_write32(ab, reo_base + HAL_REO1_DEST_RING_CTRL_IX_0, sw1_map);
+ 		ath11k_hif_write32(ab, reo_base + HAL_REO1_DEST_RING_CTRL_IX_1, sw1_map);
+ 		ath11k_hif_write32(ab, reo_base + HAL_REO1_DEST_RING_CTRL_IX_2, sw1_map);
+@@ -3238,6 +3244,9 @@ const struct ath11k_hw_regs ipq5018_regs
+ 	/* WBM2SW release address */
+ 	.hal_wbm0_release_ring_base_lsb = 0x00000924,
+ 	.hal_wbm1_release_ring_base_lsb = 0x0000097c,
++
++	/* REO misc control register */
++	.hal_reo1_misc_ctl = 0x000005d8,
+ };
+ 
+ const struct ath11k_hw_hal_params ath11k_hw_hal_params_ipq5018 = {
+@@ -3319,6 +3328,9 @@ const struct ath11k_hw_regs qcn6122_regs
+ 	/* WBM2SW release address */
+ 	.hal_wbm0_release_ring_base_lsb = 0x00000924,
+ 	.hal_wbm1_release_ring_base_lsb = 0x0000097c,
++
++	/* REO misc control register */
++	.hal_reo1_misc_ctl = 0x000005d8,
+ };
+ 
+ const struct ath11k_hw_hal_params ath11k_hw_hal_params_ipq8074 = {

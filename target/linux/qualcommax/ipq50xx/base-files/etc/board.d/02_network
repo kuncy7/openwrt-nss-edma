@@ -115,8 +115,8 @@ ipq50xx_setup_macs()
 		;;
 	tplink,mx515v-v1)
 		# factory MAC is 6 raw bytes in misc_ro/0x0434F100, mounted
-		# read-only during preinit (see lib/preinit/09_mount_misc_ro)
-		label_mac=$(get_mac_binary "/tmp/misc_ro/0x0434F100" 0)
+		# read-only during preinit (see lib/preinit/09_mount_tp_data)
+		label_mac=$(get_mac_binary "/tmp/tp_data/0x0434F100" 0)
 		[ -n "$label_mac" ] || return
 		ucidef_set_interface_macaddr "lan" "$label_mac"
 		ucidef_set_interface_macaddr "wan" "$(macaddr_add "$label_mac" 1)"

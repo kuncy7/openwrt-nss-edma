@@ -114,8 +114,8 @@ case "$FIRMWARE" in
 		ath11k_set_macflag
 		;;
 	tplink,mx515v-v1)
-		caldata_from_file "/tmp/misc_ro/0x04380000" 0 0x20000
-		label_mac=$(get_mac_binary /tmp/misc_ro/0x0434F100 0)
+		caldata_from_file "/tmp/tp_data/0x04380000" 0 0x20000
+		label_mac=$(get_mac_binary /tmp/tp_data/0x0434F100 0)
 		[ -n "$label_mac" ] && ath11k_patch_mac "$label_mac" 0
 		ath11k_set_macflag
 		ath11k_remove_regdomain
@@ -244,8 +244,8 @@ case "$FIRMWARE" in
 		dd if=/dev/zero of=/lib/firmware/$FIRMWARE bs=4096 count=32 2>/dev/null
 		;;
 	tplink,mx515v-v1)
-		caldata_from_file "/tmp/misc_ro/0x043A0000" 0 0x20000
-		label_mac=$(get_mac_binary /tmp/misc_ro/0x0434F100 0)
+		caldata_from_file "/tmp/tp_data/0x043A0000" 0 0x20000
+		label_mac=$(get_mac_binary /tmp/tp_data/0x0434F100 0)
 		[ -n "$label_mac" ] && ath11k_patch_mac "$(macaddr_add "$label_mac" 2)" 0
 		ath11k_set_macflag
 		ath11k_remove_regdomain

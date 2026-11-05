@@ -29,24 +29,22 @@ Assisted-by: Claude
  	 * then the option would get removed), but it is unknown whether this
 --- a/net/dsa/user.c
 +++ b/net/dsa/user.c
-@@ -612,6 +612,16 @@ static int dsa_user_port_attr_set(struct
- 		ret = dsa_port_vlan_filtering(dp, attr->u.vlan_filtering,
- 					      extack);
- 		break;
-+	case SWITCHDEV_ATTR_ID_BRIDGE_VLAN_PROTOCOL:
-+		if (!dp->ds->vlan_upper_filtering_always ||
-+		    !dsa_port_offloads_bridge_dev(dp, attr->orig_dev))
-+			return -EOPNOTSUPP;
-+		if (attr->u.vlan_protocol != ETH_P_8021Q) {
-+			NL_SET_ERR_MSG_MOD(extack, "VLAN tagger requires an 802.1Q bridge");
-+			return -EINVAL;
-+		}
-+		ret = 0;
-+		break;
- 	case SWITCHDEV_ATTR_ID_BRIDGE_AGEING_TIME:
+@@ -617,6 +617,14 @@ static int dsa_user_port_attr_set(struct
+ 	case SWITCHDEV_ATTR_ID_BRIDGE_VLAN_PROTOCOL:
  		if (!dsa_port_offloads_bridge_dev(dp, attr->orig_dev))
  			return -EOPNOTSUPP;
-@@ -1817,6 +1827,9 @@ static int dsa_user_vlan_rx_add_vid(stru
++		if (dp->ds->vlan_upper_filtering_always) {
++			if (attr->u.vlan_protocol != ETH_P_8021Q) {
++				NL_SET_ERR_MSG_MOD(extack, "VLAN tagger requires an 802.1Q bridge");
++				return -EINVAL;
++			}
++			ret = 0;
++			break;
++		}
+ 
+ 		ret = dsa_port_vlan_protocol(dp, attr->u.vlan_protocol, extack);
+ 		break;
+@@ -1833,6 +1841,9 @@ static int dsa_user_vlan_rx_add_vid(stru
  		if (extack._msg)
  			netdev_err(dev, "CPU port %d: %s\n", dp->cpu_dp->index,
  				   extack._msg);
@@ -56,7 +54,7 @@ Assisted-by: Claude
  		return ret;
  	}
  
-@@ -1968,8 +1981,16 @@ static int dsa_user_clear_vlan(struct ne
+@@ -1984,8 +1995,16 @@ static int dsa_user_clear_vlan(struct ne
  int dsa_user_manage_vlan_filtering(struct net_device *user,
  				   bool vlan_filtering)
  {
@@ -73,7 +71,7 @@ Assisted-by: Claude
  	if (vlan_filtering) {
  		user->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
  
-@@ -2719,7 +2740,7 @@ void dsa_user_setup_tagger(struct net_de
+@@ -2735,7 +2754,7 @@ void dsa_user_setup_tagger(struct net_de
  	user->hw_features |= NETIF_F_HW_TC;
  	if (user->needed_tailroom)
  		user->features &= ~(NETIF_F_SG | NETIF_F_FRAGLIST);

@@ -14,7 +14,8 @@ default-priority platform reset handlers (PSCI uses 129).
 Signed-off-by: Łukasz Szczur <lukasz2317@gmail.com>
 --- a/drivers/gpio/gpiolib-of.c
 +++ b/drivers/gpio/gpiolib-of.c
-@@ -1307,5 +1307,30 @@
+@@ -1307,6 +1307,31 @@ bool of_gpiochip_instance_match(struct g
+ 
  #ifdef CONFIG_GPIO_SYSFS
  
 +#include <linux/delay.h>
@@ -45,7 +46,7 @@ Signed-off-by: Łukasz Szczur <lukasz2317@gmail.com>
  static const struct of_device_id gpio_export_ids[] = {
  	{ .compatible = "gpio-export" },
  	{ /* sentinel */ }
-@@ -1344,6 +1369,26 @@
+@@ -1345,6 +1370,26 @@ static int of_gpio_export_probe(struct p
  
  			dmc = fwnode_property_present(child, "gpio-export,direction_may_change");
  			gpio_export_with_name(desc, dmc, name);

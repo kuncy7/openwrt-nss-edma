@@ -19,7 +19,7 @@
 		/*
 		 * No label-mac-device: this board has no MAC in the device tree at
 		 * all. 0:ART carries none, so it comes from the misc_ro UBIFS volume
-		 * at runtime (mounted read-only by lib/preinit/09_mount_misc_ro), see
+		 * at runtime (mounted read-only by lib/preinit/09_mount_tp_data), see
 		 * board.d/02_network, which also publishes the label address into
 		 * board.json.
 		 */
@@ -354,7 +354,7 @@
  * ===========================================================================
  * Ethernet:
  *
- *   IPQ5018 gmac1 -> uniphy0 PCS -> 1G SGMII trunk -> RTL8367S DSA switch
+ *   IPQ5018 gmac1 -> uniphy0 PCS -> 2.5G SGMII trunk -> RTL8367S DSA switch
  *   Three front jacks, all RTL8367S internal PHYs:
  *     WAN = phy0 ("wan"), LAN1 = phy2 ("lan1"), LAN2 = phy1 ("lan2")
  *   The SoC's internal GE PHY (mdio0:7/gmac0) is NOT bonded out, so gmac0
@@ -377,16 +377,16 @@
 	status = "okay";
 
 	assigned-clocks = <&uniphy0 UNIPHY_CLK_REF>;
-	assigned-clock-rates = <UNIPHY_REFCLK_25MHZ>;
+	assigned-clock-rates = <UNIPHY_REFCLK_50MHZ>;
 };
 
 &gmac1 {
 	status = "okay";
 
-	phy-mode = "sgmii";
+	phy-mode = "2500base-x";
 
 	fixed-link {
-		speed = <1000>;
+		speed = <2500>;
 		full-duplex;
 	};
 };
@@ -465,10 +465,10 @@
 				reg = <6>;
 				label = "cpu";
 				ethernet = <&gmac1>;
-				phy-mode = "sgmii";
+				phy-mode = "2500base-x";
 
 				fixed-link {
-					speed = <1000>;
+					speed = <2500>;
 					full-duplex;
 				};
 			};

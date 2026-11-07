@@ -89,7 +89,7 @@ NSS memory profiles are a build-time choice for the whole image:
 | group | boards | memory profile |
 |---|---|---|
 | `std` | 512 MB and 1 GB boards (the release notes list them) | ath11k 1G, NSS medium |
-| `256m` | Cudy P5, Ruijie RG-MA3063, TP-Link Archer AX53 v2, TP-Link Archer AX58 v2, TP-Link EX511 v2, Xiaomi CR8806, Xiaomi Mi Router AX3000T v2 | ath11k 256M, NSS low |
+| `256m` | Cudy P5, Ruijie RG-MA3063, TP-Link Archer AX53 v2, TP-Link Archer AX58 v2, TP-Link EX511 v2, Xiaomi CR8806 (also CR8808, CR8809, Redmi AX3000), Xiaomi Redmi AX3000 (single rootfs layout), Xiaomi Mi Router AX3000T v2 | ath11k 256M, NSS low |
 
 The exact configuration of each group is in `.github/ci/ipq50xx/` (`common.config`
 + `<group>.config` + `kmods-extra.config`) and, for a given release, in the

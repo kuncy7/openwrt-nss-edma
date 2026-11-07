@@ -561,6 +561,20 @@ platform_do_upgrade() {
 		fw_setenv -s /tmp/xiaomi-env
 		nand_do_upgrade "$1"
 		;;
+	xiaomi,redmi-ax3000-ubootmod)
+		# Enforce single partition layout by locking boot to slot 0
+		printf '%s\n' \
+			"flag_last_success 0" \
+			"flag_ota_reboot 0" \
+			"flag_try_sys1_failed 0" \
+			"flag_try_sys2_failed 0" \
+			"flag_boot_rootfs 0" \
+			"boot_wait on" \
+			"uart_en 1" > /tmp/xiaomi-env
+		fw_setenv -s /tmp/xiaomi-env
+		CI_UBIPART="rootfs"
+		nand_do_upgrade "$1"
+		;;
 	xiaomi,ax6000|\
 	xiaomi,mi-router-ax3000t-v2|\
 	xiaomi,redmi-ax5400)

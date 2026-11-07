@@ -269,11 +269,18 @@
 				phy-handle = <&qca8337_3>;
 			};
 
+			/*
+			 * Port 5 connects to GMAC0 via PHY4, but all user ports are
+			 * assigned to conduit eth1 (GMAC1/port 0). Keeping port 5
+			 * enabled causes the switch to flood routed/WAN frames to
+			 * GMAC0, triggering high softirq packet drop storms on eth0.
+			 */
 			ethernet-port@5 {
 				reg = <5>;
 				phy-handle = <&qca8337_4>;
 				phy-mode = "gmii";
 				ethernet = <&gmac0>;
+				status = "disabled";
 			};
 		};
 	};

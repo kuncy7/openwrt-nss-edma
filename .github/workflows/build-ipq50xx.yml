@@ -203,6 +203,10 @@ jobs:
         env:
           GIT_HTTP_LOW_SPEED_LIMIT: 1000
           GIT_HTTP_LOW_SPEED_TIME: 60
+          # scripts/download.pl gives curl only --connect-timeout: a server that accepts the
+          # connection and then stops sending keeps curl waiting until the 20 minute limit,
+          # without trying the next mirror. Abort a transfer below 1 kB/s for 60 s instead.
+          CURL_OPTIONS: --speed-limit 1000 --speed-time 60
         run: |
           set -euo pipefail
           ok=0
@@ -212,6 +216,9 @@ jobs:
               break
             fi
             echo "::warning::download attempt $attempt failed or ran into the 20 minute limit"
+            # download.pl writes to <file>.dl until the transfer is complete: what is left
+            # names the source that hung
+            find dl -maxdepth 1 -name '*.dl' -printf '::warning::unfinished download: %f (%s bytes)\n' || true
             sleep 5
           done
           if [ "$ok" != 1 ]; then

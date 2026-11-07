@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+
+/dts-v1/;
+
+#include "ipq5018-cr880x.dtsi"
+
+/ {
+	model = "Redmi AX3000 (M81, single rootfs layout)";
+	compatible = "xiaomi,redmi-ax3000-ubootmod", "qcom,ipq5018";
+};
+
+&qpic_nand {
+	nand@0 {
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "0:sbl1";
+				reg = <0x00000000 0x80000>;
+				read-only;
+			};
+
+			partition@80000 {
+				label = "0:mibib";
+				reg = <0x00080000 0x80000>;
+				read-only;
+			};
+
+			partition@100000 {
+				label = "0:bootconfig";
+				reg = <0x00100000 0x40000>;
+				read-only;
+			};
+
+			partition@140000 {
+				label = "0:bootconfig1";
+				reg = <0x00140000 0x40000>;
+				read-only;
+			};
+
+			partition@180000 {
+				label = "0:qsee";
+				reg = <0x00180000 0x100000>;
+				read-only;
+			};
+
+			partition@280000 {
+				label = "0:qsee_1";
+				reg = <0x00280000 0x100000>;
+				read-only;
+			};
+
+			partition@380000 {
+				label = "0:devcfg";
+				reg = <0x00380000 0x40000>;
+				read-only;
+			};
+
+			partition@3c0000 {
+				label = "0:devcfg_1";
+				reg = <0x003c0000 0x40000>;
+				read-only;
+			};
+
+			partition@400000 {
+				label = "0:cdt";
+				reg = <0x00400000 0x40000>;
+				read-only;
+			};
+
+			partition@440000 {
+				label = "0:cdt_1";
+				reg = <0x00440000 0x40000>;
+				read-only;
+			};
+
+			partition@480000 {
+				label = "0:appsblenv";
+				reg = <0x00480000 0x80000>;
+			};
+
+			partition@500000 {
+				label = "0:appsbl";
+				reg = <0x00500000 0x140000>;
+				read-only;
+			};
+
+			partition@640000 {
+				label = "0:appsbl_1";
+				reg = <0x00640000 0x140000>;
+				read-only;
+			};
+
+			partition@780000 {
+				label = "0:art";
+				reg = <0x00780000 0x100000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					macaddr_art_0: mac-address@0 {
+						compatible = "mac-base";
+						reg = <0x0 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					macaddr_art_6: mac-address@6 {
+						compatible = "mac-base";
+						reg = <0x6 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+
+			partition@880000 {
+				label = "0:training";
+				reg = <0x00880000 0x80000>;
+				read-only;
+			};
+
+			partition@900000 {
+				label = "bdata";
+				reg = <0x00900000 0x80000>;
+			};
+
+			partition@980000 {
+				label = "crash";
+				reg = <0x00980000 0x80000>;
+			};
+
+			partition@a00000 {
+				label = "crash_syslog";
+				reg = <0x00a00000 0x80000>;
+			};
+
+			partition@a80000 {
+				label = "rootfs";
+				reg = <0x00a80000 0x7580000>;
+			};
+		};
+	};
+};

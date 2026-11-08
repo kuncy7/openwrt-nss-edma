@@ -22,11 +22,14 @@ done
 [ -n "$fw_mem_modes" ] && echo "fw mem mode:   $fw_mem_modes (wifi_offload: $(uci -q get nss.general.wifi_offload || echo unset))"
 for e in $(nss_gmac_netdevs); do
 	n="${e#*:}"
-	printf '  %-6s phys_if %s  %s  flags %s  carrier %s  tagging %s\n' "$n" "${e%%:*}" \
+	# Its own user ports, not only NSS_CONDUIT's: a GMAC is in the fw_mask
+	# when it has any, so this is the line that explains the mask below.
+	printf '  %-6s phys_if %s  %s  flags %s  carrier %s  tagging %s  users %s\n' "$n" "${e%%:*}" \
 		"$(cat "/sys/class/net/$n/operstate" 2>/dev/null)" \
 		"$(cat "/sys/class/net/$n/flags" 2>/dev/null)" \
 		"$(cat "/sys/class/net/$n/carrier" 2>/dev/null || echo -)" \
-		"$(cat "/sys/class/net/$n/dsa/tagging" 2>/dev/null || echo -)"
+		"$(cat "/sys/class/net/$n/dsa/tagging" 2>/dev/null || echo -)" \
+		"$(nss_dsa_user_ports "$n" | tr ' ' ',')"
 done
 echo "conduit:        ${NSS_CONDUIT:-none} (phys_if ${NSS_CONDUIT_IF:--})"
 echo "switch driver:  ${NSS_SWITCH_DRIVER:-none}"

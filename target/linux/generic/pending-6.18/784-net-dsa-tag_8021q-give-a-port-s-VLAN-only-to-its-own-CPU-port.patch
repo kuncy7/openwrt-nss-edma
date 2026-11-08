@@ -1,0 +1,170 @@
+From: Fanha Giang <fanha99@hotmail.com>
+Subject: [PATCH] net: dsa: tag_8021q: give a port's VLAN only to its own CPU port
+
+dsa_port_tag_8021q_vlan_match() makes every CPU port a member of every
+tag_8021q VLAN, while a bridge VLAN is given to the targeted port's own
+CPU port alone (dsa_port_host_vlan_match()). On a switch with two CPU
+ports that difference costs the second conduit everything it was meant
+to add.
+
+A standalone port's traffic crosses the conduit in that port's tag_8021q
+VLAN. Unknown unicast is flooded to every CPU port - GLOBAL_FW_CTRL1 on
+a QCA8337, the equivalent elsewhere - and the far end of a standalone
+port is never in the FDB, because DSA keeps learning off on such a port.
+So every frame routed out of a standalone port is an unknown-unicast
+flood, and because the tag_8021q VLAN spans both CPU ports, a copy of it
+reaches the second one as well. The copies are then dropped by the host
+with rx_dropped, rx_errors and mmc_rx_fifo_overflow all at zero, so
+nothing in the statistics says where the throughput went.
+
+Measured on a Xiaomi CR8806 (IPQ5018 + QCA8337, two CPU ports), routed
+and NAT through the board, 20 s, 4 streams. With the second CPU port
+merely enabled - idle, owning no user port, all four user ports on the
+other conduit - it receives a copy of the whole ingress stream
+(1,675,825 frames against 1,676,403 on the conduit), throughput falls
+932 -> 723 Mbit/s and cpu0 softirq goes 0.3% -> 98.3%. A second session
+on a fresh boot reproduced the copy at 1,687,067 against 1,677,515 with
+cpu0 softirq 91%, and the switch registers read mid-load were identical
+to idle, so the load reprograms nothing. With this patch and nothing
+else changed: 933 Mbit/s, cpu0 softirq 2%, and zero frames on the second
+CPU port for the whole run.
+
+Injecting unknown unicast directly makes the before and after explicit.
+Pointing a permanent neighbour entry at an unowned MAC on a standalone
+port and sending 20 fragmented pings gives ~820 flooded frames: before,
+the second CPU port received 825 of them; after, 0 on each of three
+runs, while GLOBAL_FW_CTRL1, the port's PORT_LOOKUP_CTRL and the VLAN
+itself were unchanged.
+
+The second conduit then does what it is for. With the WAN port on one
+conduit and the LAN ports on the other, a routed frame crosses one
+conduit per direction instead of the same conduit twice: the two
+conduits carry equal and complementary loads (1050/430 against 430/1056
+Mbit/s), a single conduit's hard ceiling of 927-929 Mbit/s bidirectional
+becomes 1104-1458 over three runs, and the NSS flow offload accelerates
+normally where before it installed no rule at all and reported
+src_mismatch_fail_count against every attempt. The spread in the second
+figure is the test rig - one 1 GbE host on each side, so an aggregate
+number needs iperf3 --bidir, whose scheduling varies widely between runs
+of the same configuration; each direction measured on its own reaches
+945 Mbit/s, the wire rate of the port.
+
+Keeping the VLAN on one CPU port means it has to follow the port when
+the port's conduit changes at runtime, which is what the two helpers
+added to dsa_port_change_conduit() do. A bridged port needs nothing
+extra there: its VLAN is handled by the bridge leave and rejoin that
+function already does around the switch. Exercised by moving a port
+between the two conduits repeatedly at runtime.
+
+Signed-off-by: Fanha Giang <fanha99@hotmail.com>
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+--- a/net/dsa/tag_8021q.c
++++ b/net/dsa/tag_8021q.c
+@@ -207,11 +207,24 @@
+ 	return 0;
+ }
+ 
++/* Tag_8021q VLANs match on the targeted port, on all DSA ports, and - as host
++ * VLANs do, see dsa_port_host_vlan_match() - on the targeted port's own CPU
++ * port alone. Giving them to every CPU port instead makes the switch flood a
++ * standalone port's traffic to the other CPU ports as well: the flood domain
++ * of an unknown unicast is every CPU port, and a standalone port's far end is
++ * never in the FDB because learning is off on such a port. The copies are
++ * then dropped by the host, at the cost of a core and of the throughput the
++ * second conduit was supposed to add.
++ */
+ static bool
+ dsa_port_tag_8021q_vlan_match(struct dsa_port *dp,
+ 			      struct dsa_notifier_tag_8021q_vlan_info *info)
+ {
+-	return dsa_port_is_dsa(dp) || dsa_port_is_cpu(dp) || dp == info->dp;
++	if (dsa_port_is_cpu(dp))
++		return info->dp->type == DSA_PORT_TYPE_USER &&
++		       info->dp->cpu_dp == dp;
++
++	return dsa_port_is_dsa(dp) || dp == info->dp;
+ }
+ 
+ int dsa_switch_tag_8021q_vlan_add(struct dsa_switch *ds,
+@@ -386,6 +399,27 @@
+ 	vlan_vid_del(conduit, ctx->proto, vid);
+ }
+ 
++/* A port's standalone VLAN is programmed on its own CPU port, so it has to
++ * follow the port when the port's conduit changes. Call the first of these
++ * while dp->cpu_dp still points at the old CPU port, and the second once it
++ * points at the new one. A bridged port's VLAN needs nothing here: it is
++ * handled by the bridge leave and rejoin that dsa_port_change_conduit() does
++ * around the switch.
++ */
++void dsa_tag_8021q_port_pre_change_conduit(struct dsa_switch *ds, int port)
++{
++	if (ds->tag_8021q_ctx)
++		dsa_tag_8021q_port_teardown(ds, port);
++}
++
++int dsa_tag_8021q_port_post_change_conduit(struct dsa_switch *ds, int port)
++{
++	if (!ds->tag_8021q_ctx)
++		return 0;
++
++	return dsa_tag_8021q_port_setup(ds, port);
++}
++
+ static int dsa_tag_8021q_setup(struct dsa_switch *ds)
+ {
+ 	int err, port;
+--- a/net/dsa/tag_8021q.h
++++ b/net/dsa/tag_8021q.h
+@@ -25,4 +25,7 @@
+ int dsa_switch_tag_8021q_vlan_del(struct dsa_switch *ds,
+ 				  struct dsa_notifier_tag_8021q_vlan_info *info);
+ 
++void dsa_tag_8021q_port_pre_change_conduit(struct dsa_switch *ds, int port);
++int dsa_tag_8021q_port_post_change_conduit(struct dsa_switch *ds, int port);
++
+ #endif
+--- a/net/dsa/port.c
++++ b/net/dsa/port.c
+@@ -1469,9 +1469,21 @@
+ 	if (dev->flags & IFF_UP)
+ 		dsa_user_host_uc_uninstall(dev);
+ 
++	/* The port's standalone tag_8021q VLAN lives on its own CPU port, so it
++	 * has to be moved across together with the port.
++	 */
++	dsa_tag_8021q_port_pre_change_conduit(ds, dp->index);
++
+ 	err = dsa_port_assign_conduit(dp, conduit, extack, true);
+ 	if (err)
+-		goto rewind_old_addrs;
++		goto rewind_old_tag_8021q;
++
++	err = dsa_tag_8021q_port_post_change_conduit(ds, dp->index);
++	if (err) {
++		NL_SET_ERR_MSG_MOD(extack,
++				   "Failed to migrate the standalone VLAN");
++		goto rewind_addr_inherit;
++	}
+ 
+ 	/* If the port doesn't have its own MAC address and relies on the DSA
+ 	 * conduit's one, inherit it again from the new DSA conduit.
+@@ -1527,10 +1539,15 @@
+ 	if (is_zero_ether_addr(dp->mac))
+ 		eth_hw_addr_inherit(dev, old_conduit);
+ 
++	dsa_tag_8021q_port_pre_change_conduit(ds, dp->index);
++
+ 	dsa_port_assign_conduit(dp, old_conduit, NULL, false);
+ 
+-/* Restore the objects on the old CPU port */
+-rewind_old_addrs:
++/* Put the standalone VLAN back on the old CPU port */
++rewind_old_tag_8021q:
++	dsa_tag_8021q_port_post_change_conduit(ds, dp->index);
++
++	/* Restore the objects on the old CPU port */
+ 	if (dev->flags & IFF_UP) {
+ 		tmp = dsa_user_host_uc_install(dev, dev->dev_addr);
+ 		if (tmp) {

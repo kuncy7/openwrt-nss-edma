@@ -194,6 +194,19 @@ jobs:
           PY
           ./scripts/diffconfig.sh >"diffconfig-${GROUP}.txt"
 
+      # Source archives rarely change between releases, and the OpenWrt mirrors that git-based
+      # packages are fetched from first can be slow (2026-11-07: ath11k-firmware at ~70 kB/s).
+      # Start from the newest dl/ this group saved, falling back to the other group's.
+      - name: Restore source archives
+        id: dl-restore
+        uses: actions/cache/restore@v6
+        with:
+          path: dl
+          key: dl-ipq50xx-${{ env.GROUP }}-none
+          restore-keys: |
+            dl-ipq50xx-${{ env.GROUP }}-
+            dl-ipq50xx-
+
       # A source that is not on the mirrors is fetched with git, and a stalled clone would hold
       # the step for hours: git gives up on a transfer that stays below 1 kB/s for a minute,
       # every attempt has a time limit, and three failed attempts fail the step instead of
@@ -225,6 +238,23 @@ jobs:
             echo "::error::the sources could not be downloaded in three attempts"
             exit 1
           fi
+
+      # Save dl/ right after the download, so a later build failure does not lose it. The key is
+      # the list of archives: an unchanged list matches the restored entry and nothing is saved.
+      - name: Compute source archive key
+        id: dl-key
+        run: |
+          set -euo pipefail
+          sum=$(find dl/ -maxdepth 1 -type f ! -name '*.dl' ! -name '*.hash' -printf '%f %s\n' | LC_ALL=C sort | sha256sum | cut -c1-16)
+          echo "key=dl-ipq50xx-${GROUP}-${sum}" >>"$GITHUB_OUTPUT"
+          echo "dl/: $(du -sh dl/ | cut -f1), restored from: ${{ steps.dl-restore.outputs.cache-matched-key || 'nothing' }}"
+
+      - name: Save source archives
+        if: steps.dl-key.outputs.key != steps.dl-restore.outputs.cache-matched-key
+        uses: actions/cache/save@v6
+        with:
+          path: dl
+          key: ${{ steps.dl-key.outputs.key }}
 
       # The ccache key covers the toolchain tree and the host compiler; a change there starts
       # from an empty cache (the same scheme as JuliusBairaktaris/Qualcommax_NSS_Builder).

@@ -91,15 +91,33 @@ nss_gmac_netdevs() {
 	return 0
 }
 
-# nss_dsa_conduit: the DSA conduit that carries the switch's user ports.
-# A conduit is the netdev with a dsa/ directory; its user ports are the
-# uppers that have a phys_switch_id. A board with two CPU ports (Redmi
-# AX5400, CMCC PZ-L8) has two conduits, and the one DSA hands the user
-# ports to is the one that matters here. Sets NSS_CONDUIT (empty when
-# there is no switch), NSS_CONDUIT_IF (its GMAC), NSS_USER_PORTS and
-# NSS_SWITCH_DRIVER (the user ports' driver, e.g. qca8k).
+# nss_dsa_user_ports <netdev>: the DSA user ports whose conduit this netdev
+# is - its uppers that carry a phys_switch_id - space separated. Empty for a
+# CPU port DSA gave no user port, which on a two-CPU-port board is what
+# board.d assigning no conduit leaves behind (DSA then hands every user port
+# to the default conduit).
+nss_dsa_user_ports() {
+	local u p ports=''
+	for u in "/sys/class/net/$1"/upper_*; do
+		[ -e "$u" ] || continue
+		p="${u##*/upper_}"
+		[ -n "$(cat "/sys/class/net/$p/phys_switch_id" 2>/dev/null)" ] || continue
+		ports="$ports $p"
+	done
+	echo "${ports# }"
+}
+
+# nss_dsa_conduit: the conduit that carries most of the switch's user ports
+# - the trunk the tagger and the switch settings key off. A conduit is the
+# netdev with a dsa/ directory; its user ports are the uppers that have a
+# phys_switch_id. A board with two CPU ports (Redmi AX5400, CMCC PZ-L8,
+# Cudy P5) has two conduits and DSA can hand user ports to both, so this is
+# a majority vote, not "the conduit": for which GMACs the firmware needs,
+# see nss_dsa_fw_mask. Sets NSS_CONDUIT (empty when there is no switch),
+# NSS_CONDUIT_IF (its GMAC), NSS_USER_PORTS and NSS_SWITCH_DRIVER (the user
+# ports' driver, e.g. qca8k).
 nss_dsa_conduit() {
-	local d n u p ports cnt best=0
+	local d n p ports cnt best=0
 	NSS_CONDUIT=''
 	NSS_CONDUIT_IF=''
 	NSS_USER_PORTS=''
@@ -107,20 +125,14 @@ nss_dsa_conduit() {
 	for d in /sys/class/net/*; do
 		[ -d "$d/dsa" ] || continue
 		n="${d##*/}"
-		ports=''
+		ports="$(nss_dsa_user_ports "$n")"
 		cnt=0
-		for u in "$d"/upper_*; do
-			[ -e "$u" ] || continue
-			p="${u##*/upper_}"
-			[ -n "$(cat "/sys/class/net/$p/phys_switch_id" 2>/dev/null)" ] || continue
-			ports="$ports $p"
-			cnt=$((cnt + 1))
-		done
+		for p in $ports; do cnt=$((cnt + 1)); done
 		[ "$cnt" -gt "$best" ] || continue
 		best=$cnt
 		NSS_CONDUIT="$n"
 		NSS_CONDUIT_IF="$(nss_gmac_index "$n")"
-		NSS_USER_PORTS="${ports# }"
+		NSS_USER_PORTS="$ports"
 	done
 	if [ -n "$NSS_USER_PORTS" ]; then
 		p="${NSS_USER_PORTS%% *}"
@@ -137,11 +149,8 @@ nss_dsa_conduit() {
 # parses. Prints the tagger's name; for a switch this plane has no such
 # tagger for it prints the driver's name and returns 1.
 nss_dsa_tagger() {
-	local u p drv
-	for u in "/sys/class/net/$1"/upper_*; do
-		[ -e "$u" ] || continue
-		p="${u##*/upper_}"
-		[ -n "$(cat "/sys/class/net/$p/phys_switch_id" 2>/dev/null)" ] || continue
+	local p drv
+	for p in $(nss_dsa_user_ports "$1"); do
 		drv="$(readlink "/sys/class/net/$p/device/driver" 2>/dev/null)" || true
 		drv="${drv##*/}"
 		case "$drv" in
@@ -156,13 +165,12 @@ nss_dsa_tagger() {
 }
 
 # nss_dsa_fw_mask: which GMACs to hand to the firmware, from what is up:
-# the conduit that carries the user ports, and every GMAC that is not a
-# conduit and is administratively up - a WAN PHY of its own (Xunison D50,
-# Linksys SPNMX56, Xiaomi AX6000). What stays out: a second CPU port DSA
-# does not use (AX5400, PZ-L8), and a GMAC nothing configured (the CMCC
-# MR3000D-CI's GMAC0). Meant to run after netifd, when "up" means
-# "configured". Sets NSS_FW_MASK as 0x<hex>; never 0x0 while there is a
-# conduit.
+# every CPU port DSA gave at least one user port, and every GMAC that is not
+# a CPU port and is administratively up - a WAN PHY of its own (Xunison D50,
+# Linksys SPNMX56, Xiaomi AX6000). What stays out: a CPU port DSA left with
+# no user port, and a GMAC nothing configured (the CMCC MR3000D-CI's GMAC0).
+# Meant to run after netifd, when "up" means "configured". Sets NSS_FW_MASK
+# as 0x<hex>; never 0x0 while there is a conduit.
 nss_dsa_fw_mask() {
 	local e i n flags mask=0
 	nss_dsa_conduit
@@ -170,7 +178,11 @@ nss_dsa_fw_mask() {
 		i="${e%%:*}"
 		n="${e#*:}"
 		if [ -d "/sys/class/net/$n/dsa" ]; then
-			[ "$n" = "$NSS_CONDUIT" ] || continue
+			# Every CPU port with user ports, not only NSS_CONDUIT: a board
+			# can put its wan port on the other one (board.d does exactly
+			# that for the AX5400, the PZ-L8 and the Cudy P5), and then that
+			# GMAC carries the WAN data path and the firmware needs it too.
+			[ -n "$(nss_dsa_user_ports "$n")" ] || continue
 		else
 			flags="$(cat "/sys/class/net/$n/flags" 2>/dev/null || echo 0)"
 			[ $(( flags & 1 )) -ne 0 ] || continue

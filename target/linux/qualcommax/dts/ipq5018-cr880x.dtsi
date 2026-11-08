@@ -270,17 +270,34 @@
 			};
 
 			/*
-			 * Port 5 connects to GMAC0 via PHY4, but all user ports are
-			 * assigned to conduit eth1 (GMAC1/port 0). Keeping port 5
-			 * enabled causes the switch to flood routed/WAN frames to
-			 * GMAC0, triggering high softirq packet drop storms on eth0.
+			 * The second CPU port: switch PHY4 faces the SoC's internal
+			 * GE PHY, two PHYs back to back with no MAC between them, and
+			 * GMAC0 (eth0) behind it. board.d puts the wan port on this
+			 * conduit and leaves the lan ports on eth1, so a routed flow
+			 * crosses one conduit per direction instead of the same one
+			 * twice.
+			 *
+			 * This was disabled by a67d696c5d because the switch flooded
+			 * a standalone port's routed frames to both CPU ports, which
+			 * cost 932 -> 723 Mbit/s and a whole core on a CR8806. That
+			 * flood was a DSA bug, not a property of this board: a
+			 * standalone port's tag_8021q VLAN was given to every CPU
+			 * port, so the unknown-unicast flood of a port whose far end
+			 * is never learned reached both. With that fixed, enabling
+			 * this port costs nothing measurable (933 Mbit/s, zero frames
+			 * on the second conduit) and splitting the ports across the
+			 * two conduits lifts a single conduit's ceiling of 927-929
+			 * Mbit/s bidirectional to 1104-1458.
+			 *
+			 * The link also needs opening at probe time, or PHY4 drops
+			 * its 1000BASE-T advertisement after ~13 s and never comes
+			 * up. Both fixes are kernel patches in generic/pending.
 			 */
 			ethernet-port@5 {
 				reg = <5>;
 				phy-handle = <&qca8337_4>;
 				phy-mode = "gmii";
 				ethernet = <&gmac0>;
-				status = "disabled";
 			};
 		};
 	};

@@ -804,3 +804,19 @@ define Device/zyxel_scr50axe
 		ipq-wifi-zyxel_scr50axe
 endef
 TARGET_DEVICES += zyxel_scr50axe
+
+define Device/xiaomi_cr8808-m79yt
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := Xiaomi
+	DEVICE_MODEL := CR8808
+	DEVICE_VARIANT := M79 YT9215 (single rootfs layout)
+	DEVICE_DTS := ipq5018-cr8808-m79yt
+	DEVICE_DTS_CONFIG := config@mp03.3
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	NAND_SIZE := 128m
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122
+endef
+TARGET_DEVICES += xiaomi_cr8808-m79yt

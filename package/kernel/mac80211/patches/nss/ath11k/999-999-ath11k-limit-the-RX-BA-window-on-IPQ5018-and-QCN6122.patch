@@ -1,0 +1,34 @@
+From: Anton <17167061+ExtremeBoy@users.noreply.github.com>
+Subject: [PATCH] ath11k: limit the RX BA window to 64 on IPQ5018 and QCN6122
+
+On a Xiaomi CR8808 (IPQ5018 + QCN6122, 256M memory profile, NSS Wi-Fi
+offload) Wi-Fi 6 clients negotiate a 256-frame Block Ack window and REO
+then drops part of what they send as "Frame OOR": ~20k per 30 s of
+uplink in soc_dp_stats, about 17 % of the frames, and TCP stalled at
+~40 Mbit/s. TCP ACKs of a download are hit too.
+
+With 64 announced, Frame OOR stays at 0 and the download through the
+NSS plane went from 84-200 to ~290 Mbit/s (80 MHz, 2x2 client). Limited
+to these two chips: the others were not tested.
+
+Signed-off-by: Anton <17167061+ExtremeBoy@users.noreply.github.com>
+---
+--- a/drivers/net/wireless/ath/ath11k/mac.c	2026-11-09 16:53:41.126528296 +0500
++++ b/drivers/net/wireless/ath/ath11k/mac.c	2026-11-09 16:53:41.138528376 +0500
+@@ -11328,7 +11328,15 @@
+ 	ar->hw->queues = ATH11K_HW_MAX_QUEUES;
+ 	ar->hw->wiphy->tx_queue_len = ATH11K_QUEUE_LEN;
+ 	ar->hw->offchannel_tx_hw_queue = ATH11K_HW_MAX_QUEUES - 1;
+-	ar->hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HE;
++	/* IPQ5018 + QCN6122 with the NSS Wi-Fi offload: with a 256-frame
++	 * BA window, REO drops part of the uplink as "Frame OOR" (see
++	 * soc_dp_stats). Announcing 64 stops it.
++	 */
++	if (ar->ab->hw_rev == ATH11K_HW_IPQ5018_HW10 ||
++	    ar->ab->hw_rev == ATH11K_HW_QCN6122_HW10)
++		ar->hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HT;
++	else
++		ar->hw->max_rx_aggregation_subframes = IEEE80211_MAX_AMPDU_BUF_HE;
+ 
+ 	ar->hw->vif_data_size = sizeof(struct ath11k_vif);
+ 	ar->hw->sta_data_size = sizeof(struct ath11k_sta);

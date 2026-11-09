@@ -288,6 +288,30 @@ define Device/ruijie_rg-ma3063
 endef
 TARGET_DEVICES += ruijie_rg-ma3063
 
+define Device/xiaomi_ax3000
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := Xiaomi
+	DEVICE_MODEL := AX3000
+	DEVICE_VARIANT := RA80
+	DEVICE_ALT0_VENDOR := Xiaomi
+	DEVICE_ALT0_MODEL := CR8806
+	DEVICE_ALT0_VARIANT := M79
+	DEVICE_ALT1_VENDOR := Xiaomi
+	DEVICE_ALT1_MODEL := Redmi AX3000
+	DEVICE_ALT1_VARIANT := M81
+	DEVICE_DTS := ipq5018-xiaomi-ax3000
+	DEVICE_DTS_CONFIG := config@mp02.1
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	NAND_SIZE := 128m
+	DEVICE_PACKAGES := \
+		ath11k-firmware-ipq5018-qcn6122 \
+		ipq-wifi-xiaomi_ax3000
+endef
+TARGET_DEVICES += xiaomi_ax3000
+
 define Device/xiaomi_cr8806
 	$(call Device/FitImage)
 	$(call Device/UbiFit)

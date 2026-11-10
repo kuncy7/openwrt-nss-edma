@@ -1,0 +1,51 @@
+From: Feiyang Yu <2541290956@qq.com>
+Subject: [PATCH] net: stmmac: drop host TX in flight when the NSS firmware claims the GMAC
+
+qca_dwmac_dp_claim() stops the host DMA with frames possibly still on the
+host TX ring. They never complete, so BQL keeps their bytes in flight. If
+the queue limit is still small - right after a link came up, when the
+limit starts at zero - the stack has set __QUEUE_STATE_STACK_XOFF, and the
+netif_tx_wake_all_queues() at the end of the claim only clears the driver
+bit. The queue stays stopped, the owner's xmit is never called, and the
+TX watchdog fires five seconds later:
+
+  eth1: qca-dwmac: data plane claimed
+  eth1: NETDEV WATCHDOG: CPU: 1: transmit queue 0 timed out 5740 ms
+  eth1: Reset adapter.
+
+On a DSA conduit the reset closes all user ports, which nothing reopens:
+the LAN is dead until reboot. Seen on an RTL8367S board (H3C Magic
+RC3000 v3) whose LAN port linked up 50 ms before the conduit was claimed
+at boot; reproduced every time by claiming with BQL limit_max set to 0
+under a ping flood.
+
+Free the stale frames, clear the descriptors and reset the queue, as
+stmmac_tx_err() does, before handing the queue to the owner.
+
+Signed-off-by: Feiyang Yu <2541290956@qq.com>
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -2418,6 +2418,23 @@
+ 	stmmac_stop_all_dma(priv);
+ 
+ 	/*
++	 * Frames the host queued just before the stop never complete now: the
++	 * DMA is stopped and NAPI will not clean them. Their bytes would stay
++	 * in flight in BQL, and a queue whose limit is still small (the first
++	 * frames after the link came up) keeps __QUEUE_STATE_STACK_XOFF set,
++	 * which netif_tx_wake_all_queues() below does not clear. The stack
++	 * then never calls the owner's xmit, and five seconds later the TX
++	 * watchdog resets the adapter - on a DSA conduit that closes every
++	 * user port. Drop them the way stmmac_tx_err() does, which also keeps
++	 * the host ring empty for the bounce that follows a release.
++	 */
++	for (u32 queue = 0; queue < priv->plat->tx_queues_to_use; queue++) {
++		dma_free_tx_skbufs(priv, &priv->dma_conf, queue);
++		stmmac_clear_tx_descriptors(priv, &priv->dma_conf, queue);
++		stmmac_reset_tx_queue(priv, queue);
++	}
++
++	/*
+ 	 * The firmware enables the DMA interrupts for itself and the line is
+ 	 * shared with the host's GIC: left unmasked, the host takes one
+ 	 * interrupt per DMA event it has nothing to do for (tens of thousands

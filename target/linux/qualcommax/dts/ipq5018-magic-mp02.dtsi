@@ -203,7 +203,7 @@
 
 			ethernet-port@2 {
 				reg = <2>;
-				label = "lan3";
+				label = "lan1";
 				phy-handle = <&qca8337_1>;
 			};
 
@@ -215,7 +215,7 @@
 
 			ethernet-port@4 {
 				reg = <4>;
-				label = "lan1";
+				label = "lan3";
 				phy-handle = <&qca8337_3>;
 			};
 		};

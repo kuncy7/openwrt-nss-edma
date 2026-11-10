@@ -399,37 +399,29 @@ switch stays with its driver, so ports, CPU port and VLANs are the kernel's,
 and the rest is read off the board at every boot - the GMACs from the nodes
 their netdevs sit on (`ethernet@39c00000` = GMAC0 = `phys_if 0`,
 `ethernet@39d00000` = GMAC1 = `phys_if 1`), the trunk as the conduit DSA hangs
-the user ports off, and `fw_mask` from what netifd brought up: the conduit
-plus any GMAC that is not a conduit and is up (a WAN PHY of its own), never a
-second CPU port DSA does not use or a GMAC nothing configured.
+the user ports off, and `fw_mask` from what netifd brought up: every CPU port
+DSA gave user ports, plus any GMAC that is not a conduit and is up (a WAN PHY
+of its own), never a second CPU port DSA left idle or a GMAC nothing
+configured.
 `nss-dwmac-probe` prints that view; `trunk`, `trunk_if`, `extra_ports` and
-`fw_mask` in uci still override it if a board needs that. One thing first boot
-does change: a board table that splits the DSA ports across both CPU links
-(the Redmi AX5400, the Cudy P5 and the CMCC PZ-L8 put `lan1`-`lan3` on `eth1`
-and `wan` on `eth0`) is consolidated onto the link that carries most of them,
-because only the armed conduit's ports get a firmware VLAN interface - and on
-the AX5400 the odd link is GMAC0 into switch port 5, whose RX is dead in
-mainline as well (openwrt#24696). The split is read where `board.d` puts it,
-`/etc/board.json` (`network_device.<port>.conduit`, applied by netifd - there
-is no `config device` section for it in `/etc/config/network`), with any such
-section LuCI or an admin added taking precedence; the moved port gets its
-conduit in the section that names it, or in a new one. A port left on the
-other link is not an error, it just stays on the host path; the service says
-which ports and where in the log at boot. An even split is left alone: nothing
-on the board says which link works.
+`fw_mask` in uci still override it if a board needs that. First boot changes
+nothing about the wiring either: a board table that splits the DSA ports
+across both CPU links (the Redmi AX5400, the Cudy P5, the CMCC PZ-L8 and the
+CR880x put `lan1`-`lan3` on `eth1` and `wan` on `eth0`) is kept exactly as
+`board.d` and netifd made it, and both links carry firmware traffic -
+`fw_mask` derives `0x3`, and `tag_8021q` hands a port's VLAN to its own CPU
+port alone, so neither link floods into the other.
 
-A board of these three set up on the `dsa` topology before 21 September 2026
-kept the split - the first-boot script read only `/etc/config/network` then,
-found no conduit there and moved nothing, so `wan` stayed on `eth0` and off
-the firmware. First boot does not run again on its own; the fix by hand is
-what the script now writes (if `uci show network | grep "name='wan'"` already
-finds a `config device` for `wan` - a MAC override, say - set the conduit in
-that one instead; two sections for one device do not mix):
+Builds before 10 November 2026 consolidated such a split on first boot: every
+port was moved onto the link carrying most of them (`wan` to `eth1` on these
+four boards), because the plane armed one conduit only and a port on the other
+link stayed on the host path. A board first set up by one of those builds
+still has that move in `/etc/config/network`, and first boot does not run
+again on its own - undo it by hand to get the split back:
 
 ```
-uci add network device
-uci set network.@device[-1].name='wan'
-uci set network.@device[-1].conduit='eth1'
+uci show network | grep "name='wan'"       # the section the script wrote
+uci -q delete network.@device[1].conduit   # board.d's eth0 applies again
 uci commit network
 reboot
 ```

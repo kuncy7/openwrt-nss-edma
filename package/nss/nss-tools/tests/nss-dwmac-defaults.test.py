@@ -348,38 +348,37 @@ json_cleanup() { :; }
     assert not [k for k in r if k.startswith('network.wan')], ('ex511 no wan', 'wan reappeared')
 
     # With the switch driver bound the dsa topology is picked and the trunk
-    # table never runs. On the AX5400 board.d splits the ports across both CPU
-    # links - lan1-3 on eth1, wan on eth0 - and this topology cannot keep that:
-    # only the armed conduit's ports reach the firmware, and on this board the
-    # odd link is the dead-RX GMAC0 (openwrt#24696). The WAN port follows the
-    # majority onto eth1; nothing else about the config is touched.
+    # table never runs. On the AX5400, the Cudy P5, the CMCC PZ-L8 and the
+    # CR880x board.d splits the ports across both CPU links - lan1-3 on eth1,
+    # wan on eth0 - and the split is kept: the plane arms every GMAC DSA gave
+    # user ports, so both conduits reach the firmware. Nothing about the
+    # network config is touched.
     #
     # A fresh flash first, as it really is: board.d's split sits in
     # /etc/board.json and /etc/config/network has no device section for any
-    # port (forum #402 - the WAN stayed on eth0 until one was added by hand).
-    # wan gets a new section of its own; the lan ports, already on eth1 by
-    # board.json, get nothing.
+    # port. No conduit is written anywhere, and no section is added.
     split = {'model': {'id': 'xiaomi,redmi-ax5400'}, 'network_device': {
         'lan1': {'conduit': 'eth1'}, 'lan2': {'conduit': 'eth1'},
         'lan3': {'conduit': 'eth1'}, 'wan': {'conduit': 'eth0'}}}
     fresh = dict(b3000, **{'network.@device[0].ports': 'lan1 lan2 lan3'})
-    r = run_dsa_both('xiaomi,redmi-ax5400', fresh, split)
-    check(r, {'nss.general.topology': 'dsa', 'network.new1': 'device',
-              'network.new1.name': 'wan', 'network.new1.conduit': 'eth1',
-              'network.wan.device': 'wan', 'network.@device[0].ports': 'lan1 lan2 lan3'},
-          'ra74 dsa fresh')
-    assert len([k for k in r if k.endswith('.conduit')]) == 1, ('ra74 dsa fresh', r)
+    for b in ('xiaomi,redmi-ax5400', 'xiaomi,cr8806'):
+        r = run_dsa_both(b, fresh, split)
+        check(r, {'nss.general.topology': 'dsa', 'network.wan.device': 'wan',
+                  'network.@device[0].ports': 'lan1 lan2 lan3'}, b + ' dsa fresh')
+        assert not [k for k in r if k.endswith('.conduit')], (b, 'dsa fresh', r)
+        assert not [k for k in r if k.startswith('network.new')], (b, 'dsa fresh', r)
 
-    # A device section that names wan already (a MAC override) takes the
-    # conduit: a second section for the same device is not made.
+    # A device section that names wan already (a MAC override) is left as it
+    # is: no conduit is added to it either.
     mac = dict(fresh, **{'network.cfg3': 'device', 'network.cfg3.name': 'wan',
                          'network.cfg3.macaddr': '02:00:00:00:00:01'})
     r = run_dsa_both('xiaomi,redmi-ax5400', mac, split)
-    check(r, {'network.cfg3.name': 'wan', 'network.cfg3.conduit': 'eth1',
+    check(r, {'network.cfg3.name': 'wan',
               'network.cfg3.macaddr': '02:00:00:00:00:01'}, 'ra74 dsa mac section')
+    assert 'network.cfg3.conduit' not in r, ('ra74 dsa mac section', r)
     assert not [k for k in r if k.startswith('network.new')], ('ra74 dsa mac section', r)
 
-    # A section that already put wan on eth1 overrides board.json: nothing to do.
+    # A section that put wan on eth1 by hand overrides board.json: kept too.
     moved = dict(fresh, **{'network.cfg3': 'device', 'network.cfg3.name': 'wan',
                            'network.cfg3.conduit': 'eth1'})
     assert run_dsa_both('xiaomi,redmi-ax5400', moved, split) == dict(
@@ -394,9 +393,9 @@ json_cleanup() { :; }
         r = run_dsa_both('glinet,gl-b3000', b3000, bj)
         assert not [k for k in r if k.endswith('.conduit')], ('no split', bj, r)
 
-    # The same split set by LuCI instead, as uci sections: the sections move.
+    # The same split set by LuCI instead, as uci sections: they stay put.
     r = run_dsa('xiaomi,redmi-ax5400', ra74)
-    check(r, {'nss.general.topology': 'dsa', 'network.cfg2.conduit': 'eth1',
+    check(r, {'nss.general.topology': 'dsa', 'network.cfg2.conduit': 'eth0',
               'network.cfg1.conduit': 'eth1', 'network.cfg4.conduit': 'eth1',
               'network.cfg5.conduit': 'eth1', 'network.cfg2.name': 'wan',
               'network.wan.device': 'wan', 'network.@device[0].ports': 'lan1 lan2 lan3'}, 'ra74 dsa')
@@ -412,8 +411,7 @@ json_cleanup() { :; }
               'network.wan.device': 'wan'}, 'b3000 dsa')
     assert not [k for k in r if k.endswith('.conduit')], ('b3000 dsa', 'a conduit appeared')
 
-    # One port on each link: there is nothing here to say which link works, so
-    # both conduits are left as they are.
+    # One port on each link: both conduits are left as they are, as above.
     even = dict(b3000, **{'network.cfg1': 'device', 'network.cfg1.name': 'lan1',
                           'network.cfg1.conduit': 'eth1',
                           'network.cfg2': 'device', 'network.cfg2.name': 'wan',
@@ -438,8 +436,8 @@ json_cleanup() { :; }
 
     # An Airoha AN8855 (Xiaomi AX3000T v2): the switch MFD binds on the MDIO
     # bus as 'an8855', and that alone picks the dsa topology. All four ports
-    # sit on one CPU link, so nothing is consolidated, and the plane is on
-    # as on the other dsa boards: the an8855-8021q tagger carries its traffic.
+    # sit on one CPU link, and the plane is on as on the other dsa boards:
+    # the an8855-8021q tagger carries its traffic.
     (tmp / 'mdio' / 'qca8k').rename(tmp / 'mdio' / 'qca8k.off')
     an8855 = tmp / 'mdio' / 'an8855'
     an8855.mkdir()
@@ -456,6 +454,7 @@ json_cleanup() { :; }
 print('PASS: RA74 and Cudy P5 dual link, rerun, Wi-Fi choice kept, tagged WAN, '
       'no wan6, migrated config, B3000 MAC clone, D50 LAN-only trunk, RG-MA3063, '
       'WAX630E keeps br-lan, '
-      'EX511 headerless switch, dsa conduit consolidation (AX5400 fresh from board.json, '
-      'existing wan section, uci override, LuCI sections, B3000, even split), '
+      'EX511 headerless switch, dsa conduits left alone (AX5400 and CR8806 fresh '
+      'from board.json, existing wan section, uci override, LuCI sections, B3000, '
+      'even split), '
       'Wi-Fi offload on with firmware memory mode 1, AN8855 picks dsa')

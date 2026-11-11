@@ -74,12 +74,16 @@ image: a board that is not in official OpenWrt needs a plain OpenWrt image
 built from this tree first (Quick start below), and a board that is gets the
 official one. `sha256sums-<group>.txt` next to the images has the checksums.
 
-The Xiaomi Mi Router AX3000T v2 is the exception: its stock U-Boot only boots
-a freshly ubiformatted kernel volume, so it refuses an in-place sysupgrade and
-is installed and upgraded from `openwrt-qualcommax-ipq50xx-xiaomi_mi-router-ax3000t-v2-initramfs-factory.ubi`,
-in the `256m` group's release (steps in the commit that adds the board). That
-image is for installing only: it runs from RAM, so with Wi-Fi up it can run out
-of memory.
+The Xiaomi Mi Router AX3000T v2 is the exception for the first install: from
+stock it is installed from a RAM-booted initramfs (steps in the commit that adds
+the board; its note that upgrades must also go through the initramfs no longer
+applies). The `256m` group's release carries
+`openwrt-qualcommax-ipq50xx-xiaomi_mi-router-ax3000t-v2-initramfs-factory.ubi`,
+which an installed system can write to boot one without UART; it runs from RAM,
+so with Wi-Fi up it can run out of memory. Once installed, the board upgrades in
+place like the others. Images built before in-place upgrades were allowed
+refuse one: on those, check that `sysupgrade -T` shows only that refusal, then
+run `sysupgrade -F` once with this board's sysupgrade image.
 
 Every image is built with the whole plane in: `nss-tools-dwmac`, firmware
 12.5-210 (12.2-156 up to `ipq50xx-2026.10.14`), VLAN and PPPoE managers, ath11k with the NSS patches, plus `ip-full`

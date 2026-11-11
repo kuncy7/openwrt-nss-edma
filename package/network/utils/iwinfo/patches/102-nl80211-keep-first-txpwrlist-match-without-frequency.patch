@@ -1,0 +1,35 @@
+From 9a2658b051b0898636efd749e10add843dcab3b8 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tobias=20Bl=C3=A4ser?= <github.dev@tobtech.de>
+Date: Tue, 20 Oct 2026 14:43:02 +0200
+Subject: [PATCH 2/2] nl80211: keep first txpwrlist match without frequency
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+With a split wiphy dump, nl80211_get_txpwrlist_cb() runs once per dump
+message. If the current frequency is unknown (no interface up), every
+message containing a channel with a TX power limit overwrote dbm_max,
+so the result came from the last such channel of the last band instead
+of the first one.
+
+Only take the first match in that case, and skip disabled channels, as
+they are not usable for the current regulatory domain.
+
+Signed-off-by: Tobias Bläser <github.dev@tobtech.de>
+---
+ iwinfo_nl80211.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/iwinfo_nl80211.c
++++ b/iwinfo_nl80211.c
+@@ -2606,7 +2606,9 @@ static int nl80211_get_txpwrlist_cb(stru
+ 			ch_cmp = nl80211_freq2channel(freq_cmp);
+ 
+ 			if ((freq_cur && freq_cmp == freq_cur) ||
+-			    (!freq_cur && (!ch_cur || ch_cmp == ch_cur)))
++			    (!freq_cur && txpwrlist->dbm_max < 0 &&
++			     !freqs[NL80211_FREQUENCY_ATTR_DISABLED] &&
++			     (!ch_cur || ch_cmp == ch_cur)))
+ 			{
+ 				txpwrlist->dbm_max = nla_get_u32(
+ 					freqs[NL80211_FREQUENCY_ATTR_MAX_TX_POWER]) / 100;

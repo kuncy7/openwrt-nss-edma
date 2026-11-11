@@ -452,7 +452,7 @@ index bf89a25..33a2d46 100644
 +	kfree(arvif->vlan_keyid_map);
  	ath11k_peer_cleanup(ar, arvif->vdev_id);
  
- 	idr_for_each(&ar->txmgmt_idr,
+ 	ath11k_mac_vif_txmgmt_cleanup(ar, vif);
 @@ -10274,6 +10469,33 @@ static int ath11k_mac_station_remove(struct ath11k *ar,
  	return ret;
  }

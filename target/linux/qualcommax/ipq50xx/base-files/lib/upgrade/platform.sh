@@ -372,18 +372,8 @@ linksys_mx_pre_upgrade() {
 
 platform_check_image() {
 	case "$(board_name)" in
-	cudy,p5)
-		nand_do_platform_check "$(board_name)" "$1"
-		;;
+	cudy,p5|\
 	xiaomi,mi-router-ax3000t-v2)
-		# The stock U-Boot can only attach a kernel UBI that was freshly
-		# ubiformatted, which xiaomi_initramfs_prepare only does when
-		# running from the initramfs. An in-place sysupgrade leaves the
-		# device unbootable ("UBI init error 22").
-		if [ "$(rootfs_type)" != "tmpfs" ]; then
-			v "Boot the initramfs image and run sysupgrade from there."
-			return 1
-		fi
 		nand_do_platform_check "$(board_name)" "$1"
 		;;
 	*)

@@ -6,8 +6,9 @@ name: Build ipq50xx
 #
 # Images go to a GitHub release tagged ipq50xx-YYYY.MM.DD. Sysupgrade only: a board is
 # expected to run OpenWrt already. The one exception is the 256m group, which also publishes
-# initramfs-factory.ubi: a board whose boot loader only takes a freshly formatted UBI (Xiaomi
-# AX3000T v2) is installed and upgraded from that image.
+# initramfs-factory.ubi for the Xiaomi AX3000T v2: its first install from stock runs from a
+# RAM-booted initramfs, and an installed system can write this image to boot one without UART.
+# Upgrades of an installed board are ordinary sysupgrades.
 #
 # Kernel modules: a kmod depends on kernel=<version>~<vermagic>, so it can only be installed on
 # an image from the same build. Each build's bin/targets/.../packages/ is therefore published on
@@ -334,7 +335,7 @@ jobs:
         run: |
           set -euo pipefail
           out="bin/targets/${TARGET}"
-          # initramfs-factory.ubi only where a board needs it to be upgraded at all: the Xiaomi
+          # initramfs-factory.ubi only where a board uses it for its first install: the Xiaomi
           # AX3000T v2. Other boards build one too (the Archer AX53/AX58 v2), but install otherwise.
           names=(-name 'openwrt-*-squashfs-sysupgrade.bin'); sums='sysupgrade\.bin'
           if [[ "$GROUP" == 256m ]]; then

@@ -367,6 +367,23 @@ define Device/glinet_gl-x2000
 endef
 TARGET_DEVICES += glinet_gl-x2000
 
+define Device/h3c_magic-bx54-eu
+	$(call Device/h3c_magic-qsdk)
+	DEVICE_MODEL := Magic BX54
+	DEVICE_VARIANT := EU
+	DEVICE_DTS_CONFIG := config@mp03.1-c2
+	H3C_FIT_CONFIGS = config@mp03.1-c2=ipq5018-magic-bx54-eu \
+		config@mp03.1=ipq5018-magic-bx54-eu
+	IMAGES += factory-bx54.bin
+	IMAGE/factory-bx54.bin := append-ubi | h3c-web-fit | \
+		h3c-web-header NX54-EUV100R999 D999
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
+		kmod-ath11k-pci \
+		ath11k-firmware-qcn9074 \
+		ipq-wifi-h3c_magic-bx54-eu
+endef
+TARGET_DEVICES += h3c_magic-bx54-eu
+
 define Device/h3c_magic-nx30
 	$(call Device/h3c_magic-qsdk)
 	DEVICE_MODEL := Magic NX30

@@ -438,6 +438,7 @@ platform_do_upgrade() {
 		remove_oem_ubi_volume wifi_fw
 		glinet_do_upgrade "$1"
 		;;
+	h3c,magic-bx54-eu|\
 	h3c,magic-nx30|\
 	h3c,magic-rc3000-v1|\
 	h3c,magic-rc3000-v2|\

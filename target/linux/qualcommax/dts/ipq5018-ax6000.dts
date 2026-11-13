@@ -27,7 +27,14 @@
 		 * ubi.mtd=rootfs_1 root=mtd:ubi_rootfs rootfstype=squashfs rootwait uart_en=1
 		 * so we need to override and set ubi.mtd=rootfs
 		 */
-		bootargs-append = " ubi.mtd=rootfs root=/dev/ubiblock0_0 coherent_pool=2M";
+		/*
+		 * coherent_pool sizes the three atomic DMA pools (kernel, DMA,
+		 * DMA32). 2M was needed while the MPD firmware loader took its
+		 * segment buffers from the atomic pool. That loader is no longer
+		 * in the kernel (multiPD is done in ath11k), so 512K is enough,
+		 * as on the CR880x boards.
+		 */
+		bootargs-append = " ubi.mtd=rootfs root=/dev/ubiblock0_0 coherent_pool=512K";
 		stdout-path = "serial0:115200n8";
 	};
 

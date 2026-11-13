@@ -1,0 +1,128 @@
+From: Vadim Deiss <letechnarb@gmail.com>
+Subject: [PATCH] net: stmmac: report the NSS firmware traffic in the netdev stats
+
+While the NSS firmware owns the DMA, the frames never pass through the
+host path, so the netdev counters of a claimed GMAC (wan, the DSA
+conduit) stop: ifconfig, LuCI graphs, vnstat, SNMP and the netdev LED
+trigger all see a dead port.
+
+Let the owner report the traffic it carried through an optional
+get_stats64() callback. stmmac adds the live claim's share in
+ndo_get_stats64() and, at release, folds it into dp_stats for good, so
+the counters never go back across release, re-claim, down/up or an MTU
+change. dp_stats_lock makes the fold and the pointer change atomic for
+readers. Drops counted by the NSS data plane before the firmware
+(dev->stats.tx_dropped) are added too.
+
+Checked on a Xiaomi AX6000 (IPQ5018): the wan and eth0 packet counts
+match the MAC's MMC counters exactly, the bytes differ by the 4-byte FCS;
+a netdev LED trigger on wan blinks again; across down/up and MTU changes
+(three release/claim cycles) no counter went back.
+
+Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
+---
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac.h
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac.h
+@@ -282,6 +282,8 @@
+ 	void *dp_ctx;
+ 	bool dp_irq_off;	/* dev->irq masked for the claim */
+ 	struct mutex dp_link_lock;	/* claim/release vs the owner link callbacks */
++	spinlock_t dp_stats_lock;	/* dp_owner/dp_ctx vs stats readers */
++	struct rtnl_link_stats64 dp_stats;	/* owner traffic of finished claims */
+ 
+ 	struct stmmac_extra_stats xstats ____cacheline_aligned_in_smp;
+ 	struct stmmac_safety_stats sstats;
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -2388,6 +2388,19 @@
+ 		stmmac_stop_tx_dma(priv, chan);
+ }
+ 
++/* every rtnl_link_stats64 field is a u64 counter: add them all */
++static void stmmac_dp_stats_add(struct rtnl_link_stats64 *to,
++				const struct rtnl_link_stats64 *from)
++{
++	const u64 *f = (const u64 *)from;
++	u64 *t = (u64 *)to;
++	size_t i;
++
++	BUILD_BUG_ON(sizeof(*from) % sizeof(u64));
++	for (i = 0; i < sizeof(*from) / sizeof(u64); i++)
++		t[i] += f[i];
++}
++
+ /**
+  * qca_dwmac_dp_claim - hand the data plane of a dwmac netdev to an owner
+  * @dev: stmmac netdev, must be running
+@@ -2462,8 +2475,10 @@
+ 	 * release); the link callbacks take dp_link_lock.
+ 	 */
+ 	mutex_lock(&priv->dp_link_lock);
++	spin_lock_bh(&priv->dp_stats_lock);
+ 	priv->dp_ctx = ctx;
+ 	smp_store_release(&priv->dp_owner, owner);
++	spin_unlock_bh(&priv->dp_stats_lock);
+ 	mutex_unlock(&priv->dp_link_lock);
+ 
+ 	netif_tx_wake_all_queues(dev);
+@@ -2500,8 +2515,17 @@
+ 	netif_tx_disable(dev);
+ 	/* no link callback runs the owner's code once this returns */
+ 	mutex_lock(&priv->dp_link_lock);
++	spin_lock_bh(&priv->dp_stats_lock);
++	/* fold the claim's traffic for good, so the counters never go back */
++	if (priv->dp_owner->get_stats64) {
++		struct rtnl_link_stats64 d = {};
++
++		priv->dp_owner->get_stats64(priv->dp_ctx, &d, true);
++		stmmac_dp_stats_add(&priv->dp_stats, &d);
++	}
+ 	WRITE_ONCE(priv->dp_owner, NULL);
+ 	priv->dp_ctx = NULL;
++	spin_unlock_bh(&priv->dp_stats_lock);
+ 	mutex_unlock(&priv->dp_link_lock);
+ 
+ 	/*
+@@ -7512,6 +7536,7 @@
+ static void stmmac_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
+ {
+ 	struct stmmac_priv *priv = netdev_priv(dev);
++	const struct qca_dwmac_dp_owner *owner;
+ 	u32 tx_cnt = priv->plat->tx_queues_to_use;
+ 	u32 rx_cnt = priv->plat->rx_queues_to_use;
+ 	unsigned int start;
+@@ -7560,6 +7585,26 @@
+ 	stats->rx_crc_errors = priv->xstats.rx_crc_errors;
+ 	stats->rx_over_errors = priv->xstats.rx_overflow_cntr;
+ 	stats->rx_missed_errors = priv->xstats.rx_missed_cntr;
++
++	/*
++	 * Traffic the NSS firmware carried while it owned the DMA, which
++	 * the host path never sees: finished claims are folded into
++	 * dp_stats at release, the live claim's share comes from its owner.
++	 * After the host fill, whose error fields are assignments.
++	 */
++	spin_lock_bh(&priv->dp_stats_lock);
++	owner = priv->dp_owner;
++	if (owner && owner->get_stats64) {
++		struct rtnl_link_stats64 d = {};
++
++		owner->get_stats64(priv->dp_ctx, &d, false);
++		stmmac_dp_stats_add(stats, &d);
++	}
++	stmmac_dp_stats_add(stats, &priv->dp_stats);
++	spin_unlock_bh(&priv->dp_stats_lock);
++
++	/* drops of the NSS data plane before the firmware (qca-nss-drv) */
++	stats->tx_dropped += DEV_STATS_READ(dev, tx_dropped);
+ }
+ 
+ static const struct net_device_ops stmmac_netdev_ops = {
+@@ -7939,6 +7984,7 @@
+ 		u64_stats_init(&priv->xstats.txq_stats[i].napi_syncp);
+ 	}
+ 	mutex_init(&priv->dp_link_lock);
++	spin_lock_init(&priv->dp_stats_lock);
+ 
+ 	priv->xstats.pcpu_stats =
+ 		devm_netdev_alloc_pcpu_stats(device, struct stmmac_pcpu_stats);

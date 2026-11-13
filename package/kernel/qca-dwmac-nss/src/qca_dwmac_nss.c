@@ -144,6 +144,10 @@ struct dwmac_nss_port {
 	u32 fw_tx_resume;
 	bool fw_resume_valid;
 	atomic_t ring_restores;
+	/* nss-drv's firmware totals at the last stats fold (get_stats64) */
+	struct nss_dp_gmac_stats fw_stats_base;
+	/* fw_link_up/fw_link_failed and the link_state messages */
+	struct mutex link_lock;
 };
 
 static struct dwmac_nss_port dwmac_nss_ports[NSS_DP_MAX_INTERFACES];
@@ -166,6 +170,7 @@ static netdev_tx_t dwmac_nss_fw_xmit(struct sk_buff *skb, void *ctx)
 	/* The firmware cannot checksum a double-tagged frame (nss-dp masked it). */
 	if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL && skb_vlan_tagged_multi(skb)) &&
 	    skb_checksum_help(skb)) {
+		DEV_STATS_INC(port->netdev, tx_dropped);
 		dev_kfree_skb_any(skb);
 		return NETDEV_TX_OK;
 	}
@@ -179,14 +184,17 @@ static netdev_tx_t dwmac_nss_fw_xmit(struct sk_buff *skb, void *ctx)
 }
 
 /*
- * Synchronous fw message; process context only (phylink resolve worker
- * or under rtnl from our own paths). Not called concurrently with claim
- * release for the same port: release stops TX first and the phylink
- * callbacks read the owner pointer once.
+ * Synchronous fw message; process context only. Two kinds of caller:
+ * phylink's resolve worker (link_up/link_down, which stmmac serializes
+ * against claim and release with dp_link_lock, so they never run on a
+ * claim being dropped) and our own paths under rtnl. port->link_lock
+ * serializes the two around the shadow and the message.
  */
-static int dwmac_nss_fw_link_state(struct dwmac_nss_port *port, bool up)
+static int __dwmac_nss_fw_link_state(struct dwmac_nss_port *port, bool up)
 {
 	int err;
+
+	lockdep_assert_held(&port->link_lock);
 
 	if (port->fw_link_up == up && !port->fw_link_failed) {
 		atomic_inc(&port->fw_link_skipped);
@@ -207,6 +215,16 @@ static int dwmac_nss_fw_link_state(struct dwmac_nss_port *port, bool up)
 	return err;
 }
 
+static int dwmac_nss_fw_link_state(struct dwmac_nss_port *port, bool up)
+{
+	int err;
+
+	mutex_lock(&port->link_lock);
+	err = __dwmac_nss_fw_link_state(port, up);
+	mutex_unlock(&port->link_lock);
+	return err;
+}
+
 static void dwmac_nss_fw_link_up(void *ctx)
 {
 	dwmac_nss_fw_link_state(ctx, true);
@@ -217,10 +235,71 @@ static void dwmac_nss_fw_link_down(void *ctx)
 	dwmac_nss_fw_link_state(ctx, false);
 }
 
+/*
+ * Firmware traffic of the live claim for stmmac's netdev stats. nss-drv
+ * accumulates the firmware's phys_if syncs (every ~20-30 ms under load) for
+ * as long as it is loaded and never resets them, so report the delta since
+ * the last fold and move the base on the final call at release. Syncs that
+ * land after that fold count towards the next claim; if none follows
+ * (netdev gone, nss-drv reloaded) those last ~20-30 ms are lost. Runs under stmmac's
+ * dp_stats_lock with BH disabled: nss-drv's get_stats only takes its own
+ * spinlock and copies.
+ */
+#define DWMAC_NSS_DELTA(cur, base, f) \
+	((cur)->f >= (base)->f ? (cur)->f - (base)->f : 0)
+
+static void dwmac_nss_get_stats64(void *ctx, struct rtnl_link_stats64 *s,
+				  bool final)
+{
+	struct dwmac_nss_port *port = ctx;
+	const struct nss_dp_hal_gmac_stats_rx *r, *rb;
+	const struct nss_dp_hal_gmac_stats_tx *t, *tb;
+	struct nss_dp_gmac_stats g;
+
+	if (!port || !port->dp_ops || !port->dp_ops->get_stats)
+		return;
+
+	port->dp_ops->get_stats(port->dpc, &g);
+	r = &g.stats.rx_stats;
+	rb = &port->fw_stats_base.stats.rx_stats;
+	t = &g.stats.tx_stats;
+	tb = &port->fw_stats_base.stats.tx_stats;
+
+	/*
+	 * stmmac's host mapping where it has one (collisions, FIFO overflow);
+	 * nss-drv syncs no CRC or rx_dropped count, so CRC drops while
+	 * claimed show only in rx_errors.
+	 */
+	s->rx_packets = DWMAC_NSS_DELTA(r, rb, rx_packets);
+	s->rx_bytes = DWMAC_NSS_DELTA(r, rb, rx_bytes);
+	s->rx_errors = DWMAC_NSS_DELTA(r, rb, rx_errors);
+	s->rx_length_errors = DWMAC_NSS_DELTA(r, rb, rx_length_errors);
+	s->rx_over_errors = DWMAC_NSS_DELTA(r, rb, rx_fifo_overflows);
+	s->rx_frame_errors = DWMAC_NSS_DELTA(r, rb, rx_dribble_bit_errors);
+	s->rx_missed_errors = DWMAC_NSS_DELTA(r, rb, rx_missed);
+	s->tx_packets = DWMAC_NSS_DELTA(t, tb, tx_packets);
+	s->tx_bytes = DWMAC_NSS_DELTA(t, tb, tx_bytes);
+	s->tx_errors = DWMAC_NSS_DELTA(t, tb, tx_errors);
+	s->tx_dropped = DWMAC_NSS_DELTA(t, tb, tx_dropped);
+	s->tx_carrier_errors = DWMAC_NSS_DELTA(t, tb, tx_loss_of_carrier_errors) +
+			       DWMAC_NSS_DELTA(t, tb, tx_no_carrier_errors);
+	s->tx_aborted_errors = DWMAC_NSS_DELTA(t, tb, tx_excessive_collision_errors);
+	s->tx_fifo_errors = DWMAC_NSS_DELTA(t, tb, tx_underflow_errors);
+	s->tx_window_errors = DWMAC_NSS_DELTA(t, tb, tx_late_collision_errors);
+	s->collisions = DWMAC_NSS_DELTA(t, tb, tx_collisions) +
+			DWMAC_NSS_DELTA(r, rb, rx_late_collision_errors);
+
+	if (final)
+		port->fw_stats_base = g;
+}
+
+#undef DWMAC_NSS_DELTA
+
 static const struct qca_dwmac_dp_owner dwmac_nss_dp_owner = {
 	.xmit		= dwmac_nss_fw_xmit,
 	.link_up	= dwmac_nss_fw_link_up,
 	.link_down	= dwmac_nss_fw_link_down,
+	.get_stats64	= dwmac_nss_get_stats64,
 };
 
 /*
@@ -520,10 +599,12 @@ static int dwmac_nss_port_start(struct dwmac_nss_port *port)
 	 * so in the shadow, then feed it the current carrier - phylink only
 	 * reports transitions, and this link may already be up.
 	 */
+	mutex_lock(&port->link_lock);
 	port->fw_link_up = false;
 	port->fw_link_failed = 0;
 	if (netif_carrier_ok(netdev))
-		dwmac_nss_fw_link_state(port, true);
+		__dwmac_nss_fw_link_state(port, true);
+	mutex_unlock(&port->link_lock);
 
 	port->state = DWMAC_NSS_PORT_STARTED;
 	netdev_info(netdev, "qca-dwmac-nss: phys_if %d on NSS fw data plane\n",
@@ -702,6 +783,11 @@ int nss_dp_override_data_plane(struct net_device *netdev,
 		goto out;
 	}
 	port->headroom_added = true;
+	/* this nss-drv instance's firmware totals count from here (no claim yet) */
+	if (dp_ops->get_stats)
+		dp_ops->get_stats(dpc, &port->fw_stats_base);
+	else
+		memset(&port->fw_stats_base, 0, sizeof(port->fw_stats_base));
 	port->state = DWMAC_NSS_PORT_OVERRIDDEN;
 
 	netdev_info(netdev, "qca-dwmac-nss: NSS data plane override on phys_if %d\n",
@@ -1455,7 +1541,10 @@ static void qca_dwmac_nss_tcsr_set(void)
 
 static int __init qca_dwmac_nss_init(void)
 {
-	int ret;
+	int ret, i;
+
+	for (i = 0; i < NSS_DP_MAX_INTERFACES; i++)
+		mutex_init(&dwmac_nss_ports[i].link_lock);
 
 	if (fw_if < NSS_DP_START_IFNUM || fw_if >= NSS_DP_MAX_INTERFACES) {
 		pr_err("qca-dwmac-nss: fw_if %d out of range 0..%d\n",

@@ -39,11 +39,21 @@
  *		programmed and enabled for the new link. May sleep.
  * @link_down:	called from phylink's resolve worker before the MAC is
  *		disabled. May sleep.
+ *		Both run serialized against claim and release, so @ctx stays
+ *		valid for the whole call; the owner serializes them against its
+ *		own link messages.
+ * @get_stats64: optional; fills @s (zeroed by the caller) with the
+ *		traffic the owner carried since its last @final call. stmmac adds
+ *		it to the netdev stats while claimed, and folds it for good on
+ *		release with @final set, exactly once per claim. Called with BH
+ *		disabled under a stmmac spinlock, from process or softirq
+ *		context: must not sleep or call back into stmmac.
  */
 struct qca_dwmac_dp_owner {
 	netdev_tx_t (*xmit)(struct sk_buff *skb, void *ctx);
 	void (*link_up)(void *ctx);
 	void (*link_down)(void *ctx);
+	void (*get_stats64)(void *ctx, struct rtnl_link_stats64 *s, bool final);
 };
 
 int qca_dwmac_dp_claim(struct net_device *dev,

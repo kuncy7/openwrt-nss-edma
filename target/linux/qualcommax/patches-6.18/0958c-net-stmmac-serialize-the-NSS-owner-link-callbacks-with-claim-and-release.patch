@@ -1,0 +1,118 @@
+From: Vadim Deiss <letechnarb@gmail.com>
+Subject: [PATCH] net: stmmac: serialize the NSS owner link callbacks with claim and release
+
+stmmac_mac_link_up() and stmmac_mac_link_down() read dp_owner twice and
+call the owner's link callback without a lock. They run from phylink's
+resolve worker under its state_mutex, not under rtnl, so a release under
+rtnl can clear dp_owner/dp_ctx between the check and the call, and the
+callback gets a NULL context.
+
+Take a mutex around the callback and around publishing and clearing the
+owner in claim and release: once release returns, no link callback runs
+the owner's code. A mutex, since the owner's callback sends a firmware
+message synchronously and sleeps.
+
+The xmit hook keeps reading dp_owner locklessly; pair the claim's store
+with smp_store_release()/smp_load_acquire() instead of a lone smp_wmb().
+
+Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
+---
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac.h
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac.h
+@@ -281,6 +281,7 @@
+ 	const struct qca_dwmac_dp_owner *dp_owner;
+ 	void *dp_ctx;
+ 	bool dp_irq_off;	/* dev->irq masked for the claim */
++	struct mutex dp_link_lock;	/* claim/release vs the owner link callbacks */
+ 
+ 	struct stmmac_extra_stats xstats ____cacheline_aligned_in_smp;
+ 	struct stmmac_safety_stats sstats;
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -868,8 +868,14 @@
+ {
+ 	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
+ 
++	/*
++	 * phylink runs this from its resolve worker, not under rtnl: take
++	 * dp_link_lock so claim and release cannot change the owner under us.
++	 */
++	mutex_lock(&priv->dp_link_lock);
+ 	if (priv->dp_owner && priv->dp_owner->link_down)
+ 		priv->dp_owner->link_down(priv->dp_ctx);
++	mutex_unlock(&priv->dp_link_lock);
+ 
+ 	stmmac_mac_set(priv, priv->ioaddr, false);
+ 	if (priv->dma_cap.eee)
+@@ -981,8 +987,14 @@
+ 	if (priv->plat->flags & STMMAC_FLAG_HWTSTAMP_CORRECT_LATENCY)
+ 		stmmac_hwtstamp_correct_latency(priv, priv);
+ 
++	/*
++	 * phylink runs this from its resolve worker, not under rtnl: take
++	 * dp_link_lock so claim and release cannot change the owner under us.
++	 */
++	mutex_lock(&priv->dp_link_lock);
+ 	if (priv->dp_owner && priv->dp_owner->link_up)
+ 		priv->dp_owner->link_up(priv->dp_ctx);
++	mutex_unlock(&priv->dp_link_lock);
+ }
+ 
+ static void stmmac_mac_disable_tx_lpi(struct phylink_config *config)
+@@ -2445,10 +2457,14 @@
+ 	disable_irq(dev->irq);
+ 	priv->dp_irq_off = true;
+ 
++	/*
++	 * The xmit hook reads dp_owner locklessly (acquire, paired with this
++	 * release); the link callbacks take dp_link_lock.
++	 */
++	mutex_lock(&priv->dp_link_lock);
+ 	priv->dp_ctx = ctx;
+-	/* xmit hook reads dp_owner without a lock: publish ctx first */
+-	smp_wmb();
+-	WRITE_ONCE(priv->dp_owner, owner);
++	smp_store_release(&priv->dp_owner, owner);
++	mutex_unlock(&priv->dp_link_lock);
+ 
+ 	netif_tx_wake_all_queues(dev);
+ 
+@@ -2482,8 +2498,11 @@
+ 		return -ENOENT;
+ 
+ 	netif_tx_disable(dev);
++	/* no link callback runs the owner's code once this returns */
++	mutex_lock(&priv->dp_link_lock);
+ 	WRITE_ONCE(priv->dp_owner, NULL);
+ 	priv->dp_ctx = NULL;
++	mutex_unlock(&priv->dp_link_lock);
+ 
+ 	/*
+ 	 * Unmask the line while NAPI is still disabled: an event left pending
+@@ -4867,13 +4886,16 @@
+ 	struct dma_edesc *tbs_desc = NULL;
+ 	struct dma_desc *desc, *first;
+ 	struct stmmac_tx_queue *tx_q;
++	const struct qca_dwmac_dp_owner *owner;
+ 	bool has_vlan, set_ic;
+ 	int entry, first_tx;
+ 	dma_addr_t des;
+ 	u32 sdu_len;
+ 
+-	if (unlikely(READ_ONCE(priv->dp_owner)))
+-		return priv->dp_owner->xmit(skb, priv->dp_ctx);
++	/* pairs with the smp_store_release() in qca_dwmac_dp_claim() */
++	owner = smp_load_acquire(&priv->dp_owner);
++	if (unlikely(owner))
++		return owner->xmit(skb, priv->dp_ctx);
+ 
+ 	tx_q = &priv->dma_conf.tx_queue[queue];
+ 	txq_stats = &priv->xstats.txq_stats[queue];
+@@ -7916,6 +7938,7 @@
+ 		u64_stats_init(&priv->xstats.txq_stats[i].q_syncp);
+ 		u64_stats_init(&priv->xstats.txq_stats[i].napi_syncp);
+ 	}
++	mutex_init(&priv->dp_link_lock);
+ 
+ 	priv->xstats.pcpu_stats =
+ 		devm_netdev_alloc_pcpu_stats(device, struct stmmac_pcpu_stats);

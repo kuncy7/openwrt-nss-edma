@@ -20,9 +20,11 @@
  *
  * Releasing the claim does not restart the host DMA: after the firmware
  * owned the controller the host ring state is stale, and the one correct
- * way back is a full reinit. The claim owner is expected to bounce the
- * interface (dev_close/dev_open under rtnl) after release; TX queues stay
- * disabled in between so nothing touches the dead rings.
+ * way back is a full reinit. Release stops the DMA whatever happened
+ * before; the claim owner is expected to bounce the interface
+ * (dev_close/dev_open under rtnl) after release; TX queues stay disabled
+ * in between so nothing touches the dead rings, and NAPI is enabled again
+ * (for the napi_disable() balance of the close that follows).
  */
 
 #ifndef __LINUX_SOC_QCOM_QCA_DWMAC_H
@@ -39,11 +41,21 @@
  *		programmed and enabled for the new link. May sleep.
  * @link_down:	called from phylink's resolve worker before the MAC is
  *		disabled. May sleep.
+ *		Both run serialized against claim and release, so @ctx stays
+ *		valid for the whole call; the owner serializes them against its
+ *		own link messages.
+ * @get_stats64: optional; fills @s (zeroed by the caller) with the
+ *		traffic the owner carried since its last @final call. stmmac adds
+ *		it to the netdev stats while claimed, and folds it for good on
+ *		release with @final set, exactly once per claim. Called with BH
+ *		disabled under a stmmac spinlock, from process or softirq
+ *		context: must not sleep or call back into stmmac.
  */
 struct qca_dwmac_dp_owner {
 	netdev_tx_t (*xmit)(struct sk_buff *skb, void *ctx);
 	void (*link_up)(void *ctx);
 	void (*link_down)(void *ctx);
+	void (*get_stats64)(void *ctx, struct rtnl_link_stats64 *s, bool final);
 };
 
 int qca_dwmac_dp_claim(struct net_device *dev,
@@ -92,5 +104,19 @@ int qca_dwmac_dp_dma_stop(struct net_device *dev);
 int qca_dwmac_dp_rings_set(struct net_device *dev, u32 rx, u32 tx);
 int qca_dwmac_dp_rings_wrap(struct net_device *dev, u32 rx, u32 tx);
 void qca_dwmac_dp_mac_set(struct net_device *dev, bool enable);
+
+/*
+ * qca_dwmac_dp_free_host_rx() hands back the host RX buffers of a claimed
+ * GMAC once the firmware runs its DMA on its own rings: the host ring holds
+ * dma_rx_size pages it will not use before the bounce rebuilds it. The
+ * host descriptors are zeroed, so a DMA pointed at them again suspends
+ * ("descriptor unavailable") instead of writing into freed pages. From
+ * then until that bounce, RX NAPI polls on the netdev return without
+ * touching the ring and release keeps the interrupt line masked. Returns
+ * -EPERM without a claim, -EBUSY while the receive list address or the
+ * current descriptor still lies in the host ring, -EOPNOTSUPP with XDP,
+ * AF_XDP or more than one RX queue; 0 if already done.
+ */
+int qca_dwmac_dp_free_host_rx(struct net_device *dev);
 
 #endif /* __LINUX_SOC_QCOM_QCA_DWMAC_H */

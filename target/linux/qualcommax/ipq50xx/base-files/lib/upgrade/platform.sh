@@ -585,6 +585,10 @@ platform_do_upgrade() {
 		fw_setenv -s /tmp/xiaomi-env
 		nand_do_upgrade "$1"
 		;;
+	xiaomi,cr8808-m79yt)
+		CI_UBIPART="rootfs"
+		nand_do_upgrade "$1"
+		;;
 	xiaomi,redmi-ax3000-ubootmod)
 		# Enforce single partition layout by locking boot to slot 0
 		printf '%s\n' \

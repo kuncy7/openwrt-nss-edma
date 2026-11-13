@@ -1,0 +1,238 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/*
+ * Xiaomi CR8808, board revision M79 with Motorcomm YT9215 switch
+ * ("M79-YT"), merged single-rootfs NAND layout (partition table in SMEM).
+ *
+ * Based on ipq5018-cr880x.dtsi (QCA8337 boards). Everything that differs on
+ * this board was taken from the device tree of the vendor/NWRT firmware
+ * running on the unit:
+ *   - switch: YT9215 @ MDIO1 0x1d, reset GPIO 39, CPU port 8 = 2500base-x
+ *   - UART on GPIO 20/21 (blsp0_uart0), not 28/29
+ *   - QCN6102 reset GPIO 18 (boot-args), not 27
+ *   - LEDs on GPIO 24/25/26/27, buttons reset=38, wps=28
+ *   - NAND ECC 4 bit / 512 (as written by vendor U-Boot and NWRT)
+ *   - WiFi BDFs bdwlan.b23 (IPQ5018) / bdwlan.b60 (QCN6122), shipped in our
+ *     own board-2.bin under the variant below
+ */
+
+/dts-v1/;
+
+#include "ipq5018-cr880x.dtsi"
+
+/ {
+	model = "Xiaomi CR8808 (M79, YT9215)";
+	compatible = "xiaomi,cr8808-m79yt", "qcom,ipq5018";
+
+	aliases {
+		label-mac-device = &gmac1;
+	};
+
+	keys {
+		reset-button {
+			gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
+		};
+
+		mesh-button {
+			label = "wps";
+			gpios = <&tlmm 28 GPIO_ACTIVE_LOW>;
+		};
+	};
+};
+
+/* LEDs: GPIO map of this board (NWRT: sysb 24, sysy 25, internet 26, localnet 27) */
+&led_system_blue {
+	gpios = <&tlmm 24 GPIO_ACTIVE_HIGH>;
+	label = "blue:system";
+};
+
+&led_system_yellow {
+	gpios = <&tlmm 25 GPIO_ACTIVE_HIGH>;
+	label = "red:system";
+};
+
+/* Colour of 26/27 to be confirmed on the unit (NWRT names: internet, localnet) */
+&led_internet_blue {
+	gpios = <&tlmm 26 GPIO_ACTIVE_HIGH>;
+	label = "blue:internet";
+};
+
+&led_internet_yellow {
+	gpios = <&tlmm 27 GPIO_ACTIVE_HIGH>;
+	label = "red:internet";
+};
+
+&led_pins {
+	pins = "gpio24", "gpio25", "gpio26", "gpio27";
+};
+
+&button_pins {
+	pins = "gpio28", "gpio38";
+};
+
+&serial_0_pins {
+	pins = "gpio20", "gpio21";
+	function = "blsp0_uart0";
+};
+
+&qpic_nand {
+	nand@0 {
+		/* This unit's U-Boot and NWRT use 4-bit ECC (mtd ecc_strength=4) */
+		nand-ecc-strength = <4>;
+
+		partitions {
+			compatible = "qcom,smem-part";
+
+			partition-art {
+				label = "0:art";
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					/* 50:88:11:..:..:c1 on this unit: WAN */
+					macaddr_art_0: mac-address@0 {
+						compatible = "mac-base";
+						reg = <0x0 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					/* 44:f7:70:..:..:c7 on this unit: LAN */
+					macaddr_art_6: mac-address@6 {
+						compatible = "mac-base";
+						reg = <0x6 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+		};
+	};
+};
+
+/* MAC1 runs 2500base-x (HSGMII) to YT9215 port 8: 50 MHz reference, as on AX6000 */
+&uniphy0 {
+	assigned-clock-rates = <UNIPHY_REFCLK_50MHZ>;
+};
+
+&gmac1 {
+	phy-mode = "2500base-x";
+
+	fixed-link {
+		speed = <2500>;
+		pause;
+	};
+};
+
+&mdio1 {
+	reset-gpios = <&tlmm 39 GPIO_ACTIVE_LOW>;
+	reset-delay-us = <10000>;
+	reset-post-delay-us = <50000>;
+
+	/delete-node/ ethernet-switch@17;
+	/delete-node/ ethernet-phy@0;
+	/delete-node/ ethernet-phy@1;
+	/delete-node/ ethernet-phy@2;
+	/delete-node/ ethernet-phy@3;
+	/delete-node/ ethernet-phy@4;
+
+	switch0: ethernet-switch@1d {
+		compatible = "motorcomm,yt9215";
+		reg = <0x1d>;
+
+		/* Internal PHYs of the YT9215 (driver looks up the "mdio" child) */
+		mdio {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			yt_phy0: ethernet-phy@0 {
+				reg = <0>;
+			};
+
+			yt_phy1: ethernet-phy@1 {
+				reg = <1>;
+			};
+
+			yt_phy2: ethernet-phy@2 {
+				reg = <2>;
+			};
+
+			yt_phy3: ethernet-phy@3 {
+				reg = <3>;
+			};
+		};
+
+		ethernet-ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/* LAN = ports 0,1,2 and WAN = port 3, as in NWRT (VLAN1 0-2, VLAN2 3). */
+			/* Physical lan1..lan3 order to be confirmed on the unit.               */
+			ethernet-port@0 {
+				reg = <0>;
+				label = "lan1";
+				phy-handle = <&yt_phy0>;
+				phy-mode = "internal";
+			};
+
+			ethernet-port@1 {
+				reg = <1>;
+				label = "lan2";
+				phy-handle = <&yt_phy1>;
+				phy-mode = "internal";
+			};
+
+			ethernet-port@2 {
+				reg = <2>;
+				label = "lan3";
+				phy-handle = <&yt_phy2>;
+				phy-mode = "internal";
+			};
+
+			ethernet-port@3 {
+				reg = <3>;
+				label = "wan";
+				phy-handle = <&yt_phy3>;
+				phy-mode = "internal";
+
+				nvmem-cells = <&macaddr_art_0 0>;
+				nvmem-cell-names = "mac-address";
+			};
+
+			/*
+			 * Port 4 is the internal link to the IPQ5018 GE PHY (NWRT's WAN
+			 * path through eth0). All user ports use conduit eth1 here, so
+			 * it is left out, like port 5 on the QCA8337 boards.
+			 */
+
+			ethernet-port@8 {
+				reg = <8>;
+				phy-mode = "2500base-x";
+				ethernet = <&gmac1>;
+
+				fixed-link {
+					speed = <2500>;
+					full-duplex;
+					pause;
+				};
+			};
+		};
+	};
+};
+
+&q6v5_wcss {
+	/* QCN6102 on PCIe1, user PD 2, reset on GPIO 18 (vendor DT: 2 4 2 0x12 0 0) */
+	boot-args = </*       type:	*/ 0x2 /* PCIE1	*/
+		     /*     length:	*/ 4
+		     /*     UPD ID:	*/ 2
+		     /* reset GPIO:	*/ 18
+		     /*   reserved:	*/ 0 0>;
+};
+
+&wifi {
+	qcom,ath11k-calibration-variant = "Xiaomi-CR8808-M79YT";
+};
+
+&wifi1 {
+	qcom,ath11k-calibration-variant = "Xiaomi-CR8808-M79YT";
+};

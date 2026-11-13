@@ -95,6 +95,11 @@ module_param(boot_unarmed, bool, 0644);
 MODULE_PARM_DESC(boot_unarmed,
 		 "let qca-nss-drv boot the NSS core with no port armed (debug only)");
 
+static bool free_host_rx = true;
+module_param(free_host_rx, bool, 0644);
+MODULE_PARM_DESC(free_host_rx,
+		 "release the idle host RX buffers of a GMAC while the NSS firmware owns its DMA (default on)");
+
 static bool fw_csum;
 module_param(fw_csum, bool, 0644);
 MODULE_PARM_DESC(fw_csum,
@@ -483,6 +488,24 @@ static int dwmac_nss_rings_prepare(struct dwmac_nss_port *port)
 	return 0;
 }
 
+/*
+ * The firmware runs on its own rings now: the host RX ring is idle until
+ * the bounce after release rebuilds it, so give its pages back
+ * (kuncy7/openwrt-nss-edma#52). stmmac refuses unless the DMA is
+ * verifiably off the host ring.
+ */
+static void dwmac_nss_free_host_rx(struct dwmac_nss_port *port)
+{
+	int err;
+
+	if (!free_host_rx)
+		return;
+	err = qca_dwmac_dp_free_host_rx(port->netdev);
+	if (err)
+		netdev_info(port->netdev, "qca-dwmac-nss: host RX buffers of phys_if %d kept (%d)\n",
+			    port->if_num, err);
+}
+
 /* after a successful firmware open */
 static void dwmac_nss_rings_start(struct dwmac_nss_port *port)
 {
@@ -502,6 +525,7 @@ static void dwmac_nss_rings_start(struct dwmac_nss_port *port)
 		atomic_inc(&port->ring_restores);
 		netdev_info(port->netdev, "qca-dwmac-nss: fw DMA rings restored on phys_if %d, resumed at rx %08x tx %08x\n",
 			    port->if_num, port->fw_rx_resume, port->fw_tx_resume);
+		dwmac_nss_free_host_rx(port);
 		return;
 	}
 
@@ -517,6 +541,7 @@ static void dwmac_nss_rings_start(struct dwmac_nss_port *port)
 	port->fw_rings_known = true;
 	netdev_info(port->netdev, "qca-dwmac-nss: fw DMA rings of phys_if %d: rx %08x tx %08x\n",
 		    port->if_num, r.rx_base, r.tx_base);
+	dwmac_nss_free_host_rx(port);
 }
 
 static int dwmac_nss_port_start(struct dwmac_nss_port *port)

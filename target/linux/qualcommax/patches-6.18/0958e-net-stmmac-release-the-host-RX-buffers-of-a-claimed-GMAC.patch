@@ -1,0 +1,330 @@
+From: Vadim Deiss <letechnarb@gmail.com>
+Subject: [PATCH] net: stmmac: release the host RX buffers of a claimed GMAC
+
+While the NSS firmware owns the GMAC DMA the host RX ring is idle: on an
+AX6000 over two hours stmmac received 156 frames on eth0 and none on wan
+against 2.25 M and 0.6 M at the MAC, while each ring keeps 512 page_pool
+pages (2 MiB). Release the host RX buffers once the owner has the
+firmware running on its own rings; the bounce after release rebuilds them.
+
+- qca_dwmac_dp_free_host_rx(): only while claimed, with the receive list
+  address and the current descriptor outside the host ring, no XDP or
+  AF_XDP, one RX queue, a dwmac1000/100 register layout. Zero the host
+  descriptors first (a DMA pointed at them again suspends on "descriptor
+  unavailable"), return the pages, unregister the xdp_rxq and destroy the
+  page_pool, in the order of __free_dma_rx_desc_resources(); descriptors
+  and buf_pool stay, so stmmac_release() frees the rest as usual.
+- RX NAPI polls return without touching the ring while the buffers are
+  released (release re-enables NAPI for the napi_disable() balance, and
+  netpoll and busy polling can still call into it); __stmmac_open() and
+  stmmac_xdp_open() clear the state with new buffers.
+- release stops the DMA and waits for it whatever the owner managed
+  before, and keeps the interrupt line masked while the buffers are
+  released; stmmac_free_irq() balances it at the bounce.
+- claim refuses a port with XDP or AF_XDP, and one whose host RX ring was
+  released and not yet rebuilt; it masks the line only once.
+- installing an XDP program or pool is refused on a claimed GMAC, like
+  ring and channel changes (0958a): it reopens the rings under the claim.
+- suspend refuses a claimed or released port: resume restarts the host
+  DMA in place.
+
+Known limit: the bounce allocates the new buffers with GFP_ATOMIC (as
+stmmac_init_rx_buffers() always does) long after the old ones were given
+back; if that fails the open fails and the owner only warns.
+
+Link: https://github.com/kuncy7/openwrt-nss-edma/issues/52
+
+Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
+---
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac.h
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac.h
+@@ -281,6 +281,7 @@
+ 	const struct qca_dwmac_dp_owner *dp_owner;
+ 	void *dp_ctx;
+ 	bool dp_irq_off;	/* dev->irq masked for the claim */
++	bool dp_rx_freed;	/* host RX buffers released for the claim */
+ 	struct mutex dp_link_lock;	/* claim/release vs the owner link callbacks */
+ 	spinlock_t dp_stats_lock;	/* dp_owner/dp_ctx vs stats readers */
+ 	struct rtnl_link_stats64 dp_stats;	/* owner traffic of finished claims */
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -2401,6 +2401,8 @@
+ 		t[i] += f[i];
+ }
+ 
++static bool qca_dwmac_dp_dma_wait(struct stmmac_priv *priv, bool started);
++
+ /**
+  * qca_dwmac_dp_claim - hand the data plane of a dwmac netdev to an owner
+  * @dev: stmmac netdev, must be running
+@@ -2433,10 +2435,22 @@
+ 		return -ENETDOWN;
+ 
+ 	/*
++	 * Host RX state the firmware rings cannot carry: XDP and AF_XDP would
++	 * be torn down under the claim, and a host ring released by
++	 * qca_dwmac_dp_free_host_rx() needs the bounce before a new claim.
++	 */
++	if (stmmac_xdp_is_enabled(priv) ||
++	    !bitmap_empty(priv->af_xdp_zc_qps, MTL_MAX_TX_QUEUES))
++		return -EBUSY;
++	if (priv->dp_rx_freed)
++		return -EAGAIN;
++
++	/*
+ 	 * Quiesce the host data path in dependency order: no new TX (and no
+ 	 * CPU left inside ndo_start_xmit once netif_tx_disable returns), no
+ 	 * NAPI polls, then the DMA channels themselves. RX buffers stay
+-	 * allocated but unused; the firmware brings its own rings.
++	 * allocated until the owner has the firmware running on its own rings
++	 * and hands them back with qca_dwmac_dp_free_host_rx().
+ 	 */
+ 	netif_tx_disable(dev);
+ 	stmmac_disable_all_queues(priv);
+@@ -2467,8 +2481,10 @@
+ 	 * the host DMA is stopped and the uniphy PCS polls the in-band link
+ 	 * state - so mask it until release.
+ 	 */
+-	disable_irq(dev->irq);
+-	priv->dp_irq_off = true;
++	if (!priv->dp_irq_off) {
++		disable_irq(dev->irq);
++		priv->dp_irq_off = true;
++	}
+ 
+ 	/*
+ 	 * The xmit hook reads dp_owner locklessly (acquire, paired with this
+@@ -2496,13 +2512,17 @@
+  * redirect. Deliberately does NOT restart the host DMA: its ring state is
+  * stale after the firmware owned the controller, so TX queues are left
+  * disabled and the caller must bounce the interface (dev_close/dev_open,
+- * still under rtnl) to reinit the host data path from scratch.
++ * still under rtnl) to reinit the host data path from scratch. Stops the
++ * DMA and waits for it (so it may sleep) whatever the owner did before,
++ * and keeps the interrupt line masked if the host RX buffers were
++ * released (qca_dwmac_dp_free_host_rx()).
+  */
+ int qca_dwmac_dp_release(struct net_device *dev)
+ {
+ 	struct stmmac_priv *priv;
+ 
+ 	ASSERT_RTNL();
++	might_sleep();
+ 
+ 	if (!dev || dev->netdev_ops != &stmmac_netdev_ops)
+ 		return -EINVAL;
+@@ -2529,11 +2549,22 @@
+ 	mutex_unlock(&priv->dp_link_lock);
+ 
+ 	/*
++	 * Whatever the owner managed before - a firmware that died, a close
++	 * that never came - the DMA must not run from here on: the host rings
++	 * are stale, and with their buffers released they hold none.
++	 */
++	stmmac_stop_all_dma(priv);
++	if (!qca_dwmac_dp_dma_wait(priv, false))
++		netdev_warn(dev, "qca-dwmac: DMA did not stop on release\n");
++
++	/*
+ 	 * Unmask the line while NAPI is still disabled: an event left pending
+ 	 * by the firmware runs the handler once, and napi_schedule() on a
+-	 * disabled NAPI is a no-op.
++	 * disabled NAPI is a no-op. With the RX buffers released keep it
++	 * masked: nothing on this GMAC is for the host until the bounce, and
++	 * stmmac_free_irq() balances it then.
+ 	 */
+-	if (priv->dp_irq_off) {
++	if (priv->dp_irq_off && !priv->dp_rx_freed) {
+ 		priv->dp_irq_off = false;
+ 		enable_irq(dev->irq);
+ 	}
+@@ -2727,6 +2758,92 @@
+ }
+ EXPORT_SYMBOL(qca_dwmac_dp_mac_set);
+ 
++/*
++ * Host RX buffers of a claimed GMAC. Once the firmware runs the DMA on its
++ * own rings, the host RX ring is dead weight (dma_rx_size pages) until the
++ * bounce that follows qca_dwmac_dp_release() rebuilds it from scratch.
++ * Hand the pages back:
++ *  - only while claimed, with the DMA verifiably off the host ring (receive
++ *    list address and current descriptor outside it), and without XDP or
++ *    AF_XDP on the port;
++ *  - host descriptors zeroed first, so a DMA ever pointed at the host ring
++ *    again finds no descriptor it owns and suspends instead of writing into
++ *    a freed page;
++ *  - from then on RX NAPI polls return without touching the ring
++ *    (dp_rx_freed), release keeps the interrupt line masked, and the next
++ *    open (__stmmac_open, stmmac_xdp_open) clears the flag with new
++ *    buffers. stmmac_release() copes with what is left: NULL pages, an
++ *    unregistered xdp_rxq and a NULL page_pool.
++ * dwmac1000 with a single RX queue only: the list address registers read
++ * here are those of channel 0.
++ */
++static bool qca_dwmac_dp_in_ring(u32 addr, dma_addr_t base, size_t len)
++{
++	return addr - lower_32_bits(base) < len;
++}
++
++int qca_dwmac_dp_free_host_rx(struct net_device *dev)
++{
++	struct stmmac_priv *priv = qca_dwmac_dp_priv(dev);
++	struct stmmac_rx_queue *rx_q;
++	unsigned int i, pages = 0;
++	u32 rx_base, rx_cur;
++	size_t ring;
++
++	ASSERT_RTNL();
++
++	if (!priv)
++		return -EINVAL;
++	if (!priv->dp_owner)
++		return -EPERM;
++	if (priv->dp_rx_freed)
++		return 0;
++	if (priv->plat->rx_queues_to_use != 1 || stmmac_xdp_is_enabled(priv))
++		return -EOPNOTSUPP;
++	/* the list address registers below are the dwmac1000/100 ones */
++	if (priv->plat->core_type == DWMAC_CORE_GMAC4 ||
++	    dwmac_is_xmac(priv->plat->core_type))
++		return -EOPNOTSUPP;
++
++	rx_q = &priv->dma_conf.rx_queue[0];
++	if (rx_q->xsk_pool || !rx_q->page_pool || !rx_q->buf_pool)
++		return -EOPNOTSUPP;
++
++	ring = priv->dma_conf.dma_rx_size *
++	       (priv->extend_desc ? sizeof(struct dma_extended_desc) :
++				    sizeof(struct dma_desc));
++	rx_base = readl(priv->ioaddr + QCA_DWMAC_DMA_RCV_BASE_ADDR);
++	rx_cur = readl(priv->ioaddr + QCA_DWMAC_DMA_CUR_RX_DESC);
++	if (qca_dwmac_dp_in_ring(rx_base, rx_q->dma_rx_phy, ring) ||
++	    qca_dwmac_dp_in_ring(rx_cur, rx_q->dma_rx_phy, ring))
++		return -EBUSY;
++
++	/* RX NAPI is parked for the claim; the flag is for the polls after release */
++	WRITE_ONCE(priv->dp_rx_freed, true);
++
++	if (priv->extend_desc)
++		memset(rx_q->dma_erx, 0, ring);
++	else
++		memset(rx_q->dma_rx, 0, ring);
++	dma_wmb();
++
++	for (i = 0; i < priv->dma_conf.dma_rx_size; i++)
++		pages += !!rx_q->buf_pool[i].page + !!rx_q->buf_pool[i].sec_page;
++	dma_free_rx_skbufs(priv, &priv->dma_conf, 0);
++	rx_q->buf_alloc_num = 0;
++
++	/* the order of __free_dma_rx_desc_resources() */
++	if (xdp_rxq_info_is_reg(&rx_q->xdp_rxq))
++		xdp_rxq_info_unreg(&rx_q->xdp_rxq);
++	page_pool_destroy(rx_q->page_pool);
++	rx_q->page_pool = NULL;
++
++	netdev_info(dev, "qca-dwmac: %u host RX buffers released while the NSS firmware owns the DMA\n",
++		    pages);
++	return 0;
++}
++EXPORT_SYMBOL(qca_dwmac_dp_free_host_rx);
++
+ /**
+  *  stmmac_dma_operation_mode - HW DMA operation mode
+  *  @priv: driver private structure
+@@ -3956,7 +4073,7 @@
+ 			free_irq(priv->sfty_irq, dev);
+ 		fallthrough;
+ 	case REQ_IRQ_ERR_WOL:
+-		/* a claim still held has the line masked: balance it */
++		/* a claim still held, or a released host RX ring, has the line masked */
+ 		if (priv->dp_irq_off) {
+ 			priv->dp_irq_off = false;
+ 			enable_irq(dev->irq);
+@@ -4279,6 +4396,7 @@
+ 		if (priv->dma_conf.tx_queue[i].tbs & STMMAC_TBS_EN)
+ 			dma_conf->tx_queue[i].tbs = priv->dma_conf.tx_queue[i].tbs;
+ 	memcpy(&priv->dma_conf, dma_conf, sizeof(*dma_conf));
++	WRITE_ONCE(priv->dp_rx_freed, false);
+ 
+ 	/* The PHY is suspended when the interface is reopened without
+ 	 * disconnecting the PHY, e.g. on MTU change. IEEE 802.3 allows PHYs
+@@ -6195,6 +6313,18 @@
+ 	u32 chan = ch->index;
+ 	int work_done;
+ 
++	/*
++	 * Claimed GMAC whose host RX buffers were released
++	 * (qca_dwmac_dp_free_host_rx()): nothing on the ring is for the host
++	 * until the bounce rebuilds it. Covers release-to-bounce, netpoll and
++	 * busy polling; the interrupt stays masked meanwhile.
++	 */
++	if (unlikely(READ_ONCE(priv->dp_rx_freed))) {
++		if (budget)
++			napi_complete_done(napi, 0);
++		return 0;
++	}
++
+ 	rxq_stats = &priv->xstats.rxq_stats[chan];
+ 	u64_stats_update_begin(&rxq_stats->napi_syncp);
+ 	u64_stats_inc(&rxq_stats->napi.poll);
+@@ -6256,6 +6386,18 @@
+ 	struct stmmac_txq_stats *txq_stats;
+ 	u32 chan = ch->index;
+ 
++	/*
++	 * Claimed GMAC whose host RX buffers were released
++	 * (qca_dwmac_dp_free_host_rx()): nothing on the ring is for the host
++	 * until the bounce rebuilds it. Covers release-to-bounce, netpoll and
++	 * busy polling; the interrupt stays masked meanwhile.
++	 */
++	if (unlikely(READ_ONCE(priv->dp_rx_freed))) {
++		if (budget)
++			napi_complete_done(napi, 0);
++		return 0;
++	}
++
+ 	rxq_stats = &priv->xstats.rxq_stats[chan];
+ 	u64_stats_update_begin(&rxq_stats->napi_syncp);
+ 	u64_stats_inc(&rxq_stats->napi.poll);
+@@ -7188,6 +7330,19 @@
+ {
+ 	struct stmmac_priv *priv = netdev_priv(dev);
+ 
++	/*
++	 * Installing a program or a pool releases and reopens the rings,
++	 * which on a claimed GMAC napi_disable()s the queues the claim
++	 * already disabled (see stmmac_reinit_refuse_claimed()). A claim is
++	 * only taken without either, so removing one is a no-op: let it be.
++	 */
++	if (READ_ONCE(priv->dp_owner) &&
++	    ((bpf->command == XDP_SETUP_PROG && bpf->prog) ||
++	     (bpf->command == XDP_SETUP_XSK_POOL && bpf->xsk.pool))) {
++		netdev_warn(dev, "the NSS firmware owns the DMA, not changing XDP on it\n");
++		return -EBUSY;
++	}
++
+ 	switch (bpf->command) {
+ 	case XDP_SETUP_PROG:
+ 		return stmmac_xdp_set_prog(priv, bpf->prog, bpf->extack);
+@@ -7416,6 +7571,7 @@
+ 			   __func__);
+ 		goto init_error;
+ 	}
++	WRITE_ONCE(priv->dp_rx_freed, false);
+ 
+ 	stmmac_reset_queues_param(priv);
+ 
+@@ -8310,6 +8466,13 @@
+ 	if (!ndev || !netif_running(ndev))
+ 		goto suspend_bsp;
+ 
++	/*
++	 * Resume restarts the host DMA in place, on rings that the NSS
++	 * firmware owns or whose buffers were released for it.
++	 */
++	if (priv->dp_owner || priv->dp_rx_freed)
++		return -EBUSY;
++
+ 	mutex_lock(&priv->lock);
+ 
+ 	netif_device_detach(ndev);

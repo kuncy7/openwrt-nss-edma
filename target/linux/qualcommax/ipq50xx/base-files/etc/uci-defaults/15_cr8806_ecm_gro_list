@@ -7,7 +7,7 @@
 . /lib/functions.sh
 
 case "$(board_name)" in
-xiaomi,cr8806|xiaomi,redmi-ax3000-ubootmod) ;;
+xiaomi,ax3000|xiaomi,cr8806|xiaomi,redmi-ax3000-ubootmod) ;;
 *) exit 0 ;;
 esac
 uci -q get ecm.general > /dev/null || exit 0

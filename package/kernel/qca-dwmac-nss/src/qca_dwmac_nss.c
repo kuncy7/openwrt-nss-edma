@@ -144,6 +144,8 @@ struct dwmac_nss_port {
 	u32 fw_tx_resume;
 	bool fw_resume_valid;
 	atomic_t ring_restores;
+	/* fw_link_up/fw_link_failed and the link_state messages */
+	struct mutex link_lock;
 };
 
 static struct dwmac_nss_port dwmac_nss_ports[NSS_DP_MAX_INTERFACES];
@@ -179,14 +181,17 @@ static netdev_tx_t dwmac_nss_fw_xmit(struct sk_buff *skb, void *ctx)
 }
 
 /*
- * Synchronous fw message; process context only (phylink resolve worker
- * or under rtnl from our own paths). Not called concurrently with claim
- * release for the same port: release stops TX first and the phylink
- * callbacks read the owner pointer once.
+ * Synchronous fw message; process context only. Two kinds of caller:
+ * phylink's resolve worker (link_up/link_down, which stmmac serializes
+ * against claim and release with dp_link_lock, so they never run on a
+ * claim being dropped) and our own paths under rtnl. port->link_lock
+ * serializes the two around the shadow and the message.
  */
-static int dwmac_nss_fw_link_state(struct dwmac_nss_port *port, bool up)
+static int __dwmac_nss_fw_link_state(struct dwmac_nss_port *port, bool up)
 {
 	int err;
+
+	lockdep_assert_held(&port->link_lock);
 
 	if (port->fw_link_up == up && !port->fw_link_failed) {
 		atomic_inc(&port->fw_link_skipped);
@@ -204,6 +209,16 @@ static int dwmac_nss_fw_link_state(struct dwmac_nss_port *port, bool up)
 	port->fw_link_failed = !!err;
 	atomic_inc(&port->fw_link_changes);
 
+	return err;
+}
+
+static int dwmac_nss_fw_link_state(struct dwmac_nss_port *port, bool up)
+{
+	int err;
+
+	mutex_lock(&port->link_lock);
+	err = __dwmac_nss_fw_link_state(port, up);
+	mutex_unlock(&port->link_lock);
 	return err;
 }
 
@@ -520,10 +535,12 @@ static int dwmac_nss_port_start(struct dwmac_nss_port *port)
 	 * so in the shadow, then feed it the current carrier - phylink only
 	 * reports transitions, and this link may already be up.
 	 */
+	mutex_lock(&port->link_lock);
 	port->fw_link_up = false;
 	port->fw_link_failed = 0;
 	if (netif_carrier_ok(netdev))
-		dwmac_nss_fw_link_state(port, true);
+		__dwmac_nss_fw_link_state(port, true);
+	mutex_unlock(&port->link_lock);
 
 	port->state = DWMAC_NSS_PORT_STARTED;
 	netdev_info(netdev, "qca-dwmac-nss: phys_if %d on NSS fw data plane\n",
@@ -1455,7 +1472,10 @@ static void qca_dwmac_nss_tcsr_set(void)
 
 static int __init qca_dwmac_nss_init(void)
 {
-	int ret;
+	int ret, i;
+
+	for (i = 0; i < NSS_DP_MAX_INTERFACES; i++)
+		mutex_init(&dwmac_nss_ports[i].link_lock);
 
 	if (fw_if < NSS_DP_START_IFNUM || fw_if >= NSS_DP_MAX_INTERFACES) {
 		pr_err("qca-dwmac-nss: fw_if %d out of range 0..%d\n",

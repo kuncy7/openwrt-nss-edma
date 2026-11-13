@@ -39,6 +39,9 @@
  *		programmed and enabled for the new link. May sleep.
  * @link_down:	called from phylink's resolve worker before the MAC is
  *		disabled. May sleep.
+ *		Both run serialized against claim and release, so @ctx stays
+ *		valid for the whole call; the owner serializes them against its
+ *		own link messages.
  */
 struct qca_dwmac_dp_owner {
 	netdev_tx_t (*xmit)(struct sk_buff *skb, void *ctx);

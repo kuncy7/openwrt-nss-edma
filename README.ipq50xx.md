@@ -520,6 +520,25 @@ topology alone.
 There is no runtime detach. `/etc/init.d/nss stop` prints how to disable the
 plane across reboots; returning to the host path needs a reboot.
 
+### CPU clock
+
+The A53 cores run at 1008 MHz when idle and go up to 1296 MHz under load
+(`schedutil`; patches 0973-0975). 1296 MHz is above the rated 1008 MHz, at the
+same fixed 1.1 V, since these boards have no CPU regulator. Most chips hold it,
+but one IPQ5000 (a Redmi AX3000) corrupted memory and reset under load at
+1296 MHz and ran clean at 1008 MHz (kuncy7/openwrt-nss-edma#78). Traffic the
+NSS firmware forwards does not need the higher clock; it helps what the host
+itself does, such as WireGuard. To keep the cores at 1008 MHz:
+
+```
+uci set pbuf.opt.scaling_max_freq='1008000'
+uci commit pbuf
+reboot
+```
+
+`qca-nss-pbuf` writes it to every core at boot (late in the boot, `START=95`),
+and `cat /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq` shows it.
+
 ### Checking that it works
 
 ```sh

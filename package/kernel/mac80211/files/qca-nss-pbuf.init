@@ -278,9 +278,38 @@ set_scaling_governor() {
   fi
 }
 
+# A ceiling for the CPU clock, in kHz, written to every cpufreq policy:
+# 1008000 keeps an IPQ5018 or IPQ5000 at its rated clock, off the 1296 MHz
+# OPP, for a chip that does not hold 1296 MHz at the fixed 1.1 V
+# (kuncy7/openwrt-nss-edma#78). Unset, the governor uses every OPP.
+set_scaling_max_freq() {
+
+  local max_freq policy
+  config_load pbuf
+  config_get max_freq opt scaling_max_freq
+
+  [ -n "$max_freq" ] || return 0
+  case "$max_freq" in
+    *[!0-9]*)
+      logger -t $NAME -p user.error "scaling_max_freq '$max_freq' is not a number in kHz"
+      return 0
+      ;;
+  esac
+
+  for policy in /sys/devices/system/cpu/cpufreq/policy*; do
+    [ -w "$policy/scaling_max_freq" ] || continue
+    if echo "$max_freq" > "$policy/scaling_max_freq" 2> /dev/null; then
+      logger -t $NAME -p user.notice "CPU clock capped at $(cat "$policy/scaling_max_freq") kHz (${policy##*/})"
+    else
+      logger -t $NAME -p user.error "could not cap ${policy##*/} at $max_freq kHz"
+    fi
+  done
+}
+
 start() {
 
   set_scaling_governor
+  set_scaling_max_freq
   set_stats_disable
   apply_nss_config
 

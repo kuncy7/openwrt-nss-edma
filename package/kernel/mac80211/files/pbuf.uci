@@ -14,3 +14,7 @@ config general opt
   # CPU frequency governor written to every CPU at start. Unset, the
   # kernel's schedutil stays: 1008 MHz idle, 1296 MHz under load on IPQ5018.
   # option scaling_governor 'performance'
+  # Ceiling for the CPU clock in kHz, written to every CPU at start. Unset,
+  # the governor uses every OPP, up to 1296 MHz on IPQ5018/IPQ5000; 1008000
+  # keeps the rated 1008 MHz, for a chip that is not stable at 1296 MHz.
+  # option scaling_max_freq '1008000'

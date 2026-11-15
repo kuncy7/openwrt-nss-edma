@@ -1,0 +1,30 @@
+From: Vadim Deiss <letechnarb@gmail.com>
+Subject: [PATCH] net: stmmac: fill the RX ring with the caller's gfp flags
+
+stmmac_init_rx_buffers() takes the gfp flags of its caller but allocates
+with GFP_ATOMIC regardless: since the page_pool conversion the flags are
+passed down and never used. Every caller - the open (also behind an MTU
+or ring change), the XDP reopen and the AF_XDP pool disable - runs in
+process context and passes GFP_KERNEL, yet the whole ring, dma_rx_size
+buffers per queue, is allocated without reclaim and may dip into the
+atomic reserves. Under memory pressure the open then fails with -ENOMEM
+where a reclaiming allocation would have succeeded, and it can drain the
+reserves that real atomic users, such as the NAPI refill, depend on.
+
+Use the caller's flags. The NAPI refill has its own allocation and keeps
+GFP_ATOMIC.
+
+Fixes: 2af6106ae949 ("net: stmmac: Introducing support for Page Pool")
+Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
+---
+--- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
++++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
+@@ -1460,7 +1460,7 @@ static int stmmac_init_rx_buffers(struct
+ {
+ 	struct stmmac_rx_queue *rx_q = &dma_conf->rx_queue[queue];
+ 	struct stmmac_rx_buffer *buf = &rx_q->buf_pool[i];
+-	gfp_t gfp = (GFP_ATOMIC | __GFP_NOWARN);
++	gfp_t gfp = flags | __GFP_NOWARN;
+ 
+ 	if (priv->dma_cap.host_dma_width <= 32)
+ 		gfp |= GFP_DMA32;

@@ -314,6 +314,24 @@ define Device/xiaomi_cr8806
 endef
 TARGET_DEVICES += xiaomi_cr8806
 
+define Device/xiaomi_ra80
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := Xiaomi
+	DEVICE_MODEL := AX3000
+	DEVICE_VARIANT := RA80
+	DEVICE_DTS := ipq5018-xiaomi-ra80
+	DEVICE_DTS_CONFIG := config@mp02.1
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	NAND_SIZE := 128m
+	DEVICE_PACKAGES := \
+		ath11k-firmware-ipq5018-qcn6122 \
+		ipq-wifi-xiaomi_ra80
+endef
+TARGET_DEVICES += xiaomi_ra80
+
 define Device/xiaomi_redmi-ax3000-ubootmod
 	$(call Device/FitImage)
 	$(call Device/UbiFit)

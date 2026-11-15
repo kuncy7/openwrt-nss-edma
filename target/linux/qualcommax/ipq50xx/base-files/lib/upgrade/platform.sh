@@ -562,7 +562,8 @@ platform_do_upgrade() {
 		remove_oem_ubi_volume wifi_fw
 		nand_do_upgrade "$1"
 		;;
-	xiaomi,cr8806)
+	xiaomi,cr8806|\
+	xiaomi,ra80)
 		# Keep the stock dual-boot layout: upgrade the slot we are
 		# running from and leave the other slot untouched.
 		# bootmiwifi boots slot flag_last_success, or the other one

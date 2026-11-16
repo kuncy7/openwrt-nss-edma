@@ -90,7 +90,8 @@ refuse one: on those, check that `sysupgrade -T` shows only that refusal, then
 run `sysupgrade -F` once with this board's sysupgrade image.
 
 Every image is built with the whole plane in: `nss-tools-dwmac`, firmware
-12.5-210 (12.2-156 up to `ipq50xx-2026.10.14`), VLAN and PPPoE managers, ath11k with the NSS patches, plus `ip-full`
+12.5-210 in the `std` group and 12.2-156 in the `256m` group (12.2-156 in both
+up to `ipq50xx-2026.10.14`, 12.5-210 in both up to `ipq50xx-2026.11.11`), VLAN and PPPoE managers, ath11k with the NSS patches, plus `ip-full`
 and `iperf3` for checking it. Boards come in two groups, because the ath11k and
 NSS memory profiles are a build-time choice for the whole image:
 
@@ -276,14 +277,21 @@ package unset, and gives an image whose 2.4 GHz radio does not come up
 
 ### Firmware: 12.5-210 and 12.2-156
 
-The release images carry `NSS.FW.12.5-210-MP` since 15 October 2026
-(`NSS_FIRMWARE_VERSION_12_5` in `.github/ci/ipq50xx/common.config`); before
-that they carried `NSS.FW.12.2-156-MP.R` (`NSS_FIRMWARE_VERSION_12_2`), the
-newest firmware published for IPQ5018 (May 2025, nine months after 12.5),
-which most measurements in this file were taken on. On the GL-B3000 and the
-Archer AX55 v1 the two carry the same routed, bridged and 802.11s mesh traffic
-at the same speed. The feed defaults to 12.5 as well; a `.config` of your
-own that already names a version keeps it.
+The `std` release images carry `NSS.FW.12.5-210-MP` since 15 October 2026
+(`NSS_FIRMWARE_VERSION_12_5` in `.github/ci/ipq50xx/std.config`). The `256m`
+images carried it from 15 October to `ipq50xx-2026.11.11` and are back on
+`NSS.FW.12.2-156-MP.R` after it (`NSS_FIRMWARE_VERSION_12_2` in
+`.github/ci/ipq50xx/256m.config`): with 12.5-210, some 802.11ac clients (an
+MT7612U USB adapter in the report) leave payload buffers in the firmware round
+after round, a few hundred per minute of download on 5 GHz, which the small
+pool of a 256 MB board cannot afford; 12.2-156 gives them back with the same
+client (kuncy7/openwrt-nss-edma#64, measured on an H3C Magic RC3000 v1 with
+this group's config; not seen with a Wi-Fi 6 client). Before 15 October every image carried
+12.2-156, the newest firmware published for IPQ5018 (May 2025, nine months
+after 12.5), which most measurements in this file were taken on. On the
+GL-B3000 and the Archer AX55 v1 the two carry the same routed, bridged and
+802.11s mesh traffic at the same speed. The feed defaults to 12.5; a `.config`
+of your own that already names a version keeps it.
 
 **Build for the firmware you run.** The two lay out the Wi-Fi peer statistics
 differently (196 against 212 bytes per entry), and `qca-nss-drv` is built for
@@ -994,11 +1002,11 @@ OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the bran
     the `qca-nss-drv` package of the feed, so a board has to be named in
     both places - the EX511 v2 and the Cudy P5 are, in both; the AX3000T v2
     is named here and in kuncy7/nss-packages#4, which is not merged yet. The
-    firmware version
-  (`NSS_FIRMWARE_VERSION_12_2`) is the feed's default on ipq50xx; the release
-  images carry 12.5 since 15 October 2026, which has not been run on a 256 MB
-  board yet. `qcom,ath11k-fw-memory-mode = <2>` on both radios is in
-  the DTS.
+    firmware version of this group is 12.2-156
+  (`NSS_FIRMWARE_VERSION_12_2` in `256m.config`; the feed's default is 12.5):
+  12.5-210 ran on 256 MB boards from 15 October 2026 to `ipq50xx-2026.11.11`
+  and keeps payload buffers with some 802.11ac clients, see *Firmware*.
+  `qcom,ath11k-fw-memory-mode = <2>` on both radios is in the DTS.
 
 Result: ~850 / ~740 Mbit/s on 5 GHz with 4 streams (stock: 843 / 906),
 0 OOM, 20 MB available after the run against 3 MB before. Not done:

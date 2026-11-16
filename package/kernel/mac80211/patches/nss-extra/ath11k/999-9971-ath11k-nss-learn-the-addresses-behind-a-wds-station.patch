@@ -1,0 +1,234 @@
+From: Vadim Deiss <letechnarb@gmail.com>
+Subject: [PATCH] wifi: ath11k: nss: learn the addresses behind a WDS station
+
+A device bridged behind a 4addr (WDS) station gets no traffic: frames to
+its address need an AST entry pointing at the station, and ath11k adds
+one only when the NSS firmware reports the address as WDS_LEARN.
+
+NSS firmware 12.5-210 on IPQ5018 never sends WDS_LEARN for a station on
+an AP_VLAN ext vdev. It counts the frame as a WDS source port exception
+and hands it up on the ext vdev as plain data, so frames to the device
+are never sent.
+
+Remember the WDS peer of the ext vdev when set_4addr_wk() brings it up.
+For an Ethernet frame on the ext vdev whose source address is neither
+the station's own nor in its AST list, run the learning of
+ath11k_nss_wds_type_rx(), split out to run under the base_lock of the
+peer lookup. The split-out code now sends the NSS update for a move only
+if ath11k_peer_update_ast() succeeded. ECM-accelerated flows do not come
+up on the ext vdev, so the lookup only runs on the host path.
+
+Tested on a Xiaomi AX6000 (NSS FW 12.5-210) with a QCA9887 as the 4addr
+client and a bridged MAC behind it, on QCN9074 and on the IPQ5018 radio:
+the device behind the client went from no replies to ping in both
+directions over IPv4 and IPv6, and its TCP flow to a wired host is
+accelerated by ECM.
+
+Link: https://github.com/kuncy7/openwrt-nss-edma/issues/87
+
+Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
+---
+--- a/drivers/net/wireless/ath/ath11k/nss.h
++++ b/drivers/net/wireless/ath/ath11k/nss.h
+@@ -232,6 +232,8 @@ struct arvif_nss {
+ 	bool added;
+ 	/* Flag to notify if ext vdev is up/down */
+ 	bool ext_vdev_up;
++	/* Peer id of the WDS station bound to this ext vdev, -1 if none */
++	int wds_peer_id;
+ #ifdef CPTCFG_ATH11K_NSS_SUPPORT
+ 	/* Keep the copy of di_type for nss */
+ 	enum nss_dynamic_interface_type di_type;
+--- a/drivers/net/wireless/ath/ath11k/nss.c
++++ b/drivers/net/wireless/ath/ath11k/nss.c
+@@ -753,13 +753,66 @@ static bool vdev_check_local_dev(u8 *wds
+ 	return false;
+ }
+ 
++/* Add or move the AST entry of a source address seen behind ta_peer.
++ * Called with base_lock held.
++ */
++static void ath11k_nss_wds_learn_sa(struct ath11k *ar, struct net_device *dev,
++				    struct ieee80211_vif *vif,
++				    struct ath11k_peer *ta_peer, u8 *src_mac,
++				    u8 is_sa_valid)
++{
++	struct ath11k_ast_entry *ast_entry;
++
++	lockdep_assert_held(&ar->ab->base_lock);
++
++	ast_entry = ath11k_peer_ast_find_by_addr(ar, src_mac);
++
++	/*
++	 * If WDS update is coming back on same peer it indicates that it is not roamed
++	 * This situation can happen if a MEC packet reached in Rx direction even before the
++	 * ast entry installation in happend in HW
++	 */
++	if (ast_entry) {
++		if (ast_entry->peer && (ast_entry->peer->peer_id == ta_peer->peer_id) && (vif->type == NL80211_IFTYPE_STATION))
++			return;
++	}
++
++	/*
++	 * Avoid WDS learning if src mac address matches
++	 * any of local netdevice mac address.
++	 */
++	if (vif->type == NL80211_IFTYPE_AP || vif->type == NL80211_IFTYPE_AP_VLAN) {
++		if (vdev_check_local_dev(src_mac))
++			return;
++	}
++
++	if (!is_sa_valid) {
++		ath11k_peer_add_ast(ar, ta_peer, src_mac,
++				    ATH11K_AST_TYPE_WDS);
++		if (!ta_peer->nss.ext_vdev_up)
++			ieee80211_rx_nss_notify_4addr(dev, ta_peer->addr);
++	} else {
++		if (!ast_entry) {
++			ath11k_peer_add_ast(ar, ta_peer, src_mac,
++					    ATH11K_AST_TYPE_WDS);
++			if (!ta_peer->nss.ext_vdev_up)
++				ieee80211_rx_nss_notify_4addr(dev, ta_peer->addr);
++		} else if (ast_entry->type == ATH11K_AST_TYPE_WDS) {
++			/* Tell NSS only about a move the host made: the entry
++			 * may not be mapped yet, or its peer may be going.
++			 */
++			if (!ath11k_peer_update_ast(ar, ta_peer, ast_entry))
++				ath11k_nss_update_wds_peer(ar, ta_peer, src_mac);
++		}
++	}
++}
++
+ static void ath11k_nss_wds_type_rx(struct ath11k_vif *arvif, struct net_device *dev,
+ 				   u8* src_mac, u8 is_sa_valid, u8 addr4_valid,
+ 				   u16 peer_id)
+ {
+ 	struct ath11k *ar = arvif->ar;
+ 	struct ath11k_base *ab = ar->ab;
+-	struct ath11k_ast_entry *ast_entry = NULL;
+ 	struct ath11k_peer *ta_peer = NULL;
+ 	struct wireless_dev *wdev = NULL;
+ 	struct ieee80211_vif *vif = NULL;
+@@ -788,51 +841,9 @@ static void ath11k_nss_wds_type_rx(struc
+ 	ath11k_dbg(ab, ATH11K_DBG_NSS_WDS,"ath11k_nss_wds_type_rx ta_peer %pM\n",
+ 		   ta_peer->addr);
+ 
+-	if (addr4_valid) {
+-		ast_entry = ath11k_peer_ast_find_by_addr(ar, src_mac);
+-
+-		/*
+-		 * If WDS update is coming back on same peer it indicates that it is not roamed
+-		 * This situation can happen if a MEC packet reached in Rx direction even before the
+-		 * ast entry installation in happend in HW
+-		 */
+-		if (ast_entry) {
+-			if (ast_entry->peer && (ast_entry->peer->peer_id == ta_peer->peer_id) && (vif->type == NL80211_IFTYPE_STATION)) {
+-				spin_unlock_bh(&ab->base_lock);
+-				return;
+-			}
+-		}
+-
+-		/*
+-		 * Avoid WDS learning if src mac address matches
+-		 * any of local netdevice mac address.
+-		 */
+-		if (vif->type == NL80211_IFTYPE_AP || vif->type == NL80211_IFTYPE_AP_VLAN) {
+-			if (vdev_check_local_dev(src_mac)) {
+-				spin_unlock_bh(&ab->base_lock);
+-				return;
+-			}
+-		}
+-
+-
+-		if (!is_sa_valid) {
+-			ath11k_peer_add_ast(ar, ta_peer, src_mac,
+-					    ATH11K_AST_TYPE_WDS);
+-			if (!ta_peer->nss.ext_vdev_up)
+-				ieee80211_rx_nss_notify_4addr(dev, ta_peer->addr);
+-		} else {
+-			if (!ast_entry) {
+-				ath11k_peer_add_ast(ar, ta_peer, src_mac,
+-						    ATH11K_AST_TYPE_WDS);
+-				if (!ta_peer->nss.ext_vdev_up)
+-					ieee80211_rx_nss_notify_4addr(dev, ta_peer->addr);
+-			} else if (ast_entry->type == ATH11K_AST_TYPE_WDS) {
+-				ath11k_peer_update_ast(ar, ta_peer, ast_entry);
+-				ath11k_nss_update_wds_peer(ar, ta_peer, src_mac);
+-			}
+-		}
+-
+-	}
++	if (addr4_valid)
++		ath11k_nss_wds_learn_sa(ar, dev, vif, ta_peer, src_mac,
++					is_sa_valid);
+ 
+ 	spin_unlock_bh(&ab->base_lock);
+ }
+@@ -1102,6 +1113,37 @@ ath11k_nss_ext_vdev_special_data_receive
+ 	dev_kfree_skb_any(skb);
+ }
+ 
++/* The NSS firmware does not send WDS_LEARN for a station bound to a WDS ext
++ * vdev: a frame from an address with no AST entry comes up on the ext vdev
++ * as plain data. Learn the address here, or frames to a device behind the
++ * station are never sent.
++ */
++static void ath11k_nss_ext_vdev_wds_learn(struct ath11k_vif *arvif,
++					  struct net_device *dev,
++					  struct sk_buff *skb)
++{
++	struct ath11k *ar = arvif->ar;
++	struct ath11k_base *ab = ar->ab;
++	int peer_id = READ_ONCE(arvif->nss.wds_peer_id);
++	struct ath11k_peer *peer;
++	u8 *sa;
++
++	if (peer_id < 0 || skb->len < ETH_HLEN)
++		return;
++
++	sa = ((struct ethhdr *)skb->data)->h_source;
++	if (!is_valid_ether_addr(sa))
++		return;
++
++	spin_lock_bh(&ab->base_lock);
++	peer = ath11k_peer_find_by_id(ar, peer_id);
++	if (peer && peer->nss.ext_vif == arvif->vif &&
++	    !ether_addr_equal(sa, peer->addr) &&
++	    !ath11k_peer_ast_find_by_peer(ar, peer, sa))
++		ath11k_nss_wds_learn_sa(ar, dev, arvif->vif, peer, sa, 1);
++	spin_unlock_bh(&ab->base_lock);
++}
++
+ static void
+ ath11k_nss_ext_vdev_data_receive(struct net_device *dev, struct sk_buff *skb,
+ 				 __attribute__((unused)) struct napi_struct *napi)
+@@ -1134,6 +1176,9 @@ ath11k_nss_ext_vdev_data_receive(struct
+ 		return;
+ 	}
+ 
++	if (eth_decap)
++		ath11k_nss_ext_vdev_wds_learn(arvif, dev, skb);
++
+ 	ath11k_nss_deliver_rx(arvif->vif, skb, eth_decap, data_offs, napi);
+ }
+ 
+@@ -3379,6 +3424,8 @@ int ath11k_nss_ext_vdev_create(struct at
+ 	if (ret)
+ 		return ret;
+ 
++	WRITE_ONCE(arvif->nss.wds_peer_id, -1);
++
+ 	ret = ath11k_nss_ext_vdev_register(arvif, wdev->netdev);
+ 	if (ret)
+ 		goto free_ext_vdev;
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -5553,6 +5553,8 @@ skip_nss_ext:
+ 	wds_peer->nss.ext_vif = vif;
+ 	spin_unlock_bh(&ab->base_lock);
+ 
++	WRITE_ONCE(ap_vlan_arvif->nss.wds_peer_id, wds_peer_id);
++
+ 	/* NAWDS and CFG_WDS_BACKHAUL configs should be done on corresponding
+ 	 * AP vif of the AP_VLAN vif
+ 	 */

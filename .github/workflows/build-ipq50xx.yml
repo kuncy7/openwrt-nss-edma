@@ -8,7 +8,9 @@ name: Build ipq50xx
 # expected to run OpenWrt already. The one exception is the 256m group, which also publishes
 # initramfs-factory.ubi for the Xiaomi AX3000T v2: its first install from stock runs from a
 # RAM-booted initramfs, and an installed system can write this image to boot one without UART.
-# Upgrades of an installed board are ordinary sysupgrades.
+# Upgrades of an installed board are ordinary sysupgrades. The H3C Magic boards (BX54 EU in
+# std, NX30 and RC3000 in 256m) also get their factory images, for the first install from
+# the stock web UI.
 #
 # Kernel modules: a kmod depends on kernel=<version>~<vermagic>, so it can only be installed on
 # an image from the same build. Each build's bin/targets/.../packages/ is therefore published on
@@ -338,6 +340,10 @@ jobs:
           # initramfs-factory.ubi only where a board uses it for its first install: the Xiaomi
           # AX3000T v2. Other boards build one too (the Archer AX53/AX58 v2), but install otherwise.
           names=(-name 'openwrt-*-squashfs-sysupgrade.bin'); sums='sysupgrade\.bin'
+          # The H3C Magic boards install from the stock web UI with a factory image (one per
+          # stock model name on the RC3000s), in both groups.
+          names+=(-o -name 'openwrt-*-h3c_magic-*-squashfs-factory-*.bin')
+          sums+='|h3c_magic-.*-squashfs-factory-.*\.bin'
           if [[ "$GROUP" == 256m ]]; then
             names+=(-o -name 'openwrt-*-xiaomi_mi-router-ax3000t-v2-initramfs-factory.ubi')
             sums+='|xiaomi_mi-router-ax3000t-v2-initramfs-factory\.ubi'

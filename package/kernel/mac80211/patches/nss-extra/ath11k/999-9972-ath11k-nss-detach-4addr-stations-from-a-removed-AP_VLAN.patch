@@ -1,0 +1,120 @@
+From: Vadim Deiss <letechnarb@gmail.com>
+Subject: [PATCH] wifi: ath11k: nss: detach 4addr stations from a removed AP_VLAN
+
+With the AP_VLAN passed to sta_set_4addr under NSS offload, ath11k binds
+a 4addr (WDS) station to its AP_VLAN (arsta->arvif, the peer's
+nss.ext_vif and nss.ext_vdev_up) and never undoes it. hostapd removes the
+AP_VLAN before the station, so until the station is gone, station dumps
+and rate updates read through the freed AP_VLAN arvif, the NSS peer
+stats sync writes into its freed netdev, and set_4addr_wk() may still be
+configuring the ext vdev being deleted.
+
+In remove_interface() of an AP_VLAN, before conf_mutex (which update_wk
+takes), point the stations bound to it back at the AP, clear
+use_4addr_set, cancel their set_4addr_wk and flush their update_wk, then
+clear the peers' ext vdev state under base_lock before the ext vdev is
+deleted. rc_update_wk and set_4addr_wk read arsta->arvif once.
+
+Measured on the IPQ5018 radio over 30 connect/disconnect cycles with a
+station dump polled in a loop: without this patch, more than 100 reads
+through the freed AP_VLAN arvif and more than 10 writes into its netdev;
+with it, none.
+
+Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
+---
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -5285,12 +5285,12 @@ static void ath11k_sta_rc_update_wk(stru
+ 
+ 	arsta = container_of(wk, struct ath11k_sta, update_wk);
+ 	sta = container_of((void *)arsta, struct ieee80211_sta, drv_priv);
+-	arvif = arsta->arvif;
++	/* one read: ath11k_mac_ap_vlan_detach_sta_iter() may move it */
++	arvif = READ_ONCE(arsta->arvif);
+ 	ar = arvif->ar;
+ 
+ 	if (ar->ab->nss.enabled &&
+-	    arsta->arvif->vif->type == NL80211_IFTYPE_AP_VLAN &&
+-	    arsta->use_4addr_set)
++	    arvif->vif->type == NL80211_IFTYPE_AP_VLAN)
+ 		arvif = arvif->nss.ap_vif;
+ 
+ 	if (WARN_ON(ath11k_mac_vif_chan(arvif->vif, &def)))
+@@ -5472,12 +5472,13 @@ static void ath11k_sta_set_4addr_wk(stru
+ 
+ 	arsta = container_of(wk, struct ath11k_sta, set_4addr_wk);
+ 	sta = container_of((void *)arsta, struct ieee80211_sta, drv_priv);
+-	arvif = arsta->arvif;
++	/* one read: ath11k_mac_ap_vlan_detach_sta_iter() may move it */
++	arvif = READ_ONCE(arsta->arvif);
+ 	ar = arvif->ar;
+ 	ab = ar->ab;
+ 
+ 	if (ab->nss.enabled && arvif->vif->type == NL80211_IFTYPE_AP_VLAN) {
+-		ap_vlan_arvif = arsta->arvif;
++		ap_vlan_arvif = arvif;
+ 		arvif = ap_vlan_arvif->nss.ap_vif;
+ 	}
+ 
+@@ -7908,6 +7909,44 @@ static void ath11k_mac_vif_unref(struct
+ 	}
+ }
+ 
++/* hostapd moves a WDS station back to its AP and removes the station's
++ * AP_VLAN before it removes the station. Point the station at the AP again
++ * before the AP_VLAN goes, and wait out the works that may still hold it.
++ */
++static void ath11k_mac_ap_vlan_detach_sta_iter(void *data,
++					       struct ieee80211_sta *sta)
++{
++	struct ath11k_vif *ap_vlan_arvif = data;
++	struct ath11k_sta *arsta = ath11k_sta_to_arsta(sta);
++	struct ath11k_vif *ap_arvif = ap_vlan_arvif->nss.ap_vif;
++
++	if (arsta->arvif != ap_vlan_arvif)
++		return;
++
++	if (WARN_ON_ONCE(!ap_arvif || ap_arvif == ap_vlan_arvif))
++		return;
++
++	WRITE_ONCE(arsta->arvif, ap_arvif);
++	arsta->use_4addr_set = false;
++	cancel_work_sync(&arsta->set_4addr_wk);
++	flush_work(&arsta->update_wk);
++}
++
++static void ath11k_mac_ap_vlan_detach_peers(struct ath11k *ar,
++					    struct ieee80211_vif *vif)
++{
++	struct ath11k_peer *peer;
++
++	spin_lock_bh(&ar->ab->base_lock);
++	list_for_each_entry(peer, &ar->peers, list) {
++		if (peer->nss.ext_vif != vif)
++			continue;
++		peer->nss.ext_vdev_up = false;
++		peer->nss.ext_vif = NULL;
++	}
++	spin_unlock_bh(&ar->ab->base_lock);
++}
++
+ static void ath11k_mac_op_remove_interface(struct ieee80211_hw *hw,
+ 					   struct ieee80211_vif *vif)
+ {
+@@ -7918,9 +7957,16 @@ static void ath11k_mac_op_remove_interfa
+ 	int ret;
+ 	int i;
+ 
++	/* before conf_mutex, which update_wk takes */
++	if (vif->type == NL80211_IFTYPE_AP_VLAN && ab->nss.enabled)
++		ieee80211_iterate_stations_mtx(hw,
++					       ath11k_mac_ap_vlan_detach_sta_iter,
++					       arvif);
++
+ 	mutex_lock(&ar->conf_mutex);
+ 
+ 	if (vif->type == NL80211_IFTYPE_AP_VLAN) {
++		ath11k_mac_ap_vlan_detach_peers(ar, vif);
+ 		ath11k_nss_ext_vdev_delete(arvif);
+ 
+ 		/* In case the vlan vif never got added into the ap vlan arvifs

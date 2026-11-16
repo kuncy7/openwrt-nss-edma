@@ -73,6 +73,10 @@ over a running OpenWrt, from LuCI or with `sysupgrade`. There is no factory
 image: a board that is not in official OpenWrt needs a plain OpenWrt image
 built from this tree first (Quick start below), and a board that is gets the
 official one. `sha256sums-<group>.txt` next to the images has the checksums.
+The H3C Magic boards (BX54 EU, NX30, RC3000) are first installed from the
+stock web UI with their `factory` image, which a build of this tree produces
+next to the sysupgrade image but the release does not carry; the commit that
+adds each board has the steps.
 
 The Xiaomi Mi Router AX3000T v2 is the exception for the first install: from
 stock it is installed from a RAM-booted initramfs (steps in the commit that adds

@@ -1,0 +1,35 @@
+From: Vadim Deiss <letechnarb@gmail.com>
+Subject: [PATCH] wifi: mac80211: nss: tell the driver the AP_VLAN of a 4addr station
+
+With NSS Wi-Fi offload, ieee80211_set_sta_4addr() passes the AP_VLAN of a
+4addr (WDS) station to drv_sta_set_4addr(), so the driver can set up the
+NSS ext vdev of that AP_VLAN. drv_sta_set_4addr() turned it back into the
+AP with get_bss_sdata() first. ath11k then never configured the ext vdev
+(no WDS peer, no 4addr allow, no ext vdev up), and the firmware kept
+handing every frame of the station to the host as a 4addr exception,
+which is dropped: a WDS station associates but passes no data.
+
+Keep the AP_VLAN for drivers with NSS offload, as drv_set_key() already
+does. With offload the AP_VLAN is added to the driver
+(ieee80211_do_open() calls drv_add_interface() for it), so the
+check_sdata_in_driver() that follows still holds.
+
+Tested on a Xiaomi AX6000 (NSS FW 12.5-210) with a QCA9887 (ath10k) as
+the 4addr client, on QCN9074 (5 GHz) and on the IPQ5018 radio (2.4 GHz):
+the client's own traffic goes from no frames to ping and TCP both ways.
+
+Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
+---
+--- a/net/mac80211/driver-ops.h
++++ b/net/mac80211/driver-ops.h
+@@ -1699,7 +1699,9 @@ static inline void drv_sta_set_4addr(str
+ 				     struct ieee80211_sub_if_data *sdata,
+ 				     struct ieee80211_sta *sta, bool enabled)
+ {
+-	sdata = get_bss_sdata(sdata);
++	if (!(sdata->vif.type == NL80211_IFTYPE_AP_VLAN &&
++	      ieee80211_hw_check(&local->hw, SUPPORTS_NSS_OFFLOAD)))
++		sdata = get_bss_sdata(sdata);
+ 
+ 	might_sleep();
+ 	lockdep_assert_wiphy(local->hw.wiphy);

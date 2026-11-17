@@ -418,6 +418,24 @@ define Device/h3c_magic-nx30
 endef
 TARGET_DEVICES += h3c_magic-nx30
 
+# NX54 boots config@mp03.1 like RC3000 v2, so its image carries only its own
+# DTB (the two boards cannot be told apart by machid). Slots are 45.25 MiB.
+define Device/h3c_magic-nx54
+	$(call Device/h3c_magic-qsdk)
+	DEVICE_MODEL := Magic NX54
+	DEVICE_DTS_CONFIG := config@mp03.1
+	H3C_FIT_CONFIGS = config@mp03.1=ipq5018-magic-nx54
+	IMAGE_SIZE := 46336k
+	IMAGES += factory-nx54.bin
+	IMAGE/factory-nx54.bin := append-ubi | h3c-web-fit | \
+		h3c-web-header NX54V100R999 D999
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
+		ath11k-firmware-qcn9074 \
+		ipq-wifi-h3c_magic-nx54 \
+		kmod-ath11k-pci
+endef
+TARGET_DEVICES += h3c_magic-nx54
+
 define Device/h3c_magic-rc3000-v1
 	$(call Device/h3c_magic-qsdk)
 	DEVICE_MODEL := Magic RC3000

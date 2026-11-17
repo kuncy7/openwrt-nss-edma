@@ -327,7 +327,7 @@ start_service() {
 	# (PR #1; MR5500 and AX6000 confirmed in forum #331-#336; the H3C NX54,
 	# QCN9074 on PCIe like the others, shows the same dead GMAC1).
 	# nss.general.meminfo sets the value on any board, and 'default' keeps
-	# the firmware's placement on these three. An override already in the
+	# the firmware's placement on the boards below. An override already in the
 	# parameter is kept.
 	local memcfg want
 	want="$(uci -q get nss.general.meminfo)" || want=''

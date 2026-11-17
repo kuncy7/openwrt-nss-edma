@@ -427,7 +427,7 @@ define Device/h3c_magic-nx54
 	H3C_FIT_CONFIGS = config@mp03.1=ipq5018-magic-nx54
 	IMAGE_SIZE := 46336k
 	IMAGES += factory-nx54.bin
-	IMAGE/factory-nx54.bin := append-ubi | h3c-web-fit | \
+	IMAGE/factory-nx54.bin := append-ubi | h3c-web-fit | pad-extra 16k | \
 		h3c-web-header NX54V100R999 D999
 	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
 		ath11k-firmware-qcn9074 \

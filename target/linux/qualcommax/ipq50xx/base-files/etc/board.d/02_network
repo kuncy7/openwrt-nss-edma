@@ -36,6 +36,7 @@ ipq50xx_setup_interfaces()
 	cmcc,rax3000q|\
 	h3c,magic-bx54-eu|\
 	h3c,magic-nx30|\
+	h3c,magic-nx54|\
 	h3c,magic-rc3000-v1|\
 	h3c,magic-rc3000-v2|\
 	h3c,magic-rc3000-v3|\
@@ -107,6 +108,7 @@ ipq50xx_setup_macs()
 		;;
 	h3c,magic-bx54-eu|\
 	h3c,magic-nx30|\
+	h3c,magic-nx54|\
 	h3c,magic-rc3000-v1|\
 	h3c,magic-rc3000-v2|\
 	h3c,magic-rc3000-v3)

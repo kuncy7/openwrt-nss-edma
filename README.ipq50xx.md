@@ -73,7 +73,7 @@ over a running OpenWrt, from LuCI or with `sysupgrade`. There is no factory
 image: a board that is not in official OpenWrt needs a plain OpenWrt image
 built from this tree first (Quick start below), and a board that is gets the
 official one. `sha256sums-<group>.txt` next to the images has the checksums.
-The H3C Magic boards (BX54 EU, NX30, RC3000) are the exception: they are first
+The H3C Magic boards (BX54 EU, NX30, NX54, RC3000) are the exception: they are first
 installed from the stock web UI with their `factory` image
 (`…-squashfs-factory-<model>.bin`), which the release carries next to the
 sysupgrade image; the commit that adds each board has the steps.

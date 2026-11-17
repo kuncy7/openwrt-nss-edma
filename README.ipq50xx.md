@@ -889,7 +889,15 @@ traffic within seconds, see the fixes below; measured with `wpad-mesh-mbedtls`
 managing the peerings, open and SAE). Not tried: more than one hop, 2.4 GHz,
 a peer that is not offloaded, a firmware crash with an open mesh run by the
 kernel's own peering (`wpad-basic-mbedtls`). The `256m` images are built without
-it: the mesh costs memory those boards do not have to spare.
+it: the mesh costs memory those boards do not have to spare. A mesh interface
+left in `/etc/config/wireless` on a `256m` image, kept from a `std` image for
+example, takes its whole radio down with it: the driver refuses the mesh
+interface and the access points on that radio do not come up either (seen on a
+GL-B3000 limited to 256 MB, firmware 12.2). Remove the mesh interface or set
+`option disabled '1'` on it. A mesh on a `256m` image needs the Wi-Fi on the
+host path (`nss.general.wifi_offload='0'`); ADCDS's Xiaomi AX3000T build
+measured about 20 MB less free memory that way under sustained Wi-Fi traffic.
+Not tried here.
 
 An open mesh works with the image as it is. An encrypted mesh (SAE) needs the
 full mesh-capable `wpad`, which the image does not carry - it keeps

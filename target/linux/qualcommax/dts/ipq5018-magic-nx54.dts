@@ -300,7 +300,7 @@
 	status = "okay";
 
 	qcom,rproc = <&q6v5_wcss>;
-	qcom,ath11k-calibration-variant = "H3C-Magic-NX54";
+	qcom,calibration-variant = "H3C-Magic-NX54";
 	qcom,ath11k-fw-memory-mode = <1>;
 
 	ieee80211-freq-limit = <2400000 2483000>;

@@ -30,12 +30,12 @@ Signed-off-by: Yuvasree Sivasankaran <quic_ysivasan@quicinc.com>
 + * @IEE80211_HW_HAS_TX_QUEUE: Hardware/drivers has tx queue, does skb queuing itself,
 + *	the stack will not do tx queuing.
 + *
-  * @NUM_IEEE80211_HW_FLAGS: number of hardware flags, used for sizing arrays
-  */
- enum ieee80211_hw_flags {
+  * @IEEE80211_HW_DEFERRED_AIRTIME_REPORT: The driver reports the TX airtime
+  *	of a station with ieee80211_sta_register_airtime() some time after
+  *	the TX status of the frames, and each call covers every frame of
 @@ -3175,6 +3178,7 @@ enum ieee80211_hw_flags {
- 	IEEE80211_HW_STRICT,
- 	IEEE80211_HW_SUPPORTS_NDP_BLOCKACK,
+ 	IEEE80211_HW_DEFERRED_AIRTIME_REPORT,
+ 	IEEE80211_HW_AP_REMOVAL_BEACON_HOLD,
  	IEEE80211_HW_SUPPORTS_NSS_OFFLOAD,
 +	IEEE80211_HW_HAS_TX_QUEUE,
  
@@ -56,8 +56,8 @@ Signed-off-by: Yuvasree Sivasankaran <quic_ysivasan@quicinc.com>
 --- a/net/mac80211/debugfs.c
 +++ b/net/mac80211/debugfs.c
 @@ -484,6 +484,7 @@ static const char *hw_flag_names[] = {
- 	FLAG(STRICT),
- 	FLAG(SUPPORTS_NDP_BLOCKACK),
+ 	FLAG(DEFERRED_AIRTIME_REPORT),
+ 	FLAG(AP_REMOVAL_BEACON_HOLD),
  	FLAG(SUPPORTS_NSS_OFFLOAD),
 +	FLAG(HAS_TX_QUEUE),
  #undef FLAG

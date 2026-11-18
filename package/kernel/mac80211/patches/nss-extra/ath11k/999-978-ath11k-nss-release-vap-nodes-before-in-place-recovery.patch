@@ -213,8 +213,8 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +		ath11k_core_nss_vdevs_release_all(ab);
 +
  	mutex_lock(&ab->core_lock);
- 
- 	ath11k_thermal_unregister(ab);
+ 	ath11k_hif_irq_disable(ab);
+ 	ath11k_hif_ce_irq_disable(ab);
 @@ -2524,6 +2668,14 @@ void ath11k_core_halt(struct ath11k *ar)
  
  	lockdep_assert_held(&ar->conf_mutex);

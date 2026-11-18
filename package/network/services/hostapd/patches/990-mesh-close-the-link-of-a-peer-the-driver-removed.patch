@@ -23,7 +23,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 
 --- a/src/drivers/driver_nl80211_event.c
 +++ b/src/drivers/driver_nl80211_event.c
-@@ -2497,7 +2497,9 @@
+@@ -2552,9 +2552,11 @@ static void nl80211_del_station_event(st
  		return;
  	}
  
@@ -34,6 +34,8 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		return;
  
  	os_memset(&data, 0, sizeof(data));
+ 	os_memcpy(data.ibss_peer_lost.peer, addr, ETH_ALEN);
+ 	wpa_supplicant_event(bss->ctx, EVENT_IBSS_PEER_LOST, &data);
 --- a/wpa_supplicant/events.c
 +++ b/wpa_supplicant/events.c
 @@ -7599,6 +7599,12 @@

@@ -332,7 +332,8 @@ c3po_switch_bound() {
 	local d
 	for d in /sys/bus/mdio_bus/drivers/qca8k/*mdio* \
 		 /sys/bus/mdio_bus/drivers/rtl8365mb-mdio/*mdio* \
-		 /sys/bus/mdio_bus/drivers/an8855/*mdio*; do
+		 /sys/bus/mdio_bus/drivers/an8855/*mdio* \
+		 /sys/bus/mdio_bus/drivers/yt921x/*mdio*; do
 		[ -e "$d" ] && return 0
 	done
 	return 1

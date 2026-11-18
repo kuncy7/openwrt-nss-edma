@@ -19,9 +19,6 @@ PKG_CONFIG_DEPENDS += \
 	CONFIG_ATH11K_NSS_MESH_SUPPORT \
 	CONFIG_NSS_FIRMWARE_VERSION_11_4 \
 	CONFIG_NSS_FIRMWARE_VERSION_12_5 \
-	CONFIG_ATH11K_MEM_PROFILE_1G \
-	CONFIG_ATH11K_MEM_PROFILE_512M \
-	CONFIG_ATH11K_MEM_PROFILE_256M \
 	CONFIG_ATH11K_NSS_MEM_PROFILE_256M \
 	CONFIG_PACKAGE_nss-tools-dwmac \
 	CONFIG_PACKAGE_nss-tools \
@@ -75,10 +72,6 @@ config-$(CONFIG_ATH11K_THERMAL) += ATH11K_THERMAL
 config-$(CONFIG_ATH12K_THERMAL) += ATH12K_THERMAL
 config-$(CONFIG_ATH11K_NSS_SUPPORT) += ATH11K_NSS_SUPPORT
 config-$(CONFIG_ATH11K_NSS_MESH_SUPPORT) += ATH11K_NSS_MESH_SUPPORT
-config-$(CONFIG_ATH11K_MEM_PROFILE_1G) += ATH11K_MEM_PROFILE_1G
-config-$(CONFIG_ATH11K_MEM_PROFILE_512M) += ATH11K_MEM_PROFILE_512M
-# 256M is the 512M profile plus smaller RXDMA rings: define both symbols.
-config-$(CONFIG_ATH11K_MEM_PROFILE_256M) += ATH11K_MEM_PROFILE_512M ATH11K_MEM_PROFILE_256M
 config-$(CONFIG_ATH11K_NSS_MEM_PROFILE_256M) += ATH11K_NSS_MEM_PROFILE_256M
 config-$(CONFIG_ATH11K_DEBUGFS_STA) += ATH11K_DEBUGFS_STA
 config-$(CONFIG_ATH11K_DEBUGFS_HTT_STATS) += ATH11K_DEBUGFS_HTT_STATS
@@ -405,14 +398,6 @@ define KernelPackage/ath11k/config
                select PACKAGE_kmod-qca-nss-drv
                select NSS_DRV_WIFIOFFLOAD_ENABLE
                select NSS_DRV_WIFI_EXT_VDEV_ENABLE
-               select ATH11K_MEM_PROFILE_512M if (TARGET_qualcommax_ipq807x_DEVICE_cmcc_rm2-6 || \
-               	 TARGET_qualcommax_ipq807x_DEVICE_edimax_cax1800 || \
-               	 TARGET_qualcommax_ipq807x_DEVICE_compex_wpq873 || \
-               	 TARGET_qualcommax_ipq807x_DEVICE_linksys_mx4200v1 || \
-               	 TARGET_qualcommax_ipq807x_DEVICE_redmi_ax6 || \
-               	 TARGET_qualcommax_ipq807x_DEVICE_xiaomi_ax3600 || \
-               	 TARGET_qualcommax_ipq807x_DEVICE_zte_mf269 )
-               select ATH11K_MEM_PROFILE_256M if TARGET_qualcommax_ipq807x_DEVICE_netgear_wax218
                default n
                help
                   Say Y to offload the ath11k data path to the NSS cores
@@ -422,12 +407,14 @@ define KernelPackage/ath11k/config
 
        config ATH11K_NSS_MEM_PROFILE_256M
                bool "Smaller NSS allocations for 256 MiB IPQ5018/QCN6122 devices"
-               depends on ATH11K_NSS_SUPPORT && ATH11K_MEM_PROFILE_256M
+               depends on ATH11K_NSS_SUPPORT
                default n
                help
                   Skip unused host TX arrays, reduce TX pools and completion
                   rings, use private RX fragment caches, and reduce CE5 buffers.
-                  Only IPQ5018 and QCN6122 with active NSS use this profile.
+                  Only IPQ5018 and QCN6122 with active NSS on the 256M memory
+                  profile use this. The driver picks the profile at run time
+                  from the RAM size, or from its mem_profile module parameter.
                   TX and CE5 queue capacity is lower. Other hardware and the
                   host-only data path retain their existing allocations.
 
@@ -479,31 +466,6 @@ define KernelPackage/ath11k/config
                default y
                help
                   Say Y to enable access to the HTT statistics via debugfs.
-
-       choice
-            prompt "Memory Profile"
-            depends on PACKAGE_kmod-ath11k
-            default ATH11K_MEM_PROFILE_256M if TARGET_qualcommax_ipq50xx_DEVICE_cudy_p5 || TARGET_qualcommax_ipq50xx_DEVICE_h3c_magic-nx30 || TARGET_qualcommax_ipq50xx_DEVICE_h3c_magic-rc3000-v1 || TARGET_qualcommax_ipq50xx_DEVICE_h3c_magic-rc3000-v2 || TARGET_qualcommax_ipq50xx_DEVICE_h3c_magic-rc3000-v3 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_archer-ax53-v2 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_archer-ax58-v2 || TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_cr8806 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_mi-router-ax3000t-v2 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_ra80 || TARGET_qualcommax_ipq50xx_DEVICE_xiaomi_redmi-ax3000-ubootmod
-            default ATH11K_MEM_PROFILE_1G
-            help
-            	This option allows you to select the memory profile.
-            	It should correspond to the total RAM of your board.
-
-          config ATH11K_MEM_PROFILE_1G
-               bool "Use 1G memory profile"
-               help
-                  This allows configuring ath11k for boards with 1GB+ memory.
-
-          config ATH11K_MEM_PROFILE_512M
-               bool "Use 512MB memory profile"
-               help
-                  This allows configuring ath11k for boards with 512M memory.
-
-          config ATH11K_MEM_PROFILE_256M
-               bool "Use 256MB memory profile"
-               help
-                  This allows configuring ath11k for boards with 256M memory.
-       endchoice
 endef
 
 define KernelPackage/ath11k-ahb

@@ -1,0 +1,1050 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Subject: [PATCH] ath11k: pick the memory profile at run time
+
+The host-side memory profile - the data path ring sizes and whether the
+rx descriptor carries the rx header TLV - was a build-time choice:
+ATH11K_MEM_PROFILE_1G, _512M or _256M, 20 #ifdef sites in six files and
+one value for every board in an image.
+
+Do what ath12k does: keep the three profiles as rows of a table
+(ath11k_mem_profile_params) and pick the row when the device probes,
+from the amount of RAM the kernel manages or with the new mem_profile
+module parameter (1 1G, 2 512M, 3 256M; 0, the default, chooses from the
+RAM size). From the RAM size only two rows are chosen: 256M below
+384 MB, 1G otherwise. The 512M row leaves the rx header TLV out of the
+rx descriptor, which the PCI radios in this tree have not run with, so
+no board gets it on its own. The rows hold what the three builds
+compiled in, including the 1G monitor destination ring of 4096 entries
+this tree has had since DP_RXDMA_MONITOR_DST_RING_SIZE was aliased to
+the buffer ring size, and the 1024-entry RXDMA buffer ring of a QCN6122
+radio on the 256M row.
+
+What changes under the hood:
+
+ - DP_TX_COMP_RING_SIZE, DP_TX_IDR_SIZE, DP_TX_COMP_MAX_ALLOWED and the
+   DP_RXDMA_*_RING_SIZE macros take ab and read the profile; the idr
+   bitmap in struct dp_tx_ring is sized for the largest profile (32768
+   bits, 4 KB per ring);
+
+ - the cap on frames in flight (tx_comp_max_allowed) is a value instead
+   of an #ifdef: 0 on the 1G row means no cap;
+
+ - the rx header TLV: rx_desc_get_offset is part of every hw_ops table
+   and the rx_desc_get_hdr_status ops always return the descriptor's
+   field; ath11k_dp_rx_h_80211_hdr() returns NULL and
+   ath11k_dp_rxdma_ring_sel_config() tells the firmware to leave the
+   TLV out only when ab->compact_rx_desc is set, which needs the
+   profile's compact_rx_desc and an hw_ops table that has
+   rx_desc_get_offset - wcn6855 and wcn6750 have none and keep the full
+   descriptor whatever the profile;
+
+ - the QMI target memory mode a hw_params entry used to take from the
+   profile symbol (ATH11K_QMI_TARGET_MEM_MODE) is now
+   ATH11K_QMI_TARGET_MEM_MODE_PROFILE in the table and resolved from
+   the chosen profile right after the entry is copied; a device tree's
+   qcom,ath11k-fw-memory-mode still overrides it, as before;
+
+ - TARGET_NUM_VDEVS/PEERS/STATIONS are always the num_vdevs_peers table
+   indexed by the target memory mode (the 512M and 256M builds had them
+   as the constants 8/136/128; for a radio in firmware memory mode 1
+   that is one vdev more than before);
+
+ - the RX descriptor pool the NSS Wi-Fi datapath makes for a radio was
+   three times the RXDMA buffer ring; it is a field of its own now
+   (nss_rx_swdesc), with the same numbers, so that the pool and the
+   ring can be sized apart;
+
+ - ath11k_nss_256m_enabled() tests the chosen profile instead of the
+   build symbol; ATH11K_NSS_MEM_PROFILE_256M stays a build option, off
+   by default, and now only depends on ATH11K_NSS_SUPPORT;
+
+ - the ATH11K_MEM_PROFILE_512M/256M Kconfig symbols are gone;
+
+ - the unused ipq8074 M3 dump address #ifdef in qmi.h is gone (both
+   values kept).
+
+One line in the log says what was chosen:
+
+  ath11k c000000.wifi: memory profile 1G (from the RAM size, 413 MB), rx descriptor full
+
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+---
+--- a/drivers/net/wireless/ath/ath11k/Kconfig
++++ b/drivers/net/wireless/ath/ath11k/Kconfig
+@@ -31,20 +31,6 @@ config ATH11K_NSS_SUPPORT
+ 
+ 	  If unsure, say Y to enable NSS offload support.
+ 
+-config ATH11K_MEM_PROFILE_512M
+-	bool "ath11k enable 512MB memory profile"
+-	depends on ATH11K
+-	default n
+-	---help---
+-	Enables 512MB memory profile for ath11k
+-
+-config ATH11K_MEM_PROFILE_256M
+-	bool "ath11k enable 256MB memory profile"
+-	depends on ATH11K
+-	default n
+-	---help---
+-	Enables 256MB memory profile for ath11k
+-
+ config ATH11K_AHB
+ 	tristate "Atheros ath11k AHB support"
+ 	depends on m
+@@ -115,11 +101,13 @@ config ATH11K_CFR
+ 
+ config ATH11K_NSS_MEM_PROFILE_256M
+ 	bool "Smaller NSS allocations for 256 MiB IPQ5018/QCN6122 devices"
+-	depends on ATH11K_NSS_SUPPORT && ATH11K_MEM_PROFILE_256M
++	depends on ATH11K_NSS_SUPPORT
+ 	default n
+ 	help
+ 	  Skip unused host TX arrays, reduce NSS TX pools and completion
+ 	  rings, use private RX fragment caches, and reduce CE5 buffers.
+-	  Only IPQ5018 and QCN6122 with active NSS use this profile.
++	  Only IPQ5018 and QCN6122 with active NSS on the 256M memory
++	  profile (chosen at run time from the RAM size, or with the
++	  mem_profile module parameter) use this.
+ 	  TX and CE5 queue capacity is lower. Other hardware and the
+ 	  host-only data path retain their existing allocations.
+--- a/drivers/net/wireless/ath/ath11k/ce.c
++++ b/drivers/net/wireless/ath/ath11k/ce.c
+@@ -742,7 +742,7 @@ static int ath11k_ce_alloc_pipe(struct a
+ 		if (ce5_256m)
+ 			ath11k_info(ab, "NSS 256 MiB: active host_tx=0 tx_desc=%u tx_comp=%u CE5=%u/%u buf=%u RX=private\n",
+ 				    ATH11K_NSS_256M_TX_DESC_LIMIT,
+-				    min_t(u32, DP_TX_COMP_RING_SIZE,
++				    min_t(u32, DP_TX_COMP_RING_SIZE(ab),
+ 					  ATH11K_NSS_256M_TX_DESC_LIMIT),
+ 				    pipe->dest_ring->nentries,
+ 				    pipe->status_ring->nentries, pipe->buf_sz);
+@@ -1056,7 +1056,7 @@ int ath11k_ce_init_pipes(struct ath11k_b
+ 		}
+ 
+ 		/* Report recorded sizes, including after NSS recovery. */
+-		if (IS_ENABLED(CPTCFG_ATH11K_NSS_MEM_PROFILE_256M) && i == 5 &&
++		if (ath11k_nss_256m_enabled(ab) && i == 5 &&
+ 		    pipe->dest_ring && pipe->status_ring &&
+ 		    pipe->dest_ring->nentries == ATH11K_NSS_256M_CE5_ENTRIES)
+ 			ath11k_dbg(ab, ATH11K_DBG_CE, "NSS 256 MiB: CE5 rings ready dst=%u status=%u post_target=%u\n",
+--- a/drivers/net/wireless/ath/ath11k/core.c
++++ b/drivers/net/wireless/ath/ath11k/core.c
+@@ -6,6 +6,8 @@
+ 
+ #include <linux/export.h>
+ #include <linux/module.h>
++#include <linux/mm.h>
++#include <linux/sizes.h>
+ #include <linux/slab.h>
+ #include <linux/remoteproc.h>
+ #include <linux/firmware.h>
+@@ -44,6 +46,132 @@ bool ath11k_ftm_mode;
+ module_param_named(ftm_mode, ath11k_ftm_mode, bool, 0444);
+ MODULE_PARM_DESC(ftm_mode, "Boots up in factory test mode");
+ 
++static unsigned int ath11k_mem_profile_param;
++module_param_named(mem_profile, ath11k_mem_profile_param, uint, 0644);
++MODULE_PARM_DESC(mem_profile,
++		 "host memory profile: 0 from the RAM size (default: 256M below 384 MB, else 1G), 1 1G, 2 512M, 3 256M");
++
++/* The host-side memory profile, picked at run time from the amount of RAM
++ * or with the mem_profile parameter. The rows are what the build-time
++ * profiles ATH11K_MEM_PROFILE_1G, _512M and _256M used to compile in: 512M
++ * is 1G with smaller TX completion and monitor rings, a cap on the frames
++ * in flight and the rx descriptor without its rx header TLV; 256M is 512M
++ * with smaller RXDMA rings as well. nss_rx_swdesc is the RX descriptor pool
++ * the NSS Wi-Fi datapath is told to make for a radio; it used to be three
++ * times the RXDMA buffer ring and keeps those numbers, but it is a value of
++ * its own now: the pool and the ring need not move together. The _qcn6122
++ * fields, where not 0, replace the plain ones on that radio: at 512 its
++ * RXDMA buffer ring overflows under upload bursts. The firmware's own memory mode is a
++ * separate thing: it comes from the device tree, and only a hw_params
++ * entry that leaves it to the profile takes fw_mem_mode from here.
++ */
++static const struct ath11k_mem_profile_params ath11k_mem_profile_params[] = {
++	[ATH11K_MEM_PROFILE_1G] = {
++		.id = ATH11K_MEM_PROFILE_1G,
++		.name = "1G",
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_DEFAULT,
++		.tx_comp_ring_size = 32768,
++		.tx_comp_max_allowed = 0,
++		.rxdma_buf_ring_size = 4096,
++		.nss_rx_swdesc = 12288,
++		.rxdma_refill_ring_size = 2048,
++		.rxdma_nss_refill_ring_size = 2048,
++		.rxdma_err_dst_ring_size = 1024,
++		.rxdma_mon_status_ring_size = 1024,
++		.rxdma_monitor_buf_ring_size = 4096,
++		.rxdma_monitor_dst_ring_size = 4096,
++		.rxdma_monitor_desc_ring_size = 4096,
++		.compact_rx_desc = false,
++	},
++	[ATH11K_MEM_PROFILE_512M] = {
++		.id = ATH11K_MEM_PROFILE_512M,
++		.name = "512M",
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_512M,
++		.tx_comp_ring_size = 8192,
++		.tx_comp_max_allowed = 8192,
++		.rxdma_buf_ring_size = 4096,
++		.nss_rx_swdesc = 12288,
++		.rxdma_refill_ring_size = 2048,
++		/* 256b desc TLV + 4b(rounded) Pad + 30byte max nwifi header +
++		 * 18byte mesh hdr + 8byte snap + 1500 eth payload
++		 */
++		.rxdma_nss_refill_ring_size = 1816,
++		.rxdma_err_dst_ring_size = 1024,
++		.rxdma_mon_status_ring_size = 512,
++		.rxdma_monitor_buf_ring_size = 128,
++		.rxdma_monitor_dst_ring_size = 128,
++		.rxdma_monitor_desc_ring_size = 4096,
++		.compact_rx_desc = true,
++	},
++	[ATH11K_MEM_PROFILE_256M] = {
++		.id = ATH11K_MEM_PROFILE_256M,
++		.name = "256M",
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_512M,
++		.tx_comp_ring_size = 8192,
++		.tx_comp_max_allowed = 8192,
++		.rxdma_buf_ring_size = 512,
++		.rxdma_buf_ring_size_qcn6122 = 1024,
++		.nss_rx_swdesc = 1536,
++		.nss_rx_swdesc_qcn6122 = 3072,
++		.rxdma_refill_ring_size = 2048,
++		.rxdma_nss_refill_ring_size = 1816,
++		.rxdma_err_dst_ring_size = 128,
++		.rxdma_mon_status_ring_size = 512,
++		.rxdma_monitor_buf_ring_size = 128,
++		.rxdma_monitor_dst_ring_size = 128,
++		.rxdma_monitor_desc_ring_size = 128,
++		.compact_rx_desc = true,
++	},
++};
++
++static enum ath11k_mem_profile ath11k_core_mem_profile_by_ram(unsigned long *total_mb)
++{
++	struct sysinfo si;
++	u64 total;
++
++	si_meminfo(&si);
++	total = (u64)si.totalram * si.mem_unit;
++	*total_mb = total >> 20;
++
++	/* What the kernel manages, after the reserved regions: a 256 MB board
++	 * shows about 200 MB here, a 512 MB board about 420 MB. Only the
++	 * 256 MB boards change profile on their own: the 512M row leaves the
++	 * rx header TLV out of the rx descriptor, which not every radio has
++	 * run with, so it is there for mem_profile=2 only.
++	 */
++	if (total < SZ_256M + SZ_128M)
++		return ATH11K_MEM_PROFILE_256M;
++
++	return ATH11K_MEM_PROFILE_1G;
++}
++
++/* Needs ab->hw_params: the rx header TLV can only be left out where the
++ * hw_ops can tell the firmware the descriptor offsets without it.
++ */
++static void ath11k_core_select_mem_profile(struct ath11k_base *ab)
++{
++	enum ath11k_mem_profile profile;
++	unsigned long total_mb;
++	const char *how = "from the RAM size";
++
++	profile = ath11k_core_mem_profile_by_ram(&total_mb);
++	if (ath11k_mem_profile_param > ATH11K_MEM_PROFILE_COUNT) {
++		ath11k_warn(ab, "mem_profile %u is not a profile, choosing from the RAM size\n",
++			    ath11k_mem_profile_param);
++	} else if (ath11k_mem_profile_param) {
++		profile = ath11k_mem_profile_param - 1;
++		how = "mem_profile parameter";
++	}
++
++	ab->mem_profile = &ath11k_mem_profile_params[profile];
++	ab->compact_rx_desc = ab->mem_profile->compact_rx_desc &&
++			      ab->hw_params.hw_ops->rx_desc_get_offset;
++
++	ath11k_info(ab, "memory profile %s (%s, %lu MB), rx descriptor %s\n",
++		    ab->mem_profile->name, how, total_mb,
++		    ab->compact_rx_desc ? "without the rx header TLV" : "full");
++}
++
+ static const struct ath11k_num_vdevs_peers ath11k_vdevs_peers[];
+ static const struct ath11k_num_vdevs_peers ath11k_vdevs_peers_ipq5018[];
+ 
+@@ -183,7 +311,7 @@ static struct ath11k_hw_params ath11k_hw
+ 		.coldboot_cal_mm = true,
+ 		.coldboot_cal_ftm = true,
+ 		.cbcal_restart_fw = true,
+-		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE,
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_PROFILE,
+ 		.num_vdevs = 16 + 1,
+ 		.num_peers = 512,
+ 		.supports_suspend = false,
+@@ -271,7 +399,7 @@ static struct ath11k_hw_params ath11k_hw
+ 		.coldboot_cal_mm = false,
+ 		.coldboot_cal_ftm = false,
+ 		.cbcal_restart_fw = true,
+-		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE,
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_PROFILE,
+ 		.num_vdevs = 16 + 1,
+ 		.num_peers = 512,
+ 		.supports_suspend = false,
+@@ -362,7 +490,7 @@ static struct ath11k_hw_params ath11k_hw
+ 		.coldboot_cal_mm = false,
+ 		.coldboot_cal_ftm = false,
+ 		.cbcal_restart_fw = false,
+-		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE,
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_PROFILE,
+ 		.num_vdevs = 4,
+ 		.num_peers = 512,
+ 		.supports_suspend = true,
+@@ -636,7 +764,7 @@ static struct ath11k_hw_params ath11k_hw
+ 		.coldboot_cal_mm = false,
+ 		.coldboot_cal_ftm = false,
+ 		.cbcal_restart_fw = false,
+-		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE,
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_PROFILE,
+ 		.num_vdevs = 4,
+ 		.num_peers = 512,
+ 		.supports_suspend = true,
+@@ -725,7 +853,7 @@ static struct ath11k_hw_params ath11k_hw
+ 		.coldboot_cal_mm = true,
+ 		.coldboot_cal_ftm = true,
+ 		.cbcal_restart_fw = false,
+-		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE,
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_PROFILE,
+ 		.num_vdevs = 3,
+ 		.num_peers = 512,
+ 		.supports_suspend = false,
+@@ -809,7 +937,7 @@ static struct ath11k_hw_params ath11k_hw
+ 		.supports_monitor = false,
+ 		.supports_sta_ps = false,
+ 		.supports_shadow_regs = false,
+-		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE,
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_PROFILE,
+ 		.num_vdevs = 16 + 1,
+ 		.num_peers = 512,
+ 		.supports_regdb = false,
+@@ -993,7 +1121,7 @@ static struct ath11k_hw_params ath11k_hw
+ 		.coldboot_cal_mm = false,
+ 		.coldboot_cal_ftm = false,
+ 		.cbcal_restart_fw = false,
+-		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE,
++		.fw_mem_mode = ATH11K_QMI_TARGET_MEM_MODE_PROFILE,
+ 		.num_vdevs = 4,
+ 		.num_peers = 512,
+ 		.supports_suspend = true,
+@@ -3066,6 +3194,10 @@ static int ath11k_init_hw_params(struct
+ 
+ 	ab->hw_params = *hw_params;
+ 
++	ath11k_core_select_mem_profile(ab);
++	if (ab->hw_params.fw_mem_mode == ATH11K_QMI_TARGET_MEM_MODE_PROFILE)
++		ab->hw_params.fw_mem_mode = ab->mem_profile->fw_mem_mode;
++
+ 	ret = of_property_read_u32(ab->dev->of_node,
+ 				   "qcom,ath11k-fw-memory-mode",
+ 				   &fw_mem_mode);
+--- a/drivers/net/wireless/ath/ath11k/core.h
++++ b/drivers/net/wireless/ath/ath11k/core.h
+@@ -1025,6 +1025,46 @@ struct ath11k_num_vdevs_peers {
+ 	u32 num_peers;
+ };
+ 
++enum ath11k_mem_profile {
++	ATH11K_MEM_PROFILE_1G,
++	ATH11K_MEM_PROFILE_512M,
++	ATH11K_MEM_PROFILE_256M,
++	ATH11K_MEM_PROFILE_COUNT,
++};
++
++/* The host-side memory profile: the data path ring sizes and whether the
++ * rx descriptor carries the rx header TLV. One row per profile in
++ * ath11k_mem_profile_params (core.c), chosen at run time.
++ */
++struct ath11k_mem_profile_params {
++	enum ath11k_mem_profile id;
++	const char *name;
++	/* the QMI target memory mode for a hw_params entry that leaves the
++	 * choice to the profile and a device tree that names none
++	 */
++	int fw_mem_mode;
++	u32 tx_comp_ring_size;
++	/* frames in flight before the host TX path refuses more; 0 is no limit */
++	u32 tx_comp_max_allowed;
++	u32 rxdma_buf_ring_size;
++	/* not 0: the RXDMA buffer ring of a QCN6122 radio instead */
++	u32 rxdma_buf_ring_size_qcn6122;
++	/* the RX descriptor pool of a radio in the NSS Wi-Fi datapath */
++	u32 nss_rx_swdesc;
++	/* not 0: that pool for a QCN6122 radio instead */
++	u32 nss_rx_swdesc_qcn6122;
++	u32 rxdma_refill_ring_size;
++	/* the rx buffer length handed to the NSS Wi-Fi datapath */
++	u32 rxdma_nss_refill_ring_size;
++	u32 rxdma_err_dst_ring_size;
++	u32 rxdma_mon_status_ring_size;
++	u32 rxdma_monitor_buf_ring_size;
++	u32 rxdma_monitor_dst_ring_size;
++	u32 rxdma_monitor_desc_ring_size;
++	/* leave the rx header TLV out of the rx descriptor */
++	bool compact_rx_desc;
++};
++
+ /* Master structure to hold the hw data which may be used in core module */
+ struct ath11k_base {
+ 	enum ath11k_hw_rev hw_rev;
+@@ -1087,6 +1127,9 @@ struct ath11k_base {
+ 	bool pdevs_macaddr_valid;
+ 
+ 	struct ath11k_hw_params hw_params;
++	const struct ath11k_mem_profile_params *mem_profile;
++	/* the rx descriptor is used without its rx header TLV */
++	bool compact_rx_desc;
+ 
+ 	const struct firmware *cal_file;
+ 
+@@ -1425,7 +1468,7 @@ static inline const char *ath11k_scan_st
+ static inline bool ath11k_nss_256m_enabled(struct ath11k_base *ab)
+ {
+ 	return IS_ENABLED(CPTCFG_ATH11K_NSS_MEM_PROFILE_256M) &&
+-	       IS_ENABLED(CPTCFG_ATH11K_MEM_PROFILE_256M) &&
++	       ab->mem_profile->id == ATH11K_MEM_PROFILE_256M &&
+ 	       ab->nss.enabled &&
+ 	       (ab->hw_rev == ATH11K_HW_IPQ5018_HW10 ||
+ 		ab->hw_rev == ATH11K_HW_QCN6122_HW10);
+--- a/drivers/net/wireless/ath/ath11k/dp.c
++++ b/drivers/net/wireless/ath/ath11k/dp.c
+@@ -392,7 +392,7 @@ static int ath11k_dp_srng_common_setup(s
+ {
+ 	struct ath11k_dp *dp = &ab->dp;
+ 	struct hal_srng *srng;
+-	u32 tx_comp_entries = DP_TX_COMP_RING_SIZE;
++	u32 tx_comp_entries = DP_TX_COMP_RING_SIZE(ab);
+ 	int i, ret, j;
+ 	u8 tcl_num, wbm_num;
+ 
+@@ -446,7 +446,7 @@ static int ath11k_dp_srng_common_setup(s
+ 			goto err;
+ 		}
+ 
+-		if (tx_comp_entries != DP_TX_COMP_RING_SIZE) {
++		if (tx_comp_entries != DP_TX_COMP_RING_SIZE(ab)) {
+ 			srng = &ab->hal.srng_list[dp->tx_ring[i].tcl_comp_ring.ring_id];
+ 			ath11k_dbg(ab, ATH11K_DBG_DP_TX, "NSS 256 MiB: TX completion ring=%d entries=%u bytes=%u\n",
+ 				   i, srng->num_entries,
+@@ -463,7 +463,7 @@ static int ath11k_dp_srng_common_setup(s
+ 		if (!dp->host_tx_allocated)
+ 			continue;
+ 
+-		dp->tx_ring[i].idr_pool = kcalloc(DP_TX_IDR_SIZE,
++		dp->tx_ring[i].idr_pool = kcalloc(DP_TX_IDR_SIZE(ab),
+ 						  sizeof(struct idr_entry), GFP_KERNEL);
+ 		if (!dp->tx_ring[i].idr_pool) {
+ 			ath11k_warn(ab, "failed to allocate memory for idr pool ring(%d)\n", i);
+@@ -472,7 +472,7 @@ static int ath11k_dp_srng_common_setup(s
+ 		}
+ 
+ 		/* Reset id to default */
+-		for (j = 0; j < DP_TX_IDR_SIZE; j++)
++		for (j = 0; j < DP_TX_IDR_SIZE(ab); j++)
+ 			dp->tx_ring[i].idr_pool[j].id = -1;
+ 	}
+ 
+@@ -1092,7 +1092,7 @@ void ath11k_dp_tx_complete_pending(struc
+ 		struct dp_tx_ring *tx_ring = &dp->tx_ring[i];
+ 
+ 		spin_lock_bh(&tx_ring->tx_idr_lock);
+-		for_each_set_bit(j, tx_ring->idrs, DP_TX_IDR_SIZE) {
++		for_each_set_bit(j, tx_ring->idrs, DP_TX_IDR_SIZE(ab)) {
+ 			msdu = tx_ring->idr_pool[j].buf;
+ 			if (!msdu || ATH11K_SKB_CB(msdu)->ar != ar)
+ 				continue;
+@@ -1128,7 +1128,7 @@ void ath11k_dp_free(struct ath11k_base *
+ 			struct dp_tx_ring *tx_ring = &dp->tx_ring[i];
+ 
+ 			spin_lock_bh(&tx_ring->tx_idr_lock);
+-			for (j = 0; j < DP_TX_IDR_SIZE; j++) {
++			for (j = 0; j < DP_TX_IDR_SIZE(ab); j++) {
+ 				if (test_and_clear_bit(j, tx_ring->idrs))
+ 					ath11k_dp_tx_pending_cleanup(ab, tx_ring->idr_pool[j].buf);
+ 			}
+@@ -1206,7 +1206,7 @@ int ath11k_dp_alloc(struct ath11k_base *
+ 	if (!dp->host_tx_allocated)
+ 		ath11k_dbg(ab, ATH11K_DBG_DP_TX, "NSS 256 MiB: host TX DMA rings ready\n");
+ 
+-	size = sizeof(struct hal_wbm_release_ring) * DP_TX_COMP_RING_SIZE;
++	size = sizeof(struct hal_wbm_release_ring) * DP_TX_COMP_RING_SIZE(ab);
+ 
+ 	for (i = 0; i < ab->hw_params.hal_params->num_tx_rings; i++) {
+ 		idr_init(&dp->tx_ring[i].txbuf_idr);
+@@ -1214,7 +1214,7 @@ int ath11k_dp_alloc(struct ath11k_base *
+ 		dp->tx_ring[i].tcl_data_ring_id = i;
+ 
+ 		dp->tx_ring[i].tx_status_head = 0;
+-		dp->tx_ring[i].tx_status_tail = DP_TX_COMP_RING_SIZE - 1;
++		dp->tx_ring[i].tx_status_tail = DP_TX_COMP_RING_SIZE(ab) - 1;
+ 
+ 		if (!dp->host_tx_allocated)
+ 			continue;
+@@ -1232,7 +1232,7 @@ int ath11k_dp_alloc(struct ath11k_base *
+ 	if (!dp->host_tx_allocated)
+ 		ath11k_dbg(ab, ATH11K_DBG_DP_TX, "NSS 256 MiB: host TX skipped %zu bytes of software allocations\n",
+ 			   DP_TCL_NUM_RING_MAX *
+-			   (DP_TX_IDR_SIZE * sizeof(struct idr_entry) + size));
++			   (DP_TX_IDR_SIZE(ab) * sizeof(struct idr_entry) + size));
+ 
+ 	/* Init any SOC level resource for DP */
+ 
+--- a/drivers/net/wireless/ath/ath11k/dp.h
++++ b/drivers/net/wireless/ath/ath11k/dp.h
+@@ -91,14 +91,12 @@ struct dp_rxdma_ring {
+ 	int bufs_max;
+ };
+ 
+-#define ATH11K_TX_COMPL_NEXT(x)	(((x) + 1) % DP_TX_COMP_RING_SIZE)
+-
+ struct idr_entry {
+ 	int id;
+ 	void *buf;
+ };
+ 
+-#define DP_TX_IDR_SIZE	ATH11K_DP_TX_COMP_RING_SIZE
++#define DP_TX_IDR_SIZE(ab)	DP_TX_COMP_RING_SIZE(ab)
+ 
+ struct dp_tx_ring {
+ 	u8 tcl_data_ring_id;
+@@ -110,7 +108,7 @@ struct dp_tx_ring {
+ 	struct hal_wbm_release_ring *tx_status;
+ 	int tx_status_head;
+ 	int tx_status_tail;
+-	DECLARE_BITMAP(idrs, DP_TX_IDR_SIZE);
++	DECLARE_BITMAP(idrs, ATH11K_DP_TX_COMP_RING_SIZE_MAX);
+ 	struct idr_entry *idr_pool;
+ };
+ 
+@@ -228,8 +226,11 @@ struct ath11k_pdev_dp {
+ #define DP_WBM_RELEASE_RING_SIZE	64
+ #define DP_TCL_DATA_RING_SIZE		512
+ #define DP_TCL_DATA_RING_SIZE_WCN6750	2048
+-#define DP_TX_COMP_RING_SIZE		ATH11K_DP_TX_COMP_RING_SIZE
+-#define DP_TX_COMP_MAX_ALLOWED         DP_TX_COMP_RING_SIZE
++/* The sizes that depend on the memory profile come from ab->mem_profile;
++ * the table in core.c has what the 1G, 512M and 256M builds compiled in.
++ */
++#define DP_TX_COMP_RING_SIZE(ab)	((ab)->mem_profile->tx_comp_ring_size)
++#define DP_TX_COMP_MAX_ALLOWED(ab)	((ab)->mem_profile->tx_comp_max_allowed)
+ #define DP_TCL_CMD_RING_SIZE		32
+ #define DP_TCL_STATUS_RING_SIZE		32
+ #define DP_REO_DST_RING_MAX		4
+@@ -239,43 +240,19 @@ struct ath11k_pdev_dp {
+ #define DP_REO_EXCEPTION_RING_SIZE	128
+ #define DP_REO_CMD_RING_SIZE		256
+ #define DP_REO_STATUS_RING_SIZE		2048
+-/* The 256M profile is the 512M profile plus smaller RXDMA rings. The NSS
+- * Wi-Fi datapath sizes its RX descriptor pool from DP_RXDMA_BUF_RING_SIZE,
+- * so only a board that cannot afford the 1G rings should see this.
+- */
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_256M
+-#define DP_RXDMA_BUF_RING_SIZE		512
+-#else
+-#define DP_RXDMA_BUF_RING_SIZE		4096
+-#endif
+-#define DP_RXDMA_REFILL_RING_SIZE	ATH11K_DP_RXDMA_REFILL_RING_SIZE
+-#define DP_RXDMA_NSS_REFILL_RING_SIZE	ATH11K_DP_RXDMA_NSS_REFILL_RING_SIZE
+-/* With the 256M profile, give the 5 GHz QCN6122 radio a 1024-entry RXDMA
+- * buffer ring: at 512 it runs out under upload bursts (RXDMA overflow).
+- * The IPQ5018 2.4 GHz radio does not get near 512 and keeps it. The NSS
+- * Wi-Fi datapath sizes its RX descriptor pool from the same value.
+- */
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_256M
+-#define DP_RXDMA_BUF_RING_SIZE_QCN6122	1024
+-#define ATH11K_DP_RXDMA_BUF_RING_SIZE(ab) \
+-	((ab)->hw_rev == ATH11K_HW_QCN6122_HW10 ? \
+-	 DP_RXDMA_BUF_RING_SIZE_QCN6122 : DP_RXDMA_BUF_RING_SIZE)
+-#else
+-#define ATH11K_DP_RXDMA_BUF_RING_SIZE(ab)	DP_RXDMA_BUF_RING_SIZE
+-#endif
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_256M
+-#define DP_RXDMA_ERR_DST_RING_SIZE	128
+-#else
+-#define DP_RXDMA_ERR_DST_RING_SIZE	1024
+-#endif
+-#define DP_RXDMA_MON_STATUS_RING_SIZE	ATH11K_DP_RXDMA_MON_STATUS_RING_SIZE
+-#define DP_RXDMA_MONITOR_BUF_RING_SIZE	ATH11K_DP_RXDMA_MONITOR_BUF_RING_SIZE
+-#define DP_RXDMA_MONITOR_DST_RING_SIZE	ATH11K_DP_RXDMA_MONITOR_BUF_RING_SIZE
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_256M
+-#define DP_RXDMA_MONITOR_DESC_RING_SIZE	128
+-#else
+-#define DP_RXDMA_MONITOR_DESC_RING_SIZE	4096
+-#endif
++#define DP_PROFILE_QCN6122(ab, field) \
++	((ab)->hw_rev == ATH11K_HW_QCN6122_HW10 && \
++	 (ab)->mem_profile->field##_qcn6122 ? \
++	 (ab)->mem_profile->field##_qcn6122 : (ab)->mem_profile->field)
++#define DP_RXDMA_BUF_RING_SIZE(ab)	DP_PROFILE_QCN6122(ab, rxdma_buf_ring_size)
++#define DP_NSS_RX_SWDESC(ab)		DP_PROFILE_QCN6122(ab, nss_rx_swdesc)
++#define DP_RXDMA_REFILL_RING_SIZE(ab)	((ab)->mem_profile->rxdma_refill_ring_size)
++#define DP_RXDMA_NSS_REFILL_RING_SIZE(ab) ((ab)->mem_profile->rxdma_nss_refill_ring_size)
++#define DP_RXDMA_ERR_DST_RING_SIZE(ab)	((ab)->mem_profile->rxdma_err_dst_ring_size)
++#define DP_RXDMA_MON_STATUS_RING_SIZE(ab) ((ab)->mem_profile->rxdma_mon_status_ring_size)
++#define DP_RXDMA_MONITOR_BUF_RING_SIZE(ab) ((ab)->mem_profile->rxdma_monitor_buf_ring_size)
++#define DP_RXDMA_MONITOR_DST_RING_SIZE(ab) ((ab)->mem_profile->rxdma_monitor_dst_ring_size)
++#define DP_RXDMA_MONITOR_DESC_RING_SIZE(ab) ((ab)->mem_profile->rxdma_monitor_desc_ring_size)
+ 
+ #define DP_RX_RELEASE_RING_NUM	3
+ 
+--- a/drivers/net/wireless/ath/ath11k/dp_rx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_rx.c
+@@ -29,6 +29,10 @@ static void ath11k_dp_rx_tid_del_func(st
+ static inline
+ u8 *ath11k_dp_rx_h_80211_hdr(struct ath11k_base *ab, struct hal_rx_desc *desc)
+ {
++	/* without the rx header TLV there is no 802.11 header in the descriptor */
++	if (ab->compact_rx_desc)
++		return NULL;
++
+ 	return ab->hw_params.hw_ops->rx_desc_get_hdr_status(desc);
+ }
+ 
+@@ -317,13 +321,11 @@ static u8 *ath11k_dp_rxdesc_mpdu_start_a
+ 	return ab->hw_params.hw_ops->rx_desc_mpdu_start_addr2(desc);
+ }
+ 
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ static void ath11k_dp_get_rx_header_offset(struct ath11k_base *ab,
+ 					   struct htt_rx_ring_tlv_filter *tlv_filter)
+ {
+ 	ab->hw_params.hw_ops->rx_desc_get_offset(tlv_filter);
+ }
+-#endif
+ 
+ static bool ath11k_dp_rx_desc_dot11_hdr_fields_valid(struct ath11k_base *ab,
+ 						     struct hal_rx_desc *desc)
+@@ -673,7 +675,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
+ 	ret = ath11k_dp_srng_setup(ar->ab,
+ 				   &dp->rx_refill_buf_ring.refill_buf_ring,
+ 				   HAL_RXDMA_BUF, 0,
+-				   dp->mac_id, ATH11K_DP_RXDMA_BUF_RING_SIZE(ab));
++				   dp->mac_id, DP_RXDMA_BUF_RING_SIZE(ar->ab));
+ 	if (ret) {
+ 		ath11k_warn(ar->ab, "failed to setup rx_refill_buf_ring\n");
+ 		return ret;
+@@ -696,7 +698,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
+ 	for (i = 0; i < ab->hw_params.num_rxdma_per_pdev; i++) {
+ 		ret = ath11k_dp_srng_setup(ar->ab, &dp->rxdma_err_dst_ring[i],
+ 					   HAL_RXDMA_DST, 0, dp->mac_id + i,
+-					   DP_RXDMA_ERR_DST_RING_SIZE);
++					   DP_RXDMA_ERR_DST_RING_SIZE(ab));
+ 		if (ret) {
+ 			ath11k_warn(ar->ab, "failed to setup rxdma_err_dst_ring %d\n", i);
+ 			return ret;
+@@ -708,7 +710,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
+ 		ret = ath11k_dp_srng_setup(ar->ab,
+ 					   srng,
+ 					   HAL_RXDMA_MONITOR_STATUS, 0, dp->mac_id + i,
+-					   DP_RXDMA_MON_STATUS_RING_SIZE);
++					   DP_RXDMA_MON_STATUS_RING_SIZE(ab));
+ 		if (ret) {
+ 			ath11k_warn(ar->ab,
+ 				    "failed to setup rx_mon_status_refill_ring %d\n", i);
+@@ -731,7 +733,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
+ 	ret = ath11k_dp_srng_setup(ar->ab,
+ 				   &dp->rxdma_mon_buf_ring.refill_buf_ring,
+ 				   HAL_RXDMA_MONITOR_BUF, 0, dp->mac_id,
+-				   DP_RXDMA_MONITOR_BUF_RING_SIZE);
++				   DP_RXDMA_MONITOR_BUF_RING_SIZE(ab));
+ 	if (ret) {
+ 		ath11k_warn(ar->ab,
+ 			    "failed to setup HAL_RXDMA_MONITOR_BUF\n");
+@@ -740,7 +742,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
+ 
+ 	ret = ath11k_dp_srng_setup(ar->ab, &dp->rxdma_mon_dst_ring,
+ 				   HAL_RXDMA_MONITOR_DST, 0, dp->mac_id,
+-				   DP_RXDMA_MONITOR_DST_RING_SIZE);
++				   DP_RXDMA_MONITOR_DST_RING_SIZE(ab));
+ 	if (ret) {
+ 		ath11k_warn(ar->ab,
+ 			    "failed to setup HAL_RXDMA_MONITOR_DST\n");
+@@ -749,7 +751,7 @@ static int ath11k_dp_rx_pdev_srng_alloc(
+ 
+ 	ret = ath11k_dp_srng_setup(ar->ab, &dp->rxdma_mon_desc_ring,
+ 				   HAL_RXDMA_MONITOR_DESC, 0, dp->mac_id,
+-				   DP_RXDMA_MONITOR_DESC_RING_SIZE);
++				   DP_RXDMA_MONITOR_DESC_RING_SIZE(ab));
+ 	if (ret) {
+ 		ath11k_warn(ar->ab,
+ 			    "failed to setup HAL_RXDMA_MONITOR_DESC\n");
+@@ -5443,7 +5445,6 @@ void ath11k_dp_rx_pdev_free(struct ath11
+ 	ath11k_dp_rxdma_pdev_buf_free(ar);
+ }
+ 
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ static int ath11k_dp_rxdma_ring_sel_config(struct ath11k *ar)
+ {
+ 	struct ath11k_pdev_dp *dp = &ar->dp;
+@@ -5452,6 +5453,10 @@ static int ath11k_dp_rxdma_ring_sel_conf
+ 	int ret;
+ 	u32 hal_rx_desc_sz = ar->ab->hw_params.hal_desc_sz;
+ 
++	/* The firmware fills in the rx header TLV unless told otherwise. */
++	if (!ar->ab->compact_rx_desc)
++		return 0;
++
+ 	ring_id = dp->rx_refill_buf_ring.refill_buf_ring.ring_id;
+ 
+ 	tlv_filter.rx_filter = HTT_RX_RXDMA_FILTER_TLV_FLAGS_BUF_RING;
+@@ -5467,22 +5472,16 @@ static int ath11k_dp_rxdma_ring_sel_conf
+ 	if (!ar->ab->nss.enabled)
+ 		ret = ath11k_dp_tx_htt_rx_filter_setup(ar->ab, ring_id, dp->mac_id,
+ 						       HAL_RXDMA_BUF,
+-						       DP_RXDMA_REFILL_RING_SIZE,
++						       DP_RXDMA_REFILL_RING_SIZE(ar->ab),
+ 						       &tlv_filter);
+ 	else
+ 		ret = ath11k_dp_tx_htt_rx_filter_setup(ar->ab, ring_id, dp->mac_id,
+ 						       HAL_RXDMA_BUF,
+-						       DP_RXDMA_NSS_REFILL_RING_SIZE,
++						       DP_RXDMA_NSS_REFILL_RING_SIZE(ar->ab),
+ 						       &tlv_filter);
+ 
+ 	return ret;
+ }
+-#else
+-static int ath11k_dp_rxdma_ring_sel_config(struct ath11k *ar)
+-{
+-	return 0;
+-}
+-#endif
+ 
+ int ath11k_dp_rx_pdev_alloc(struct ath11k_base *ab, int mac_id)
+ {
+--- a/drivers/net/wireless/ath/ath11k/dp_tx.c
++++ b/drivers/net/wireless/ath/ath11k/dp_tx.c
+@@ -163,12 +163,11 @@ int ath11k_dp_tx(struct ath11k *ar, stru
+ 
+ 	max_tx_ring = num_tx_rings;
+ 
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+-	if (unlikely(atomic_read(&ab->num_max_allowed) > DP_TX_COMP_MAX_ALLOWED)) {
++	if (DP_TX_COMP_MAX_ALLOWED(ab) &&
++	    unlikely(atomic_read(&ab->num_max_allowed) > DP_TX_COMP_MAX_ALLOWED(ab))) {
+ 		atomic_inc(&ab->soc_stats.tx_err.max_fail);
+ 		return -ENOSPC;
+ 	}
+-#endif
+ 	ring_selector = smp_processor_id();;
+ 	pool_id = ring_selector;
+ 
+@@ -184,8 +183,8 @@ tcl_ring_sel:
+ 	tx_ring = &dp->tx_ring[tcl_ring_id];
+ 
+ 	spin_lock_bh(&tx_ring->tx_idr_lock);
+-	idr = find_first_zero_bit(tx_ring->idrs, DP_TX_IDR_SIZE);
+-	if (unlikely(idr >= DP_TX_IDR_SIZE)) {
++	idr = find_first_zero_bit(tx_ring->idrs, DP_TX_IDR_SIZE(ab));
++	if (unlikely(idr >= DP_TX_IDR_SIZE(ab))) {
+ 		if (ring_map == (BIT(max_tx_ring) - 1) ||
+ 		    !ab->hw_params.tcl_ring_retry) {
+ 			spin_unlock_bh(&tx_ring->tx_idr_lock);
+@@ -404,7 +403,7 @@ static void ath11k_dp_tx_free_txbuf(stru
+ 		return;
+ 
+ 	spin_lock_bh(&tx_ring->tx_idr_lock);
+-	if (msdu_id < DP_TX_IDR_SIZE &&
++	if (msdu_id < DP_TX_IDR_SIZE(ab) &&
+ 	    tx_ring->idr_pool[msdu_id].id == msdu_id) {
+ 		msdu = tx_ring->idr_pool[msdu_id].buf;
+ 		tx_ring->idr_pool[msdu_id].id = -1;
+@@ -450,7 +449,7 @@ ath11k_dp_tx_htt_tx_complete_buf(struct
+ 		return;
+ 
+ 	spin_lock_bh(&tx_ring->tx_idr_lock);
+-	if (msdu_id < DP_TX_IDR_SIZE &&
++	if (msdu_id < DP_TX_IDR_SIZE(ab) &&
+ 	    tx_ring->idr_pool[msdu_id].id == msdu_id) {
+ 		msdu = tx_ring->idr_pool[msdu_id].buf;
+ 		tx_ring->idr_pool[msdu_id].id = -1;
+@@ -944,7 +943,7 @@ void ath11k_dp_tx_completion_handler(str
+ 		}
+ 
+ 		spin_lock_bh(&tx_ring->tx_idr_lock);
+-		if (msdu_id < DP_TX_IDR_SIZE &&
++		if (msdu_id < DP_TX_IDR_SIZE(ab) &&
+ 		    tx_ring->idr_pool[msdu_id].id == msdu_id) {
+ 			msdu = tx_ring->idr_pool[msdu_id].buf;
+ 			tx_ring->idr_pool[msdu_id].id = -1;
+@@ -1450,7 +1449,7 @@ int ath11k_dp_tx_htt_monitor_mode_ring_c
+ 	if (ab->hw_params.rxdma1_enable) {
+ 		ret = ath11k_dp_tx_htt_rx_filter_setup(ar->ab, ring_id, dp->mac_id,
+ 						       HAL_RXDMA_MONITOR_BUF,
+-						       DP_RXDMA_REFILL_RING_SIZE,
++						       DP_RXDMA_REFILL_RING_SIZE(ab),
+ 						       &tlv_filter);
+ 	} else if (!reset) {
+ 		/* set in monitor mode only */
+@@ -1482,7 +1481,7 @@ int ath11k_dp_tx_htt_monitor_mode_ring_c
+ 		ret = ath11k_dp_tx_htt_rx_filter_setup(ab, ring_id,
+ 						       dp->mac_id + i,
+ 						       HAL_RXDMA_MONITOR_STATUS,
+-						       DP_RXDMA_REFILL_RING_SIZE,
++						       DP_RXDMA_REFILL_RING_SIZE(ab),
+ 						       &tlv_filter);
+ 	}
+ 
+--- a/drivers/net/wireless/ath/ath11k/hw.c
++++ b/drivers/net/wireless/ath/ath11k/hw.c
+@@ -271,11 +271,7 @@ static u8 ath11k_hw_ipq8074_rx_desc_get_
+ 
+ static u8 *ath11k_hw_ipq8074_rx_desc_get_hdr_status(struct hal_rx_desc *desc)
+ {
+-#ifndef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 	return desc->u.ipq8074.hdr_status;
+-#else
+-	return NULL;
+-#endif
+ }
+ 
+ static bool ath11k_hw_ipq8074_rx_desc_encrypt_valid(struct hal_rx_desc *desc)
+@@ -431,7 +427,6 @@ static u8 *ath11k_hw_ipq8074_rx_desc_get
+ 	return &desc->u.ipq8074.msdu_payload[0];
+ }
+ 
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ static void ath11k_hw_ipq8074_rx_desc_get_offset(struct htt_rx_ring_tlv_filter *tlv_filter)
+ {
+ 	tlv_filter->rx_mpdu_end_offset = __le16_to_cpu(offsetof
+@@ -445,7 +440,6 @@ static void ath11k_hw_ipq8074_rx_desc_ge
+ 	tlv_filter->rx_attn_offset = __le16_to_cpu(offsetof
+ 			(struct hal_rx_desc_ipq8074, rx_attn_tag));
+ }
+-#endif
+ 
+ static u16 ath11k_hw_ipq8074_rx_desc_get_mpdu_frame_ctl(struct hal_rx_desc *desc)
+ {
+@@ -568,11 +562,7 @@ static u8 ath11k_hw_qcn9074_rx_desc_get_
+ 
+ static u8 *ath11k_hw_qcn9074_rx_desc_get_hdr_status(struct hal_rx_desc *desc)
+ {
+-#ifndef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 	return desc->u.qcn9074.hdr_status;
+-#else
+-	return NULL;
+-#endif
+ }
+ 
+ static bool ath11k_hw_qcn9074_rx_desc_encrypt_valid(struct hal_rx_desc *desc)
+@@ -759,11 +749,7 @@ static u8 ath11k_hw_wcn6855_rx_desc_get_
+ 
+ static u8 *ath11k_hw_wcn6855_rx_desc_get_hdr_status(struct hal_rx_desc *desc)
+ {
+-#ifndef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 	return desc->u.wcn6855.hdr_status;
+-#else
+-	return NULL;
+-#endif
+ }
+ 
+ static bool ath11k_hw_wcn6855_rx_desc_encrypt_valid(struct hal_rx_desc *desc)
+@@ -913,7 +899,6 @@ static u8 *ath11k_hw_wcn6855_rx_desc_mpd
+ {
+ 	return desc->u.wcn6855.mpdu_start.addr2;
+ }
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ static void ath11k_hw_qcn9074_rx_desc_get_offset(struct htt_rx_ring_tlv_filter *tlv_filter)
+ {
+ 	tlv_filter->rx_mpdu_end_offset = __le16_to_cpu(offsetof
+@@ -927,7 +912,6 @@ static void ath11k_hw_qcn9074_rx_desc_ge
+ 	tlv_filter->rx_attn_offset = __le16_to_cpu(offsetof
+ 			(struct hal_rx_desc_qcn9074, rx_attn_tag));
+ }
+-#endif
+ 
+ static u16 ath11k_hw_qcn9074_rx_desc_get_mpdu_frame_ctl(struct hal_rx_desc *desc)
+ {
+@@ -1280,9 +1264,7 @@ const struct ath11k_hw_ops ipq8074_ops =
+ 	.rx_desc_mpdu_start_addr2 = ath11k_hw_ipq8074_rx_desc_mpdu_start_addr2,
+ 	.get_ring_selector = ath11k_hw_ipq8074_get_tcl_ring_selector,
+ 	.rx_desc_get_hal_mpdu_len = ath11k_hw_ipq8074_rx_desc_get_hal_mpdu_len,
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 	.rx_desc_get_offset = ath11k_hw_ipq8074_rx_desc_get_offset,
+-#endif
+ 	.rx_desc_get_mpdu_frame_ctl = ath11k_hw_ipq8074_rx_desc_get_mpdu_frame_ctl,
+ 	.rx_desc_dot11_hdr_fields_valid = ath11k_hw_ipq8074_rx_desc_dot11_hdr_fields_valid,
+ 	.rx_desc_get_dot11_hdr = ath11k_hw_ipq8074_rx_desc_get_dot11_hdr,
+@@ -1329,9 +1311,7 @@ const struct ath11k_hw_ops ipq6018_ops =
+ 	.rx_desc_mpdu_start_addr2 = ath11k_hw_ipq8074_rx_desc_mpdu_start_addr2,
+ 	.get_ring_selector = ath11k_hw_ipq8074_get_tcl_ring_selector,
+ 	.rx_desc_get_hal_mpdu_len = ath11k_hw_ipq8074_rx_desc_get_hal_mpdu_len,
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 	.rx_desc_get_offset = ath11k_hw_ipq8074_rx_desc_get_offset,
+-#endif
+ 	.rx_desc_get_mpdu_frame_ctl = ath11k_hw_ipq8074_rx_desc_get_mpdu_frame_ctl,
+ 	.rx_desc_dot11_hdr_fields_valid = ath11k_hw_ipq8074_rx_desc_dot11_hdr_fields_valid,
+ 	.rx_desc_get_dot11_hdr = ath11k_hw_ipq8074_rx_desc_get_dot11_hdr,
+@@ -1378,9 +1358,7 @@ const struct ath11k_hw_ops qca6390_ops =
+ 	.rx_desc_mpdu_start_addr2 = ath11k_hw_ipq8074_rx_desc_mpdu_start_addr2,
+ 	.get_ring_selector = ath11k_hw_ipq8074_get_tcl_ring_selector,
+ 	.rx_desc_get_hal_mpdu_len = ath11k_hw_ipq8074_rx_desc_get_hal_mpdu_len,
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 	.rx_desc_get_offset = ath11k_hw_ipq8074_rx_desc_get_offset,
+-#endif
+ 	.rx_desc_get_mpdu_frame_ctl = ath11k_hw_ipq8074_rx_desc_get_mpdu_frame_ctl,
+ 	.rx_desc_dot11_hdr_fields_valid = ath11k_hw_ipq8074_rx_desc_dot11_hdr_fields_valid,
+ 	.rx_desc_get_dot11_hdr = ath11k_hw_ipq8074_rx_desc_get_dot11_hdr,
+@@ -1427,9 +1405,7 @@ const struct ath11k_hw_ops qcn9074_ops =
+ 	.rx_desc_mpdu_start_addr2 = ath11k_hw_qcn9074_rx_desc_mpdu_start_addr2,
+ 	.get_ring_selector = ath11k_hw_ipq8074_get_tcl_ring_selector,
+ 	.rx_desc_get_hal_mpdu_len = ath11k_hw_qcn9074_rx_desc_get_hal_mpdu_len,
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 	.rx_desc_get_offset = ath11k_hw_qcn9074_rx_desc_get_offset,
+-#endif
+ 	.rx_desc_get_mpdu_frame_ctl = ath11k_hw_qcn9074_rx_desc_get_mpdu_frame_ctl,
+ 	.rx_desc_dot11_hdr_fields_valid = ath11k_hw_qcn9074_rx_desc_dot11_hdr_fields_valid,
+ 	.rx_desc_get_dot11_hdr = ath11k_hw_qcn9074_rx_desc_get_dot11_hdr,
+@@ -1558,9 +1534,7 @@ const struct ath11k_hw_ops ipq5018_ops =
+ 	.rx_desc_mpdu_start_addr2 = ath11k_hw_ipq9074_rx_desc_mpdu_start_addr2,
+ 	.get_ring_selector = ath11k_hw_ipq8074_get_tcl_ring_selector,
+ 	.rx_desc_get_hal_mpdu_len = ath11k_hw_qcn9074_rx_desc_get_hal_mpdu_len,
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 	.rx_desc_get_offset = ath11k_hw_qcn9074_rx_desc_get_offset,
+-#endif
+ 	.rx_desc_get_mpdu_frame_ctl = ath11k_hw_qcn9074_rx_desc_get_mpdu_frame_ctl,
+ 	.rx_desc_dot11_hdr_fields_valid = ath11k_hw_qcn9074_rx_desc_dot11_hdr_fields_valid,
+ 	.rx_desc_get_dot11_hdr = ath11k_hw_qcn9074_rx_desc_get_dot11_hdr,
+--- a/drivers/net/wireless/ath/ath11k/hw.h
++++ b/drivers/net/wireless/ath/ath11k/hw.h
+@@ -11,36 +11,21 @@
+ #include "wmi.h"
+ 
+ /* Target configuration defines */
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 
+-#define TARGET_NUM_VDEVS(ab)	8
+-#define TARGET_NUM_PEERS_PDEV(ab)	(128 + TARGET_NUM_VDEVS(ab))
+-/* Max num of stations (per radio) */
+-#define TARGET_NUM_STATIONS(ab)	128
+-#define ATH11K_QMI_TARGET_MEM_MODE	ATH11K_QMI_TARGET_MEM_MODE_512M
+-#define ATH11K_DP_TX_COMP_RING_SIZE	8192
+-#define ATH11K_DP_RXDMA_MON_STATUS_RING_SIZE	512
+-#define ATH11K_DP_RXDMA_MONITOR_BUF_RING_SIZE	128
+-#define ATH11K_DP_RXDMA_MONITOR_DST_RING_SIZE	128
+-#define ATH11K_DP_RXDMA_REFILL_RING_SIZE	2048
+-/* 256b desc TLV + 4b(rounded) Pad + 30byte max nwifi header +
+- * 18byte mesh hdr + 8byte snap + 1500 eth payload
++/* A hw_params entry with this fw_mem_mode takes the QMI target memory mode
++ * of the memory profile chosen at run time (ath11k_mem_profile_params in
++ * core.c); the device tree's qcom,ath11k-fw-memory-mode overrides both.
+  */
+-#define ATH11K_DP_RXDMA_NSS_REFILL_RING_SIZE	1816
+-#else
++#define ATH11K_QMI_TARGET_MEM_MODE_PROFILE	(-1)
++
+ /* Num VDEVS per radio */
+ #define TARGET_NUM_VDEVS(ab)	(ab->hw_params.num_vdevs_peers[ab->qmi.target_mem_mode].num_vdevs)
+ #define TARGET_NUM_PEERS_PDEV(ab) (ab->hw_params.num_vdevs_peers[ab->qmi.target_mem_mode].num_peers + TARGET_NUM_VDEVS(ab))
+ /* Max num of stations (per radio) */
+ #define TARGET_NUM_STATIONS(ab) (ab->hw_params.num_vdevs_peers[ab->qmi.target_mem_mode].num_peers)
+-#define ATH11K_QMI_TARGET_MEM_MODE		ATH11K_QMI_TARGET_MEM_MODE_DEFAULT
+-#define ATH11K_DP_TX_COMP_RING_SIZE		32768
+-#define ATH11K_DP_RXDMA_MON_STATUS_RING_SIZE	1024
+-#define ATH11K_DP_RXDMA_MONITOR_BUF_RING_SIZE	4096
+-#define ATH11K_DP_RXDMA_MONITOR_DST_RING_SIZE	2048
+-#define ATH11K_DP_RXDMA_REFILL_RING_SIZE	2048
+-#define ATH11K_DP_RXDMA_NSS_REFILL_RING_SIZE	2048
+-#endif
++
++/* The largest TX completion ring a profile asks for; sizes the idr bitmap */
++#define ATH11K_DP_TX_COMP_RING_SIZE_MAX		32768
+ 
+ /* Num of peers for Single Radio mode */
+ #define TARGET_NUM_PEERS_SINGLE(ab) (TARGET_NUM_PEERS_PDEV(ab))
+@@ -315,9 +300,7 @@ struct ath11k_hw_ops {
+ 	u8* (*rx_desc_mpdu_start_addr2)(struct hal_rx_desc *desc);
+ 	u32 (*get_ring_selector)(struct sk_buff *skb);
+ 	u32 (*rx_desc_get_hal_mpdu_len)(struct hal_rx_mpdu_info *mpdu_info);
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+ 	void (*rx_desc_get_offset)(struct htt_rx_ring_tlv_filter *tlv_filter);
+-#endif
+ 	u16 (*rx_desc_get_mpdu_frame_ctl)(struct hal_rx_desc *desc);
+ 	bool (*rx_desc_dot11_hdr_fields_valid)(struct hal_rx_desc *desc);
+ 	void (*rx_desc_get_dot11_hdr)(struct hal_rx_desc *desc,
+--- a/drivers/net/wireless/ath/ath11k/mac.c
++++ b/drivers/net/wireless/ath/ath11k/mac.c
+@@ -7893,7 +7893,8 @@ err:
+ 	return ret;
+ }
+ 
+-static void ath11k_mac_vif_unref(struct dp_tx_ring *tx_ring,
++static void ath11k_mac_vif_unref(struct ath11k_base *ab,
++				 struct dp_tx_ring *tx_ring,
+ 				 struct ieee80211_vif *vif)
+ {
+ 	struct ath11k_skb_cb *skb_cb;
+@@ -7902,7 +7903,7 @@ static void ath11k_mac_vif_unref(struct
+ 	if (!tx_ring->idr_pool)
+ 		return;
+ 
+-	for_each_set_bit(i, tx_ring->idrs, DP_TX_IDR_SIZE) {
++	for_each_set_bit(i, tx_ring->idrs, DP_TX_IDR_SIZE(ab)) {
+ 		skb_cb = ATH11K_SKB_CB(tx_ring->idr_pool[i].buf);
+ 		if (skb_cb->vif == vif)
+ 			skb_cb->vif = NULL;
+@@ -8044,7 +8045,7 @@ err_vdev_del:
+ 
+ 	for (i = 0; i < ab->hw_params.hal_params->num_tx_rings; i++) {
+ 		spin_lock_bh(&ab->dp.tx_ring[i].tx_idr_lock);
+-		ath11k_mac_vif_unref(&ab->dp.tx_ring[i], vif);
++		ath11k_mac_vif_unref(ab, &ab->dp.tx_ring[i], vif);
+ 		spin_unlock_bh(&ab->dp.tx_ring[i].tx_idr_lock);
+ 	}
+ 
+--- a/drivers/net/wireless/ath/ath11k/nss.c
++++ b/drivers/net/wireless/ath/ath11k/nss.c
+@@ -4630,7 +4630,7 @@ static int ath11k_nss_init(struct ath11k
+ 
+ 	/* fill rx parameters to initialize rx context */
+ 	wim->wrip.tlv_size = ab->hw_params.hal_desc_sz;
+-	wim->wrip.rx_buf_len = DP_RXDMA_NSS_REFILL_RING_SIZE;
++	wim->wrip.rx_buf_len = DP_RXDMA_NSS_REFILL_RING_SIZE(ab);
+ 	if (of_property_present(dev->of_node, "nss-radio-priority"))
+ 		wim->flags |= WIFILI_MULTISOC_THREAD_MAP_ENABLE;
+ 
+@@ -4881,7 +4881,7 @@ static int ath11k_nss_pdev_init(struct a
+ 	pdevmsg->radio_id = radio_id;
+ 	pdevmsg->lmac_id = ar->lmac_id;
+ 	pdevmsg->target_pdev_id = ar->pdev->pdev_id;
+-	pdevmsg->num_rx_swdesc = WIFILI_RX_DESC_POOL_WEIGHT * ATH11K_DP_RXDMA_BUF_RING_SIZE(ab);
++	pdevmsg->num_rx_swdesc = DP_NSS_RX_SWDESC(ab);
+ 	pdevmsg->scheme_id = scheme_id;
+ 
+ 	/* Store rxdma ring info to the message */
+--- a/drivers/net/wireless/ath/ath11k/qmi.h
++++ b/drivers/net/wireless/ath/ath11k/qmi.h
+@@ -29,11 +29,9 @@
+ #define ATH11K_QMI_BDF_EXT_STR_LENGTH		0x20
+ #define ATH11K_QMI_FW_MEM_REQ_SEGMENT_CNT	5
+ 
+-#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
+-#define ATH11K_QMI_IPQ8074_M3_DUMP_ADDRESS     0x4E800000
+-#else
+-#define ATH11K_QMI_IPQ8074_M3_DUMP_ADDRESS     0x51000000
+-#endif
++/* Not used in this tree; the 1G value and the one of the 512M profile. */
++#define ATH11K_QMI_IPQ8074_M3_DUMP_ADDRESS	0x51000000
++#define ATH11K_QMI_IPQ8074_M3_DUMP_ADDRESS_512M	0x4E800000
+ 
+ #define QMI_WLFW_REQUEST_MEM_IND_V01		0x0035
+ #define QMI_WLFW_FW_MEM_READY_IND_V01		0x0037
+--- a/local-symbols
++++ b/local-symbols
+@@ -163,8 +163,6 @@ ATH11K=
+ ATH11K_AHB=
+ ATH11K_PCI=
+ ATH11K_NSS_SUPPORT=
+-ATH11K_MEM_PROFILE_256M=
+-ATH11K_MEM_PROFILE_512M=
+ ATH11K_DEBUG=
+ ATH11K_DEBUGFS=
+ ATH11K_TRACING=

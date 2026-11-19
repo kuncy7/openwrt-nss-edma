@@ -92,8 +92,11 @@ run `sysupgrade -F` once with this board's sysupgrade image.
 Every image is built with the whole plane in: `nss-tools-dwmac`, firmware
 12.5-210 in the `std` group and 12.2-156 in the `256m` group (12.2-156 in both
 up to `ipq50xx-2026.10.14`, 12.5-210 in both up to `ipq50xx-2026.11.11`), VLAN and PPPoE managers, ath11k with the NSS patches, plus `ip-full`
-and `iperf3` for checking it. Boards come in two groups, because the ath11k and
-NSS memory profiles are a build-time choice for the whole image:
+and `iperf3` for checking it. There is no LuCI in the images:
+`apk update && apk add luci` installs it, and `apk add luci-app-nss` then adds
+Status -> NSS Offload. Like any package added later, LuCI is gone after a
+sysupgrade and has to be installed again. Boards come in two groups, because
+the ath11k and NSS memory profiles are a build-time choice for the whole image:
 
 | group | boards | memory profile |
 |---|---|---|

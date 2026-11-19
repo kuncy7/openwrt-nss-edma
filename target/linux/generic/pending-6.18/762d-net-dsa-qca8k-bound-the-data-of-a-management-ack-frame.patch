@@ -14,13 +14,14 @@ that the frame has the bytes it announces. The handler runs for every
 ack frame, whatever its sequence number.
 
 Size the buffer to what a management frame can carry, and pull the
-announced data into the linear area before reading it. A frame that
-is too short is left unacknowledged, so the read fails and the caller
-falls back to MDIO.
+announced data into the linear area before reading it. The pull can
+move the head, so take the Ethernet header again after it. A frame
+that is too short is left unacknowledged, so the read fails and the
+caller falls back to MDIO.
 
-An LLM assistant (Claude, claude-fable-5-1) helped write the change
-and this description; I reviewed both and built them with W=1 on
-arm64. The management path was exercised on a QCA8337 behind an
+An LLM assistant (Claude, claude-fable-5-1 and claude-opus-5-5) helped
+write the change and this description; I reviewed both and built them
+with W=1 on arm64. The management path was exercised on a QCA8337 behind an
 IPQ5018 (GL.iNet GL-B3000) with tag_qca.
 
 Fixes: 90386223f44e ("net: dsa: qca8k: add support for larger read/write size with mgmt Ethernet")
@@ -40,7 +41,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	u32 command;
  	u8 len, cmd;
  	int i;
-@@ -186,6 +187,17 @@ static void qca8k_rw_reg_ack_handler(str
+@@ -186,6 +187,20 @@ static void qca8k_rw_reg_ack_handler(str
  	/* We can ignore odd value, we always round up them in the alloc function. */
  	len *= sizeof(u16);
  
@@ -55,10 +56,13 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	if (data_len && !pskb_may_pull(skb, data_len))
 +		goto complete;
 +
++	/* pskb_may_pull() may have moved the head */
++	mgmt_ethhdr = (struct qca_mgmt_ethhdr *)skb_mac_header(skb);
++
  	/* Make sure the seq match the requested packet */
  	if (get_unaligned_le32(&mgmt_ethhdr->seq) == mgmt_eth_data->seq)
  		mgmt_eth_data->ack = true;
-@@ -195,13 +207,11 @@ static void qca8k_rw_reg_ack_handler(str
+@@ -195,13 +210,11 @@ static void qca8k_rw_reg_ack_handler(str
  
  		*val = get_unaligned_le32(&mgmt_ethhdr->mdio_data);
  
@@ -75,7 +79,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
  			val++;
  
-@@ -213,6 +223,7 @@ static void qca8k_rw_reg_ack_handler(str
+@@ -213,6 +226,7 @@ static void qca8k_rw_reg_ack_handler(str
  		}
  	}
  

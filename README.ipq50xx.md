@@ -1040,21 +1040,26 @@ OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the bran
   shrinks the host TX and CE allocations of IPQ5018 and QCN6122 radios
   under the NSS offload.
 
-  `NSS_MEM_PROFILE_LOW` stays a build-time choice of the `qca-nss-drv`
-  package in the feed (anything else hands the firmware an 8192-entry
-  empty-buffer pool: 35 MB of kmalloc-4k before the first packet), which
-  is why the `256m` group exists. Its default keys on the **profile**
-  symbol (`CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2=y`),
-  not on the per-device checkbox of a multi-device image
-  (`CONFIG_TARGET_DEVICE_...`): an image that includes a 256 MB board
-  next to 512 MB ones has to pick LOW itself, and its other members then
-  pay for it in connection-table size. A board has to be named in the
-  feed's `Config.in` for the default; the EX511 v2 and the Cudy P5 are,
-  the AX3000T v2 is named in kuncy7/nss-packages#4, which is not merged
-  yet. The firmware version of this group is 12.2-156
-  (`NSS_FIRMWARE_VERSION_12_2` in `256m.config`; the feed's default is 12.5):
-  12.5-210 ran on 256 MB boards from 15 October 2026 to `ipq50xx-2026.11.11`
-  and keeps payload buffers with some 802.11ac clients, see *Firmware*.
+  `qca-nss-drv` picks its profile at run time as well (feed patch `0153`):
+  low when the kernel manages less than 384 MB, the build's profile
+  (`NSS_MEM_PROFILE_MEDIUM` in the release groups' `std`, `_LOW` in `256m`)
+  otherwise, or what its `mem_profile` parameter says (1 high, 2 medium,
+  3 low). Low matters on a 256 MB board: anything else hands the firmware
+  an 8192-entry empty-buffer pool, 35 MB of kmalloc-4k before the first
+  packet. The driver logs the choice when it boots the core:
+
+  ```
+  nss_driver: memory profile medium (the build's default, 413 MB): 2048 connections per IP family, 4096 in all
+  ```
+
+  `nss.general.mem_profile` covers both drivers: `256m` is low here,
+  `512m` and `1g` medium. An image built medium therefore no longer has to
+  be rebuilt for a 256 MB board, and a multi-device image that includes
+  one does not make its 512 MB members pay in connection-table size. The
+  same holds for the firmware: `nss.general.firmware=auto` boots 12.2-156
+  below 384 MB (12.5-210 keeps payload buffers with some 802.11ac clients,
+  see *Firmware*). The `256m` release group still exists, for its board
+  list and because it is built without the 802.11s mesh offload.
   `qcom,ath11k-fw-memory-mode = <2>` on both radios is in the DTS.
 
 Result: ~850 / ~740 Mbit/s on 5 GHz with 4 streams (stock: 843 / 906),

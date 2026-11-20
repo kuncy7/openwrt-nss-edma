@@ -73,6 +73,28 @@ nss_fw_select() {
 	return 0
 }
 
+# Hand nss.general.mem_profile to qca-nss-drv (feed patch 0153): 256m is its
+# low profile, 512m and 1g its medium one, auto (or unset) leaves the choice to
+# the driver - low below 384 MB of RAM, the build's profile otherwise. The
+# driver takes the parameter when it boots the core, so call this after the
+# module is loaded and before the first port is armed. Never fails.
+nss_drv_mem_profile() {
+	local want n knob=/sys/module/qca_nss_drv/parameters/mem_profile
+
+	want="$(uci -q get nss.general.mem_profile)" || want=''
+	case "$want" in
+	256m|256M) n=3 ;;
+	512m|512M|1g|1G) n=2 ;;
+	*) n=0 ;;
+	esac
+	if [ -w "$knob" ]; then
+		echo "$n" > "$knob" 2>/dev/null || true
+	elif [ "$n" != 0 ]; then
+		logger -p user.warn -t nss "nss.general.mem_profile=$want: this qca-nss-drv has no mem_profile parameter - ignored"
+	fi
+	return 0
+}
+
 # Hand nss.general.mem_profile to ath11k: auto (or unset) leaves the choice to
 # the driver, which goes by the RAM size; 1g, 512m and 256m force a row of its
 # table. Call between 'modprobe ath11k' and the bus modules - the profile is

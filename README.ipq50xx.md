@@ -89,6 +89,18 @@ place like the others. Images built before in-place upgrades were allowed
 refuse one: on those, check that `sysupgrade -T` shows only that refusal, then
 run `sysupgrade -F` once with this board's sysupgrade image.
 
+The TP-Link Archer AX55 v1 also gets
+`openwrt-qualcommax-ipq50xx-tplink_archer-ax55-v1-initramfs-factory.ubi`, in the
+`std` group. Units with the RTL8367S-VB switch have no wired network on an image
+without its driver, the official one included, and this build has it. The file
+is a UBI image with one volume, the kernel, and the root filesystem inside it, so
+the boot loader starts it like any installed system and it then runs from RAM:
+nothing it changes is kept. Written from a root shell on stock to the rootfs
+slot that did not boot, with the boot flag switched to it (the steps are in
+https://github.com/kuncy7/openwrt-ax55-v1), it gives a running OpenWrt from which
+the sysupgrade image installs this tree for good. Not tried here on a VB unit;
+our own AX55 has the older RTL8367S.
+
 Every image is built with the whole plane in: `nss-tools-dwmac`, firmware
 12.5-210 in the `std` group and 12.2-156 in the `256m` group (12.2-156 in both
 up to `ipq50xx-2026.10.14`, 12.5-210 in both up to `ipq50xx-2026.11.11`), VLAN and PPPoE managers, ath11k with the NSS patches, plus `ip-full`

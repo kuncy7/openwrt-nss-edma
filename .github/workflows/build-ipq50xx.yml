@@ -5,9 +5,11 @@ name: Build ipq50xx
 #   draft release -> build std + build 256m -> kmod repositories (gh-pages) -> publish -> prune
 #
 # Images go to a GitHub release tagged ipq50xx-YYYY.MM.DD. Sysupgrade only: a board is
-# expected to run OpenWrt already. The one exception is the 256m group, which also publishes
-# initramfs-factory.ubi for the Xiaomi AX3000T v2: its first install from stock runs from a
-# RAM-booted initramfs, and an installed system can write this image to boot one without UART.
+# expected to run OpenWrt already. The exceptions publish initramfs-factory.ubi: the Xiaomi
+# AX3000T v2 in the 256m group, whose first install from stock runs from a RAM-booted
+# initramfs, and the TP-Link Archer AX55 v1 in the std group, whose units with the
+# RTL8367S-VB switch have no wired network on an image without its driver. An image of this
+# build written to the inactive UBI slot from a root shell on stock boots one without UART.
 # Upgrades of an installed board are ordinary sysupgrades. The H3C Magic boards (BX54 EU in
 # std, NX30 and RC3000 in 256m) also get their factory images, for the first install from
 # the stock web UI.
@@ -338,7 +340,8 @@ jobs:
           set -euo pipefail
           out="bin/targets/${TARGET}"
           # initramfs-factory.ubi only where a board uses it for its first install: the Xiaomi
-          # AX3000T v2. Other boards build one too (the Archer AX53/AX58 v2), but install otherwise.
+          # AX3000T v2 and the Archer AX55 v1 (RTL8367S-VB units). Other boards build one too
+          # (the Archer AX53/AX58 v2), but install otherwise.
           names=(-name 'openwrt-*-squashfs-sysupgrade.bin'); sums='sysupgrade\.bin'
           # The H3C Magic boards install from the stock web UI with a factory image (one per
           # stock model name on the RC3000s), in both groups.
@@ -347,6 +350,9 @@ jobs:
           if [[ "$GROUP" == 256m ]]; then
             names+=(-o -name 'openwrt-*-xiaomi_mi-router-ax3000t-v2-initramfs-factory.ubi')
             sums+='|xiaomi_mi-router-ax3000t-v2-initramfs-factory\.ubi'
+          else
+            names+=(-o -name 'openwrt-*-tplink_archer-ax55-v1-initramfs-factory.ubi')
+            sums+='|tplink_archer-ax55-v1-initramfs-factory\.ubi'
           fi
           mapfile -t assets < <(find "$out" -maxdepth 1 -type f \( "${names[@]}" \))
           grep -E "$sums" "$out/sha256sums" >"sha256sums-${GROUP}.txt"

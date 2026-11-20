@@ -1,0 +1,43 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Subject: [PATCH] wifi: ath11k: nss: read the peer stats in the running firmware's layout
+
+The NSS firmware lines differ in the size of a per-peer entry of the
+wifili peer statistics message: 212 bytes on 12.5, 196 on 12.2, which
+leaves two rx and two retry counters out. Indexing wpcs[] with the
+layout the module was built for reads every entry after the first from
+the wrong place on the other line: the peer is not found and the
+station counters of the Wi-Fi offload stay at 0.
+
+qca-nss-drv knows which line it loaded and offers
+nss_wifili_peer_ctrl_stats_get(), which copies an entry into the layout
+of the header and zeroes what that firmware does not report. Walk the
+message with it, so one module serves both lines.
+
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+---
+--- a/drivers/net/wireless/ath/ath11k/nss.c
++++ b/drivers/net/wireless/ath/ath11k/nss.c
+@@ -143,7 +143,8 @@ exit:
+ static void ath11k_nss_get_peer_stats(struct ath11k_base *ab, struct nss_wifili_peer_stats *stats)
+ {
+ 	struct ath11k_peer *peer;
+-	struct nss_wifili_peer_ctrl_stats *pstats = NULL;
++	struct nss_wifili_peer_ctrl_stats entry;
++	struct nss_wifili_peer_ctrl_stats *pstats = &entry;
+ 	int i, j, i2;
+ 	u64 tx_packets, tx_bytes, tx_dropped;
+ 	u64 rx_packets, rx_bytes, rx_dropped;
+@@ -152,7 +153,12 @@ static void ath11k_nss_get_peer_stats(st
+ 		return;
+ 
+ 	for (i = 0; i < stats->npeers; i++) {
+-		pstats = &stats->wpcs[i];
++		/* The size of an entry depends on the firmware line that is
++		 * running (12.2 writes shorter ones), so wpcs[i] is not
++		 * where entry i is: qca-nss-drv knows the line and hands
++		 * each entry over in the layout of the header.
++		 */
++		nss_wifili_peer_ctrl_stats_get(stats, i, &entry);
+ 		tx_dropped = 0;
+ 
+ 		rcu_read_lock();

@@ -66,7 +66,7 @@ index f71dc02..7d59ed7 100644
 +			 stats.tx_failed_retries);
 +	len += scnprintf(buf + len, size - len, "tx_multiple_retries %u\n",
 +			 stats.tx_multiple_retries);
-+#ifdef NSS_FIRMWARE_VERSION_12_5
++#ifndef NSS_FIRMWARE_VERSION_11_4
 +	len += scnprintf(buf + len, size - len, "tx_mpdu_retries %u\n",
 +			 stats.tx_mpdu_retries);
 +	len += scnprintf(buf + len, size - len, "tx_mpdu_total_retries %u\n",
@@ -120,7 +120,7 @@ index 6d906bc..66a49d3 100644
 +		peer->nss.nss_stats->tx_amsdu += pstats->tx.amsdu_cnt;
 +		peer->nss.nss_stats->tx_non_amsdu += pstats->tx.non_amsdu_cnt;
 +		peer->nss.nss_stats->tx_ofdma += pstats->tx.ofdma;
-+#ifdef NSS_FIRMWARE_VERSION_12_5
++#ifndef NSS_FIRMWARE_VERSION_11_4
 +		peer->nss.nss_stats->tx_failed_retries +=
 +			pstats->retry.tx_failed_retry_count;
 +		peer->nss.nss_stats->tx_multiple_retries +=
@@ -132,7 +132,7 @@ index 6d906bc..66a49d3 100644
 +#endif
 +		peer->nss.nss_stats->rx_amsdu += pstats->rx.amsdu_cnt;
 +		peer->nss.nss_stats->rx_non_amsdu += pstats->rx.non_amsdu_cnt;
-+#ifdef NSS_FIRMWARE_VERSION_12_5
++#ifndef NSS_FIRMWARE_VERSION_11_4
 +		peer->nss.nss_stats->rx_retries += pstats->retry.rx_retry_count;
 +#endif
 +		peer->nss.nss_stats->rx_intra_bss += pstats->rx.rx_intra_bss_pkts_num;

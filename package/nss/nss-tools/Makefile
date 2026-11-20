@@ -6,7 +6,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=nss-tools
-PKG_RELEASE:=21
+PKG_RELEASE:=22
 
 include $(INCLUDE_DIR)/package.mk
 

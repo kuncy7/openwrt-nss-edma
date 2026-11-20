@@ -311,24 +311,23 @@ GL-B3000 and the Archer AX55 v1 the two carry the same routed, bridged and
 802.11s mesh traffic at the same speed. The feed defaults to 12.5; a `.config`
 of your own that already names a version keeps it.
 
-**Build for the firmware you run.** The two lay out the Wi-Fi peer statistics
-differently (196 against 212 bytes per entry), and `qca-nss-drv` is built for
-one of them: a 12.5 firmware file dropped onto a 12.2 build (or the other way
-round) carries traffic, but the Wi-Fi counters - `ip -s link` of the radio
-interfaces, `iw ... station dump` - stay at zero.
+**One image, either firmware.** The two lay out the Wi-Fi peer statistics
+differently (196 against 212 bytes per entry). `qca-nss-drv` reads the line
+from the version string of the file it loads and hands ath11k each entry in
+one layout (feed patches `0151` and `0152`, `nss-extra/ath11k/999-9973`), so
+this is not a build-time matter any more; the counters a 12.2 firmware does
+not report read 0.
 
 The images carry both files, `/lib/firmware/qca-nss0-retail-12.5.bin` and
 `-12.2.bin` (`NSS_FIRMWARE_IPQ50XX_BOTH` of the `nss-firmware` package, on by
 default; 0.8 MB each), and `qca-nss0-retail.bin` is a link to the one the
 image was built for. `nss.general.firmware` (`auto`, `12.5`, `12.2`) names the
-one the core boots; unset or `auto` is the build's own. The service writes
-it to the `firmware` parameter of `qca-nss-drv` (feed patch `0151`) before
-the first port is armed, and the driver then loads
-`qca-nss0-retail-<line>.bin` and logs the version it found in the file
-(`/sys/module/qca_nss_drv/parameters/firmware_line`: 1205 or 1202); a change
-takes a reboot. Until the host side reads the statistics layout from the
-running firmware, the paragraph above still holds for the other line, and the
-service logs a warning when it is chosen:
+one the core boots. Unset or `auto` is 12.2 on a board with less than 384 MB
+of RAM and the build's own everywhere else. The service writes it to the
+`firmware` parameter of `qca-nss-drv` before the first port is armed, and the
+driver then loads `qca-nss0-retail-<line>.bin` and logs the version it found
+in the file (`/sys/module/qca_nss_drv/parameters/firmware_line`: 1205 or
+1202); a change takes a reboot:
 
 ```
 uci set nss.general.firmware='12.2'; uci commit nss; reboot

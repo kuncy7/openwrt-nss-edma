@@ -22,16 +22,19 @@ nss_fw_version() {
 # Pick the firmware line the core boots: nss.general.firmware = auto (or
 # unset), 12.5 or 12.2. An image carries the lines as
 # qca-nss0-retail-<line>.bin (nss-firmware, NSS_FIRMWARE_IPQ50XX_BOTH), with
-# qca-nss0-retail.bin a link to the one it was built for; 'auto' is that one.
+# qca-nss0-retail.bin a link to the one it was built for. 'auto' is 12.2 on
+# a board with less than 384 MB of RAM - with 12.5 some 802.11ac clients leave
+# payload buffers in the firmware, which the small pool of such a board cannot
+# afford (#64) - and the build's line everywhere else.
 # The line goes to qca-nss-drv's 'firmware' parameter (feed patch 0151), which
 # the driver reads when the first port is armed - so call this after the
 # module is loaded and before the arm. Nothing is written to flash.
-# The host side is still built for one line: on the other one the Wi-Fi peer
-# statistics are laid out differently, hence the warning.
+# The host side follows the line that was loaded (feed patch 0152), so one
+# image runs either.
 # Sets NSS_FW_LINE to the line asked for, empty when the driver keeps its own
 # name (qca-nss0.bin).
 nss_fw_select() {
-	local want built knob=/sys/module/qca_nss_drv/parameters/firmware
+	local want built mem knob=/sys/module/qca_nss_drv/parameters/firmware
 
 	NSS_FW_LINE=''
 	built="$(readlink /lib/firmware/qca-nss0-retail.bin)" || built=''
@@ -42,6 +45,9 @@ nss_fw_select() {
 	case "$want" in
 	''|auto)
 		want="$built"
+		mem="$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)" || mem=''
+		[ -n "$mem" ] && [ "$mem" -lt 393216 ] &&
+			[ -e /lib/firmware/qca-nss0-retail-12.2.bin ] && want=12.2
 		;;
 	12.2|12.5)
 		;;
@@ -64,8 +70,6 @@ nss_fw_select() {
 	fi
 	printf %s "$want" > "$knob" 2>/dev/null || return 0
 	NSS_FW_LINE="$want"
-	[ -z "$built" ] || [ "$want" = "$built" ] ||
-		logger -p user.warn -t nss "firmware $want chosen in uci, the image was built for $built: Wi-Fi peer statistics under offload may be wrong"
 	return 0
 }
 

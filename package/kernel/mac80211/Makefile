@@ -12,7 +12,7 @@ PKG_NAME:=mac80211
 
 PKG_SOURCE_VERSION:=7.2
 PKG_VERSION:=$(subst -,_,$(PKG_SOURCE_VERSION))
-PKG_RELEASE:=15
+PKG_RELEASE:=16
 PKG_LICENSE:=GPL-2.0-only
 PKG_LICENSE_FILES:=COPYING
 
@@ -38,7 +38,6 @@ PKG_CONFIG_DEPENDS:= \
 	CONFIG_PACKAGE_MAC80211_MESH \
 	CONFIG_PACKAGE_MAC80211_TRACING \
 	CONFIG_PACKAGE_MAC80211_NSS_SUPPORT \
-	CONFIG_NSS_FIRMWARE_VERSION_12_2 \
 	CONFIG_PACKAGE_IWLWIFI_DEBUG \
 	CONFIG_PACKAGE_IWLWIFI_DEBUGFS \
 	CONFIG_PACKAGE_RTLWIFI_DEBUG \
@@ -327,12 +326,13 @@ ifdef CONFIG_ATH11K_NSS_SUPPORT
   # ath11k NSS patches key the differing decode paths on
   # CONFIG_NSS_FIRMWARE_VERSION_11_4, which kbuild does not export to
   # external modules, so pass it explicitly.
-  # The qca-nss-drv export headers gate NSS firmware-version dependent
-  # struct fields on the UNPREFIXED NSS_FIRMWARE_VERSION_* macros (the drv
-  # itself builds with them). ath11k must see the same definitions or the
-  # shared wifili message layouts (e.g. the per-peer stats array stride)
-  # silently diverge from what the driver and firmware fill.
-  MAKE_OPTS += CFLAGS="-I$(STAGING_DIR)/usr/include/qca-nss-drv$(if $(CONFIG_ATH11K_NSS_MESH_SUPPORT), -I$(STAGING_DIR)/usr/include/qca-nss-clients)$(if $(CONFIG_NSS_FIRMWARE_VERSION_11_4), -DCONFIG_NSS_FIRMWARE_VERSION_11_4 -DNSS_FIRMWARE_VERSION_11_4)$(if $(CONFIG_NSS_FIRMWARE_VERSION_12_5), -DNSS_FIRMWARE_VERSION_12_5)$(if $(CONFIG_NSS_FIRMWARE_VERSION_12_2), -DNSS_FIRMWARE_VERSION_12_2)"
+  # The qca-nss-drv export headers gate the struct fields the 11.4 firmware
+  # lacks on the UNPREFIXED NSS_FIRMWARE_VERSION_11_4 macro (the drv itself
+  # builds with it), so ath11k must see the same definition. 12.5 against
+  # 12.2 is not a build-time matter any more: the drv reads the line from
+  # the firmware it loaded and ath11k walks the per-peer stats through
+  # nss_wifili_peer_ctrl_stats_get() (nss-extra/ath11k/999-9973).
+  MAKE_OPTS += CFLAGS="-I$(STAGING_DIR)/usr/include/qca-nss-drv$(if $(CONFIG_ATH11K_NSS_MESH_SUPPORT), -I$(STAGING_DIR)/usr/include/qca-nss-clients)$(if $(CONFIG_NSS_FIRMWARE_VERSION_11_4), -DCONFIG_NSS_FIRMWARE_VERSION_11_4 -DNSS_FIRMWARE_VERSION_11_4)"
 endif
 
 define ConfigVars

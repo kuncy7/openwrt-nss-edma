@@ -108,12 +108,15 @@ and `iperf3` for checking it. There is no LuCI in the images:
 `apk update && apk add luci` installs it, and `apk add luci-app-nss` then adds
 Status -> NSS Offload. Like any package added later, LuCI is gone after a
 sysupgrade and has to be installed again. Boards come in two groups, because
-the ath11k and NSS memory profiles are a build-time choice for the whole image:
+the NSS firmware version and the NSS memory profile are a build-time choice for
+the whole image (the `std` group also carries the 802.11s mesh offload). ath11k
+picks its own memory profile when a radio probes, from the RAM size (see
+*Memory profiles* under *256 MB boards*), so the same driver serves both groups:
 
 | group | boards | memory profile |
 |---|---|---|
-| `std` | 512 MB and 1 GB boards (the release notes list them) | ath11k 1G, NSS medium |
-| `256m` | Cudy P5, H3C Magic NX30, H3C Magic RC3000 v1, v2 and v3, Ruijie RG-MA3063, TP-Link Archer AX53 v2, TP-Link Archer AX58 v2, TP-Link EX511 v2, Xiaomi CR8806 (also CR8808, CR8809, Redmi AX3000), Xiaomi Redmi AX3000 (single rootfs layout), Xiaomi Mi Router AX3000T v2 | ath11k 256M, NSS low |
+| `std` | 512 MB and 1 GB boards (the release notes list them) | ath11k 1G (picked at boot), NSS medium |
+| `256m` | Cudy P5, H3C Magic NX30, H3C Magic RC3000 v1, v2 and v3, Ruijie RG-MA3063, TP-Link Archer AX53 v2, TP-Link Archer AX58 v2, TP-Link EX511 v2, Xiaomi CR8806 (also CR8808, CR8809, Redmi AX3000), Xiaomi Redmi AX3000 (single rootfs layout), Xiaomi Mi Router AX3000T v2 | ath11k 256M (picked at boot), NSS low |
 
 The exact configuration of each group is in `.github/ci/ipq50xx/` (`common.config`
 + `<group>.config` + `kmods-extra.config`) and, for a given release, in the
@@ -993,39 +996,46 @@ OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the bran
 - **`coherent_pool=512K`** in the board DTS instead of the 2M every other
   board passes - only safe together with patch `0828` below. 2M costs
   three pools of 2 MiB, one of which doubles itself: 8 MiB.
-- **Memory profiles.** `NSS_MEM_PROFILE_LOW` (anything else hands the
-  firmware an 8192-entry empty-buffer pool: 35 MB of kmalloc-4k before the
-  first packet) and `ATH11K_MEM_PROFILE_256M`. The 256M choice used to be a
-  dead symbol - nothing in the ath11k patches branched on it, so it gave
-  the *largest* rings; it now means the 512M profile plus smaller RXDMA
-  rings (`DP_RXDMA_BUF_RING_SIZE` 512, which also sizes the NSS Wi-Fi RX
-  descriptor pool), and 512M/1G builds are untouched by that. Both Kconfig
-  choices default to these values in a single-device build of a board named
-  in their conditions, so no menuconfig visit is needed there. Two things
-  about that are easy to get wrong, and both cost real memory silently:
+- **Memory profiles.** ath11k picks its host memory profile - the data path
+  ring sizes and whether the rx descriptor carries the rx header TLV - when
+  a radio probes (`nss-extra/ath11k/999-998`), from the RAM the kernel
+  manages: below 384 MB the 256M profile, the 512M one with smaller RXDMA
+  rings (`DP_RXDMA_BUF_RING_SIZE` 512, 1024 on the QCN6122) and a smaller
+  RX descriptor pool for the NSS Wi-Fi datapath; otherwise 1G. The log
+  says which, once per radio (here a GL-B3000 with 512 MB):
 
-  - The default keys on the **profile** symbol
-    (`CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2=y`), not on
-    the per-device checkbox of a multi-device image
-    (`CONFIG_TARGET_DEVICE_...`). A multi-device image shares one profile
-    across all its boards, so the defaults deliberately leave it alone: an
-    image that includes a 256 MB board next to 512 MB ones has to pick LOW
-    / 256M itself, and its other members then pay for it in Wi-Fi RX
-    descriptors and connection-table size.
-  - `ATH11K_MEM_PROFILE_256M` lives in `package/kernel/mac80211/ath.mk`,
-    which the package Makefile pulls in with `include`. The metadata scan
-    keys on the package's own `Makefile`, so editing `ath.mk` does **not**
-    invalidate `tmp/info/.packageinfo-kernel_mac80211`: `make defconfig`
-    then rebuilds `tmp/.packageinfo` from the stale cache, the new
-    `default ... if ...` line never reaches Kconfig, and the old profile is
-    selected with nothing in the output to say so. `rm -rf tmp/info` before
-    `make prepare-tmpinfo` after touching any included `.mk`, and check
-    that the cache file is newer than the file you edited.
-    `NSS_MEM_PROFILE_LOW` is not in this tree at all - it is a choice in
-    the `qca-nss-drv` package of the feed, so a board has to be named in
-    both places - the EX511 v2 and the Cudy P5 are, in both; the AX3000T v2
-    is named here and in kuncy7/nss-packages#4, which is not merged yet. The
-    firmware version of this group is 12.2-156
+  ```
+  ath11k c000000.wifi: memory profile 1G (from the RAM size, 413 MB), rx descriptor full
+  ```
+
+  The `mem_profile` module parameter overrides the choice (1 1G, 2 512M,
+  3 256M; 0, the default, picks from the RAM size). The 512M profile is
+  only reached that way: it leaves the rx header TLV out on every radio,
+  and the PCIe radios on the 512 MB boards have not run with that, so no
+  board gets it on its own. There is no uci option for it yet. ath11k
+  reads the parameter when a radio probes, so it has to be written to
+  `/sys/module/ath11k/parameters/mem_profile` between `modprobe ath11k`
+  and `modprobe ath11k_ahb`; with the Wi-Fi offload on, that is
+  `wifi_load_now()` in `/usr/sbin/nss-dwmac-up`, not `wifi_load()` in
+  `/etc/init.d/nss`. Measured on a GL-B3000 (512 MB, NSS medium, both
+  radios, 180 s after boot): about 40 MB more free memory with 512M and
+  70 MB with 256M than with 1G. `ATH11K_NSS_MEM_PROFILE_256M` is still a
+  build option (off in the releases): on top of the 256M profile it
+  shrinks the host TX and CE allocations of IPQ5018 and QCN6122 radios
+  under the NSS offload.
+
+  `NSS_MEM_PROFILE_LOW` stays a build-time choice of the `qca-nss-drv`
+  package in the feed (anything else hands the firmware an 8192-entry
+  empty-buffer pool: 35 MB of kmalloc-4k before the first packet), which
+  is why the `256m` group exists. Its default keys on the **profile**
+  symbol (`CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_tplink_ex511-v2=y`),
+  not on the per-device checkbox of a multi-device image
+  (`CONFIG_TARGET_DEVICE_...`): an image that includes a 256 MB board
+  next to 512 MB ones has to pick LOW itself, and its other members then
+  pay for it in connection-table size. A board has to be named in the
+  feed's `Config.in` for the default; the EX511 v2 and the Cudy P5 are,
+  the AX3000T v2 is named in kuncy7/nss-packages#4, which is not merged
+  yet. The firmware version of this group is 12.2-156
   (`NSS_FIRMWARE_VERSION_12_2` in `256m.config`; the feed's default is 12.5):
   12.5-210 ran on 256 MB boards from 15 October 2026 to `ipq50xx-2026.11.11`
   and keeps payload buffers with some 802.11ac clients, see *Firmware*.

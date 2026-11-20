@@ -48,6 +48,7 @@ wifi_load() {
 	# completes (measured on a GL-B3000). Same mode on the host path,
 	# as these boards have always run it.
 	[ -w $FRAMEMODE ] && echo 2 > $FRAMEMODE
+	type nss_ath11k_mem_profile >/dev/null 2>&1 && nss_ath11k_mem_profile
 	# No pbuf tuning here: the NSS core is not up at this point in boot, so
 	# the driver refuses the sysctl with -EAGAIN (feed patch 0142) and the
 	# pools would silently stay at their defaults. nss-dwmac-up sizes them
@@ -309,6 +310,11 @@ start_service() {
 		;;
 	esac
 	modprobe qca-nss-drv 2>/dev/null
+	# The firmware file is read when nss-dwmac-up arms the first port, so
+	# the line picked in uci is handed to the driver here.
+	nss_fw_select
+	[ -z "$NSS_FW_LINE" ] ||
+		logger -t nss "NSS firmware: $(nss_fw_version) (line $NSS_FW_LINE)"
 	# The NSS qdiscs and the IGS action depend on qca-nss-drv, so they must
 	# not sit in /etc/modules.d: kmodloader would pull the driver in at
 	# boot, before any port is armed. Load them here instead, once the

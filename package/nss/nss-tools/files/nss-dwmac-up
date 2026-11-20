@@ -147,6 +147,8 @@ wifi_load_now() {
   if [ -w /sys/module/ath11k/parameters/frame_mode ]; then
     echo 2 > /sys/module/ath11k/parameters/frame_mode 2>/dev/null || true
   fi
+  # nss.general.mem_profile, before the radios probe (they read it then).
+  nss_ath11k_mem_profile
   # Pools before the radios bind: each offloaded radio pins ~4096 payloads in
   # its RXDMA ring out of the shared N2H pool (E177). Only on the armed path -
   # this function also runs after a failed takeover, where there is no core to

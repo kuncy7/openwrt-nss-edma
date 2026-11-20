@@ -317,6 +317,23 @@ one of them: a 12.5 firmware file dropped onto a 12.2 build (or the other way
 round) carries traffic, but the Wi-Fi counters - `ip -s link` of the radio
 interfaces, `iw ... station dump` - stay at zero.
 
+The images carry both files, `/lib/firmware/qca-nss0-retail-12.5.bin` and
+`-12.2.bin` (`NSS_FIRMWARE_IPQ50XX_BOTH` of the `nss-firmware` package, on by
+default; 0.8 MB each), and `qca-nss0-retail.bin` is a link to the one the
+image was built for. `nss.general.firmware` (`auto`, `12.5`, `12.2`) names the
+one the core boots; unset or `auto` is the build's own. The service writes
+it to the `firmware` parameter of `qca-nss-drv` (feed patch `0151`) before
+the first port is armed, and the driver then loads
+`qca-nss0-retail-<line>.bin` and logs the version it found in the file
+(`/sys/module/qca_nss_drv/parameters/firmware_line`: 1205 or 1202); a change
+takes a reboot. Until the host side reads the statistics layout from the
+running firmware, the paragraph above still holds for the other line, and the
+service logs a warning when it is chosen:
+
+```
+uci set nss.general.firmware='12.2'; uci commit nss; reboot
+```
+
 - **12.5-210-MP** runs: on a GL-B3000 it brought both radios up on the
   offload, carried routed and Wi-Fi<->LAN TCP through the firmware and came
   through a cold boot (23 September 2026), and accelerated the bridged traffic
@@ -1012,12 +1029,12 @@ OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the bran
   3 256M; 0, the default, picks from the RAM size). The 512M profile is
   only reached that way: it leaves the rx header TLV out on every radio,
   and the PCIe radios on the 512 MB boards have not run with that, so no
-  board gets it on its own. There is no uci option for it yet. ath11k
-  reads the parameter when a radio probes, so it has to be written to
+  board gets it on its own. In uci it is `nss.general.mem_profile`
+  (`auto`, `1g`, `512m`, `256m`; unset is `auto`), read at boot: ath11k
+  takes the parameter when a radio probes, so the service writes it to
   `/sys/module/ath11k/parameters/mem_profile` between `modprobe ath11k`
-  and `modprobe ath11k_ahb`; with the Wi-Fi offload on, that is
-  `wifi_load_now()` in `/usr/sbin/nss-dwmac-up`, not `wifi_load()` in
-  `/etc/init.d/nss`. Measured on a GL-B3000 (512 MB, NSS medium, both
+  and `modprobe ath11k_ahb` (`nss_ath11k_mem_profile` in
+  `/lib/nss/functions.sh`), and a change needs a reboot. Measured on a GL-B3000 (512 MB, NSS medium, both
   radios, 180 s after boot): about 40 MB more free memory with 512M and
   70 MB with 256M than with 1G. `ATH11K_NSS_MEM_PROFILE_256M` is still a
   build option (off in the releases): on top of the 256M profile it

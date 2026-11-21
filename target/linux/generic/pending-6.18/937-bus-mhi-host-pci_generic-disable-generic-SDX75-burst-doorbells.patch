@@ -1,0 +1,105 @@
+From: Georg Seema <georgseema@gmail.com>
+Subject: [PATCH] bus: mhi: host: pci_generic: disable generic SDX75 burst doorbells
+
+An RM551E-GL using the generic SDX75 profile can stop receiving under
+load while transmit completions and control remain active. Restarting
+the hardware data channel restores traffic. Local non-burst testing on
+channels 100/101 avoids the observed receive stall.
+
+Use the non-burst hardware-channel macro introduced for RM500Q-AE to
+build a dedicated generic SDX75 channel table. Preserve channel names,
+ring sizes, event assignments and controller timeouts. Keep the shared
+SDX55/SDX65 channel table and vendor-specific profiles unchanged.
+
+The RM551 reports 17cb:0309 with subsystem 17cb:0309, so this selects
+all devices using the generic SDX75 profile, not an RM551-only match.
+The static-table version was tested on RM551E-GL on Cudy P5 with speed
+tests and 4K YouTube playback. Both hardware channels report non-burst
+mode. Other SDX75 models were not part of this hardware test. The separate
+NSS GRO forwarding fix is still needed.
+
+Signed-off-by: Georg Seema <georgseema@gmail.com>
+---
+ drivers/bus/mhi/host/pci_generic.c | 52 lines changed
+ 1 file changed, 35 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/bus/mhi/host/pci_generic.c b/drivers/bus/mhi/host/pci_generic.c
+--- a/drivers/bus/mhi/host/pci_generic.c
++++ b/drivers/bus/mhi/host/pci_generic.c
+@@ -137,6 +137,21 @@
+ 		.doorbell_mode_switch = true,		\
+ 	}
+ 
++#define MHI_CHANNEL_CONFIG_HW_NOBRST(ch_num, ch_name, el_count, ev_ring, d) \
++	{						\
++		.num = ch_num,				\
++		.name = ch_name,			\
++		.num_elements = el_count,		\
++		.event_ring = ev_ring,			\
++		.dir = d,				\
++		.ee_mask = BIT(MHI_EE_AMSS),		\
++		.pollcfg = 0,				\
++		.doorbell = MHI_DB_BRST_DISABLE,	\
++		.lpm_notify = false,			\
++		.offload_channel = false,		\
++		.doorbell_mode_switch = false,		\
++	}
++
+ #define MHI_CHANNEL_CONFIG_UL_SBL(ch_num, ch_name, el_count, ev_ring) \
+ 	{						\
+ 		.num = ch_num,				\
+@@ -344,12 +359,30 @@
+ 	.event_cfg = mhi_qcom_sa8775p_events,
+ };
+ 
++/* Keep generic SDX75 hardware-channel doorbells outside burst mode. */
++static const struct mhi_channel_config mhi_qcom_sdx75_channels[] = {
++	MHI_CHANNEL_CONFIG_UL(4, "DIAG", 16, 1),
++	MHI_CHANNEL_CONFIG_DL(5, "DIAG", 16, 1),
++	MHI_CHANNEL_CONFIG_UL(12, "MBIM", 4, 0),
++	MHI_CHANNEL_CONFIG_DL(13, "MBIM", 4, 0),
++	MHI_CHANNEL_CONFIG_UL(14, "QMI", 4, 0),
++	MHI_CHANNEL_CONFIG_DL(15, "QMI", 4, 0),
++	MHI_CHANNEL_CONFIG_UL(20, "IPCR", 8, 0),
++	MHI_CHANNEL_CONFIG_DL(21, "IPCR", 8, 0),
++	MHI_CHANNEL_CONFIG_UL_FP(34, "FIREHOSE", 32, 0),
++	MHI_CHANNEL_CONFIG_DL_FP(35, "FIREHOSE", 32, 0),
++	MHI_CHANNEL_CONFIG_UL(46, "IP_SW0", 64, 2),
++	MHI_CHANNEL_CONFIG_DL(47, "IP_SW0", 64, 3),
++	MHI_CHANNEL_CONFIG_HW_NOBRST(100, "IP_HW0", 128, 4, DMA_TO_DEVICE),
++	MHI_CHANNEL_CONFIG_HW_NOBRST(101, "IP_HW0", 128, 5, DMA_FROM_DEVICE),
++};
++
+ static const struct mhi_controller_config modem_qcom_v2_mhiv_config = {
+ 	.max_channels = 128,
+ 	.timeout_ms = 8000,
+ 	.ready_timeout_ms = 50000,
+-	.num_channels = ARRAY_SIZE(modem_qcom_v1_mhi_channels),
+-	.ch_cfg = modem_qcom_v1_mhi_channels,
++	.num_channels = ARRAY_SIZE(mhi_qcom_sdx75_channels),
++	.ch_cfg = mhi_qcom_sdx75_channels,
+ 	.num_events = ARRAY_SIZE(modem_qcom_v1_mhi_events),
+ 	.event_cfg = modem_qcom_v1_mhi_events,
+ };
+@@ -476,21 +509,6 @@
+  * then queues the rest without ringing, and the device never signals
+  * doorbell mode again. Ring the doorbell on every transfer instead.
+  */
+-#define MHI_CHANNEL_CONFIG_HW_NOBRST(ch_num, ch_name, el_count, ev_ring, d) \
+-	{						\
+-		.num = ch_num,				\
+-		.name = ch_name,			\
+-		.num_elements = el_count,		\
+-		.event_ring = ev_ring,			\
+-		.dir = d,				\
+-		.ee_mask = BIT(MHI_EE_AMSS),		\
+-		.pollcfg = 0,				\
+-		.doorbell = MHI_DB_BRST_DISABLE,	\
+-		.lpm_notify = false,			\
+-		.offload_channel = false,		\
+-		.doorbell_mode_switch = false,		\
+-	}
+-
+ static const struct mhi_channel_config mhi_quectel_rm500q_channels[] = {
+ 	MHI_CHANNEL_CONFIG_UL(0, "NMEA", 32, 0),
+ 	MHI_CHANNEL_CONFIG_DL(1, "NMEA", 32, 0),

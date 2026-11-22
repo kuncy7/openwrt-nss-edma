@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Mykhailo Klimnyk <109966003+mykhailoklimnyk@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 18:00:00 +0200
+Subject: [PATCH] net: dsa: tag_qca_8021q: survive a port leaving its bridge
+
+qca_8021q_xmit() takes the bridge of a frame with offload_fwd_mark from
+dp->bridge and hands it to br_vlan_enabled() unchecked. A frame the
+bridge queued can reach the tagger after dsa_port_bridge_destroy() has
+cleared dp->bridge, and br_vlan_enabled(NULL) then oopses in softirq:
+
+  Unable to handle kernel read from unreadable memory at virtual address 00000000000009d0
+  pc : br_vlan_enabled+0x0/0xc
+  lr : qca_8021q_xmit+0x54/0x1d0
+  Kernel panic - not syncing: Oops: Fatal exception in interrupt
+
+Seen on a Redmi AX5400 (QCA8337 under qca-8021q) at "ifdown -a" with
+traffic towards a LAN port, about one time in three.
+
+Read dp->bridge once, drop a bridge-forwarded frame whose port is no
+longer in a bridge, and let the readers finish before the bridge is
+freed.
+
+Signed-off-by: Mykhailo Klimnyk <109966003+mykhailoklimnyk@users.noreply.github.com>
+---
+--- a/net/dsa/port.c
++++ b/net/dsa/port.c
+@@ -471,6 +471,10 @@
+ 	if (bridge->num)
+ 		dsa_bridge_num_put(br, bridge->num);
+ 
++	/* A tagger's xmit may still hold the pointer it read from dp->bridge;
++	 * it runs under rcu_read_lock_bh().
++	 */
++	synchronize_net();
+ 	kfree(bridge);
+ }
+ 
+--- a/net/dsa/tag_qca_8021q.c
++++ b/net/dsa/tag_qca_8021q.c
+@@ -63,24 +63,32 @@
+ 				      struct net_device *netdev)
+ {
+ 	struct dsa_port *dp = dsa_user_to_port(netdev);
++	/* dsa_port_bridge_destroy() clears dp->bridge while frames are still
++	 * on their way here, so look at it once.
++	 */
++	const struct dsa_bridge *bridge = READ_ONCE(dp->bridge);
+ 	u16 queue_mapping = skb_get_queue_mapping(skb);
+ 	u16 tx_vid = dsa_tag_8021q_standalone_vid(dp);
+ 	u8 pcp;
+ 
+ 	if (skb->offload_fwd_mark) {
+-		unsigned int bridge_num = dsa_port_bridge_num_get(dp);
+-		struct net_device *br = dsa_port_bridge_dev_get(dp);
++		/* The bridge queued the frame and the port left the bridge
++		 * before it got here. The bridge's VLAN no longer includes
++		 * the port; dsa_user_xmit() frees what we do not return.
++		 */
++		if (unlikely(!bridge))
++			return NULL;
+ 
+ 		/* A VLAN-aware bridge carries its own VID; the switch
+ 		 * forwards on that one.
+ 		 */
+-		if (br_vlan_enabled(br))
++		if (br_vlan_enabled(bridge->dev))
+ 			return skb;
+ 
+-		tx_vid = dsa_tag_8021q_bridge_vid(bridge_num);
+-	} else if (dp->bridge && dp->bridge->tx_fwd_offload &&
++		tx_vid = dsa_tag_8021q_bridge_vid(bridge->num);
++	} else if (bridge && bridge->tx_fwd_offload &&
+ 		   is_unicast_ether_addr(eth_hdr(skb)->h_dest)) {
+-		struct net_device *br = dsa_port_bridge_dev_get(dp);
++		struct net_device *br = bridge->dev;
+ 		u16 pvid;
+ 
+ 		/* A unicast frame sent on a bridged port itself, not by the
+@@ -92,7 +100,7 @@
+ 		 * (imprecise RX). Broadcast and multicast keep the port's VLAN.
+ 		 */
+ 		if (!br_vlan_enabled(br))
+-			tx_vid = dsa_tag_8021q_bridge_vid(dsa_port_bridge_num_get(dp));
++			tx_vid = dsa_tag_8021q_bridge_vid(bridge->num);
+ 		else if (skb_vlan_tag_present(skb) ||
+ 			 skb->protocol == htons(ETH_P_8021Q))
+ 			return skb;

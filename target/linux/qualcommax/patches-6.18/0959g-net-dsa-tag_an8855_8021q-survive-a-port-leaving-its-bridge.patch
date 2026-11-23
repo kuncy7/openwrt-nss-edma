@@ -1,0 +1,56 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Subject: [PATCH] net: dsa: tag_an8855_8021q: survive a port leaving its bridge
+
+an8855_8021q_xmit() takes the bridge of a frame with offload_fwd_mark from
+dp->bridge and hands it to br_vlan_enabled() unchecked, as
+qca_8021q_xmit() did. A frame can carry the mark for a port that is in
+no bridge: the bridge queued it and dsa_port_bridge_destroy() cleared
+dp->bridge before it got here, or it was received on a port that was
+leaving its bridge - the bridge takes its rx handler away before DSA
+clears dp->bridge, and the tagger marks what arrives in between - and
+was routed to another port of the switch. br_vlan_enabled(NULL) then
+oopses in softirq; with qca-8021q that was seen on a Redmi AX5400 at
+"ifdown -a", about one time in three.
+
+Read dp->bridge once and drop a marked frame whose port is in no
+bridge. dsa_port_bridge_destroy() already waits for the readers before
+it frees the bridge (the qca-8021q patch added that).
+
+Not reproduced on an AN8855 board (none on our bench); the change follows the qca-8021q one.
+
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+---
+--- a/net/dsa/tag_an8855_8021q.c
++++ b/net/dsa/tag_an8855_8021q.c
+@@ -69,16 +69,27 @@ static struct sk_buff *an8855_8021q_xmit
+ 	u8 pcp;
+ 
+ 	if (skb->offload_fwd_mark) {
+-		unsigned int bridge_num = dsa_port_bridge_num_get(dp);
+-		struct net_device *br = dsa_port_bridge_dev_get(dp);
++		/* dsa_port_bridge_destroy() clears dp->bridge while frames
++		 * are still on their way here, so look at it once.
++		 */
++		const struct dsa_bridge *bridge = READ_ONCE(dp->bridge);
++
++		/* The frame was marked for a bridge the port is not in: the
++		 * bridge queued it and the port left before it got here, or
++		 * it came in on a port that was leaving its bridge and was
++		 * routed to this one. There is no bridge VLAN to send it
++		 * in; dsa_user_xmit() frees what we do not return.
++		 */
++		if (unlikely(!bridge))
++			return NULL;
+ 
+ 		/* A VLAN-aware bridge carries its own VID; the switch
+ 		 * forwards on that one.
+ 		 */
+-		if (br_vlan_enabled(br))
++		if (br_vlan_enabled(bridge->dev))
+ 			return skb;
+ 
+-		tx_vid = dsa_tag_8021q_bridge_vid(bridge_num);
++		tx_vid = dsa_tag_8021q_bridge_vid(bridge->num);
+ 	}
+ 
+ 	/* An 802.1Q upper of the port (wan.35 for a PPPoE ISP, wan.99 next

@@ -109,7 +109,7 @@ and `iperf3` for checking it. There is no LuCI in the images:
 Status -> NSS Offload. Like any package added later, LuCI is gone after a
 sysupgrade and has to be installed again. Boards come in two groups, because
 the NSS firmware version and the NSS memory profile are a build-time choice for
-the whole image (the `std` group also carries the 802.11s mesh offload). ath11k
+the whole image (both groups carry the 802.11s mesh offload). ath11k
 picks its own memory profile when a radio probes, from the RAM size (see
 *Memory profiles* under *256 MB boards*), so the same driver serves both groups:
 
@@ -802,7 +802,7 @@ Legend: ✅ offloaded & validated ·
 | L2 between LAN ports | ✅ | in the switch fabric (same VLAN), never reaches the SoC |
 | PPPoE | ✅ | Kernel patch `0961` gained the lockless `__ppp_hold_channels()` / `__ppp_is_multilink()` that ECM's deadlock fix needs, `kmod-qca-nss-drv-pppoe` is selected, and `nss-dwmac-up` **loads it** after the arm - without the manager in memory ECM tracks the PPPoE flows, marks every rule invalid and the WAN silently stays on the host path (measured: 0 rules, 22k exceptions in 20 s; the same silent failure AugustoAmaral hit before the package was selected at all, ~950 Mbit/s at 84-95 % idle on an AX6000 once it was in). Measured here on the `dsa` topology with the ISP's VLAN on the WAN port (`wan.35`, PPPoE server on the bench): rules created, 120k-157k firmware hits per 15-20 s, 0-65 exceptions, 2 % CPU, at the 100 Mbit/s ceiling of the bench client. On the trunk topology LS3434 runs it as `eth0.35` with `vtu='...;35:6t,2t'` (#154, #156): 890-950 down / 310 up at 1-5 % CPU. |
 | Wi-Fi (wifili) | ✅ | both radios; 734/447 Mbit/s over 5 GHz through the router, host ~90 % idle. Needs the core-clock fix - see below |
-| 802.11s mesh | ✅ | `std` group only; encap/decap and the path tables in the firmware, open and SAE. See "Mesh" below |
+| 802.11s mesh | ✅ | Both groups; encap/decap and the path tables in the firmware, open and SAE. See "Mesh" below |
 | SQM / NSS qdiscs | ✅ | `dsa` topology: `sqm-scripts-nss` shapes the WAN flows in a lane on the conduit (`eth0`), the other ports' traffic passes unshaped; nsstbl + nssfq_codel in the firmware both ways (IGS for ingress). Measured on the GL-B3000: 91/91 Mbit/s at a 100/100 limit, 18/45 at 20/50, ~3 ms ping under load, host 97 % idle. See "SQM" below |
 | Multicast through ECM | ⬜ | built off on ipq50xx until it is measured with the DSA port nodes; the feed reads the bridge MDB now, `qca-mcs` is gone |
 | MAP-T / DS-Lite | 🟨 | `kmod-nat46` staging from the base; untested here |
@@ -910,7 +910,7 @@ larger (2092 B) than the data frame size the host advertises (2048 B).
 
 ### Mesh (802.11s)
 
-The `std` images are built with the ath11k NSS mesh offload
+The images of both groups are built with the ath11k NSS mesh offload
 (`ATH11K_NSS_MESH_SUPPORT`, which pulls in `kmod-qca-nss-drv-wifi-meshmgr`):
 the firmware encapsulates and decapsulates the mesh frames and keeps the path
 and proxy tables, so a mesh backhaul - a second router as a satellite with the
@@ -922,16 +922,11 @@ radio firmware on either side (the mesh makes its peerings again and carries
 traffic within seconds, see the fixes below; measured with `wpad-mesh-mbedtls`
 managing the peerings, open and SAE). Not tried: more than one hop, 2.4 GHz,
 a peer that is not offloaded, a firmware crash with an open mesh run by the
-kernel's own peering (`wpad-basic-mbedtls`). The `256m` images are built without
-it: the mesh costs memory those boards do not have to spare. A mesh interface
-left in `/etc/config/wireless` on a `256m` image, kept from a `std` image for
-example, takes its whole radio down with it: the driver refuses the mesh
-interface and the access points on that radio do not come up either (seen on a
-GL-B3000 limited to 256 MB, firmware 12.2). Remove the mesh interface or set
-`option disabled '1'` on it. A mesh on a `256m` image needs the Wi-Fi on the
-host path (`nss.general.wifi_offload='0'`); ADCDS's Xiaomi AX3000T build
-measured about 20 MB less free memory that way under sustained Wi-Fi traffic.
-Not tried here.
+kernel's own peering (`wpad-basic-mbedtls`). On the `256m` group's boards the support
+alone costs no measurable memory and an active mesh with one peer about 1.6 MB
+(measured on a GL-B3000 limited to 256 MB, firmware 12.2, 2026-11-23); before
+2026-11-23 the `256m` images were built without it, and a mesh interface kept
+from a `std` image took its whole radio down there.
 
 An open mesh works with the image as it is. An encrypted mesh (SAE) needs the
 full mesh-capable `wpad`, which the image does not carry - it keeps
@@ -1058,8 +1053,8 @@ OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the bran
   one does not make its 512 MB members pay in connection-table size. The
   same holds for the firmware: `nss.general.firmware=auto` boots 12.2-156
   below 384 MB (12.5-210 keeps payload buffers with some 802.11ac clients,
-  see *Firmware*). The `256m` release group still exists, for its board
-  list and because it is built without the 802.11s mesh offload.
+  see *Firmware*). The `256m` release group still exists for its board
+  list and for the build defaults (12.2-156, low).
   `qcom,ath11k-fw-memory-mode = <2>` on both radios is in the DTS.
 
 Result: ~850 / ~740 Mbit/s on 5 GHz with 4 streams (stock: 843 / 906),

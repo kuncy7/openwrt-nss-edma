@@ -280,7 +280,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  
  	/* The PHY is suspended when the interface is reopened without
  	 * disconnecting the PHY, e.g. on MTU change. IEEE 802.3 allows PHYs
-@@ -6204,6 +6345,18 @@ static int stmmac_napi_poll_rx(struct na
+@@ -6208,6 +6349,18 @@ static int stmmac_napi_poll_rx(struct na
  	u32 chan = ch->index;
  	int work_done;
  
@@ -299,7 +299,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  	rxq_stats = &priv->xstats.rxq_stats[chan];
  	u64_stats_update_begin(&rxq_stats->napi_syncp);
  	u64_stats_inc(&rxq_stats->napi.poll);
-@@ -6265,6 +6418,18 @@ static int stmmac_napi_poll_rxtx(struct
+@@ -6269,6 +6422,18 @@ static int stmmac_napi_poll_rxtx(struct
  	struct stmmac_txq_stats *txq_stats;
  	u32 chan = ch->index;
  
@@ -318,7 +318,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  	rxq_stats = &priv->xstats.rxq_stats[chan];
  	u64_stats_update_begin(&rxq_stats->napi_syncp);
  	u64_stats_inc(&rxq_stats->napi.poll);
-@@ -7197,6 +7362,19 @@ static int stmmac_bpf(struct net_device
+@@ -7201,6 +7366,19 @@ static int stmmac_bpf(struct net_device
  {
  	struct stmmac_priv *priv = netdev_priv(dev);
  
@@ -338,7 +338,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  	switch (bpf->command) {
  	case XDP_SETUP_PROG:
  		return stmmac_xdp_set_prog(priv, bpf->prog, bpf->extack);
-@@ -7425,6 +7603,7 @@ int stmmac_xdp_open(struct net_device *d
+@@ -7429,6 +7607,7 @@ int stmmac_xdp_open(struct net_device *d
  			   __func__);
  		goto init_error;
  	}
@@ -346,7 +346,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  
  	stmmac_reset_queues_param(priv);
  
-@@ -8319,6 +8498,13 @@ int stmmac_suspend(struct device *dev)
+@@ -8323,6 +8502,13 @@ int stmmac_suspend(struct device *dev)
  	if (!ndev || !netif_running(ndev))
  		goto suspend_bsp;
  

@@ -55,7 +55,7 @@ Assisted-by: Claude
  #include <net/page_pool/helpers.h>
  #include <net/pkt_cls.h>
  #include <net/xdp_sock_drv.h>
-@@ -5281,6 +5282,22 @@ static struct stmmac_xdp_buff *xsk_buff_
+@@ -5308,6 +5309,22 @@ static struct stmmac_xdp_buff *xsk_buff_
  	return (struct stmmac_xdp_buff *)xdp;
  }
  
@@ -78,7 +78,7 @@ Assisted-by: Claude
  static int stmmac_rx_zc(struct stmmac_priv *priv, int limit, u32 queue)
  {
  	struct stmmac_rxq_stats *rxq_stats = &priv->xstats.rxq_stats[queue];
-@@ -5351,6 +5368,8 @@ read_again:
+@@ -5378,6 +5395,8 @@ read_again:
  		/* check if managed by the DMA otherwise go ahead */
  		if (unlikely(status & dma_own))
  			break;
@@ -87,7 +87,7 @@ Assisted-by: Claude
  
  		/* Prefetch the next RX descriptor */
  		next_entry = STMMAC_NEXT_ENTRY(rx_q->cur_rx,
-@@ -5550,6 +5569,8 @@ read_again:
+@@ -5578,6 +5597,8 @@ read_again:
  		/* check if managed by the DMA otherwise go ahead */
  		if (unlikely(status & dma_own))
  			break;

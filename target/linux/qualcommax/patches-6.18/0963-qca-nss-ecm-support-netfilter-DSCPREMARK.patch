@@ -53,7 +53,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  #include <net/netfilter/nf_conntrack_labels.h>
  #include <net/netfilter/nf_conntrack_synproxy.h>
  #include <net/netfilter/nf_nat.h>
-@@ -1755,6 +1758,9 @@ init_conntrack(struct net *net, struct n
+@@ -1786,6 +1789,9 @@ init_conntrack(struct net *net, struct n
  	nf_ct_acct_ext_add(ct, GFP_ATOMIC);
  	nf_ct_tstamp_ext_add(ct, GFP_ATOMIC);
  	nf_ct_labels_ext_add(ct);
@@ -95,7 +95,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  
 --- a/net/netfilter/nft_payload.c
 +++ b/net/netfilter/nft_payload.c
-@@ -25,6 +25,13 @@
+@@ -26,6 +26,13 @@
  #include <linux/ipv6.h>
  #include <net/sctp/checksum.h>
  
@@ -109,7 +109,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  static bool nft_payload_rebuild_vlan_hdr(const struct sk_buff *skb, int mac_off,
  					 struct vlan_ethhdr *veth)
  {
-@@ -833,6 +840,11 @@ static void nft_payload_set_eval(const s
+@@ -1113,6 +1120,11 @@ static void nft_payload_set_eval(const s
  	int offset, csum_offset, vlan_hlen = 0;
  	struct sk_buff *skb = pkt->skb;
  	__wsum fsum, tsum;
@@ -121,7 +121,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  
  	switch (priv->base) {
  	case NFT_PAYLOAD_LL_HEADER:
-@@ -892,10 +904,46 @@ static void nft_payload_set_eval(const s
+@@ -1179,10 +1191,46 @@ static void nft_payload_set_eval(const s
  			goto err;
  	}
  

@@ -25,7 +25,7 @@ stmmac_tx_err() does, before handing the queue to the owner.
 Signed-off-by: Feiyang Yu <2541290956@qq.com>
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
-@@ -2418,6 +2418,23 @@
+@@ -2418,6 +2418,23 @@ int qca_dwmac_dp_claim(struct net_device
  	stmmac_stop_all_dma(priv);
  
  	/*

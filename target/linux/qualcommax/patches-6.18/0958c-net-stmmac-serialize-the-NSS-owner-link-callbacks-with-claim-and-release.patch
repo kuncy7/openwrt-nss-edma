@@ -19,7 +19,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
 ---
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac.h
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac.h
-@@ -281,6 +281,7 @@
+@@ -281,6 +281,7 @@ struct stmmac_priv {
  	const struct qca_dwmac_dp_owner *dp_owner;
  	void *dp_ctx;
  	bool dp_irq_off;	/* dev->irq masked for the claim */
@@ -29,7 +29,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  	struct stmmac_safety_stats sstats;
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
-@@ -868,8 +868,16 @@
+@@ -868,8 +868,16 @@ static void stmmac_mac_link_down(struct
  {
  	struct stmmac_priv *priv = netdev_priv(to_net_dev(config->dev));
  
@@ -46,7 +46,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  
  	stmmac_mac_set(priv, priv->ioaddr, false);
  	if (priv->dma_cap.eee)
-@@ -981,8 +989,16 @@
+@@ -981,8 +989,16 @@ static void stmmac_mac_link_up(struct ph
  	if (priv->plat->flags & STMMAC_FLAG_HWTSTAMP_CORRECT_LATENCY)
  		stmmac_hwtstamp_correct_latency(priv, priv);
  
@@ -63,7 +63,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  }
  
  static void stmmac_mac_disable_tx_lpi(struct phylink_config *config)
-@@ -2445,10 +2461,14 @@
+@@ -2445,10 +2461,14 @@ int qca_dwmac_dp_claim(struct net_device
  	disable_irq(dev->irq);
  	priv->dp_irq_off = true;
  
@@ -81,7 +81,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  
  	netif_tx_wake_all_queues(dev);
  
-@@ -2482,8 +2502,16 @@
+@@ -2482,8 +2502,16 @@ int qca_dwmac_dp_release(struct net_devi
  		return -ENOENT;
  
  	netif_tx_disable(dev);
@@ -98,7 +98,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  
  	/*
  	 * Unmask the line while NAPI is still disabled: an event left pending
-@@ -4867,13 +4895,16 @@
+@@ -4869,13 +4897,16 @@ static netdev_tx_t stmmac_xmit(struct sk
  	struct dma_edesc *tbs_desc = NULL;
  	struct dma_desc *desc, *first;
  	struct stmmac_tx_queue *tx_q;
@@ -117,7 +117,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  
  	tx_q = &priv->dma_conf.tx_queue[queue];
  	txq_stats = &priv->xstats.txq_stats[queue];
-@@ -7916,6 +7947,7 @@
+@@ -7920,6 +7951,7 @@ int stmmac_dvr_probe(struct device *devi
  		u64_stats_init(&priv->xstats.txq_stats[i].q_syncp);
  		u64_stats_init(&priv->xstats.txq_stats[i].napi_syncp);
  	}

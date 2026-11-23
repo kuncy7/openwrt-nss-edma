@@ -61,7 +61,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ---
 --- a/net/dsa/tag_8021q.c
 +++ b/net/dsa/tag_8021q.c
-@@ -207,11 +207,24 @@
+@@ -207,11 +207,24 @@ static int dsa_port_do_tag_8021q_vlan_de
  	return 0;
  }
  
@@ -87,7 +87,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  }
  
  int dsa_switch_tag_8021q_vlan_add(struct dsa_switch *ds,
-@@ -386,6 +399,27 @@
+@@ -386,6 +399,27 @@ static void dsa_tag_8021q_port_teardown(
  	vlan_vid_del(conduit, ctx->proto, vid);
  }
  
@@ -117,7 +117,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  	int err, port;
 --- a/net/dsa/tag_8021q.h
 +++ b/net/dsa/tag_8021q.h
-@@ -25,4 +25,7 @@
+@@ -25,4 +25,7 @@ int dsa_switch_tag_8021q_vlan_add(struct
  int dsa_switch_tag_8021q_vlan_del(struct dsa_switch *ds,
  				  struct dsa_notifier_tag_8021q_vlan_info *info);
  
@@ -127,7 +127,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  #endif
 --- a/net/dsa/port.c
 +++ b/net/dsa/port.c
-@@ -1469,9 +1469,21 @@
+@@ -1502,9 +1502,21 @@ int dsa_port_change_conduit(struct dsa_p
  	if (dev->flags & IFF_UP)
  		dsa_user_host_uc_uninstall(dev);
  
@@ -150,7 +150,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
  
  	/* If the port doesn't have its own MAC address and relies on the DSA
  	 * conduit's one, inherit it again from the new DSA conduit.
-@@ -1527,10 +1539,15 @@
+@@ -1560,10 +1572,15 @@ rewind_addr_inherit:
  	if (is_zero_ether_addr(dp->mac))
  		eth_hw_addr_inherit(dev, old_conduit);
  

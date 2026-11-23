@@ -18,7 +18,8 @@ set_preinit_iface() {
 	cudy,ap3000outdoor-v1|\
 	cudy,re3000-v1|\
 	ubnt,unifi-6-lr|\
-	zyxel,nwa50ax-pro)
+	zyxel,nwa50ax-pro|\
+	zyxel,nwa55ax-ptp)
 		ip link set eth0 up
 		ifname=eth0
 		;;
@@ -44,6 +45,10 @@ set_preinit_iface() {
 		;;
 	glinet,gl-be14000)
 		ifname=lan9
+		;;
+	zyxel,wax300h)
+		ip link set eth0 up
+		ifname=uplink
 		;;
 	zyxel,wx5600-t0-ubootmod)
 		ifname=lan1

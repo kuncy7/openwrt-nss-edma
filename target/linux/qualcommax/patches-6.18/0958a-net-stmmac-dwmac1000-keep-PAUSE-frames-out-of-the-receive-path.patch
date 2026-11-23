@@ -22,7 +22,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/net/ethernet/stmicro/stmmac/dwmac1000.h
 +++ b/drivers/net/ethernet/stmicro/stmmac/dwmac1000.h
-@@ -125,6 +125,7 @@
+@@ -125,6 +125,7 @@ enum inter_frame_gap {
  #define GMAC_FRAME_FILTER_PM	0x00000010	/* Pass all multicast */
  #define GMAC_FRAME_FILTER_DBF	0x00000020	/* Disable Broadcast frames */
  #define GMAC_FRAME_FILTER_PCF	0x00000080	/* Pass Control frames */
@@ -32,7 +32,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  #define GMAC_FRAME_FILTER_HPF	0x00000400	/* Hash or perfect Filter */
 --- a/drivers/net/ethernet/stmicro/stmmac/dwmac1000_core.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/dwmac1000_core.c
-@@ -154,7 +154,12 @@
+@@ -154,7 +154,12 @@ static void dwmac1000_set_filter(struct
  	memset(mc_filter, 0, sizeof(mc_filter));
  
  	if (dev->flags & IFF_PROMISC) {

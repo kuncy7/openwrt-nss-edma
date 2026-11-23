@@ -21,7 +21,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
-@@ -7729,11 +7729,34 @@ static void stmmac_napi_del(struct net_d
+@@ -7767,11 +7767,34 @@ static void stmmac_napi_del(struct net_d
  	}
  }
  
@@ -56,7 +56,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	if (netif_running(dev))
  		stmmac_release(dev);
  
-@@ -7757,7 +7780,11 @@ int stmmac_reinit_queues(struct net_devi
+@@ -7795,7 +7818,11 @@ int stmmac_reinit_queues(struct net_devi
  int stmmac_reinit_ringparam(struct net_device *dev, u32 rx_size, u32 tx_size)
  {
  	struct stmmac_priv *priv = netdev_priv(dev);

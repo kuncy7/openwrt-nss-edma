@@ -23,7 +23,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
 ---
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac.h
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac.h
-@@ -282,6 +282,8 @@
+@@ -282,6 +282,8 @@ struct stmmac_priv {
  	void *dp_ctx;
  	bool dp_irq_off;	/* dev->irq masked for the claim */
  	struct mutex dp_link_lock;	/* claim/release vs the owner link callbacks */
@@ -34,7 +34,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  	struct stmmac_safety_stats sstats;
 --- a/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
 +++ b/drivers/net/ethernet/stmicro/stmmac/stmmac_main.c
-@@ -2392,6 +2392,19 @@
+@@ -2392,6 +2392,19 @@ static void stmmac_stop_all_dma(struct s
  		stmmac_stop_tx_dma(priv, chan);
  }
  
@@ -54,7 +54,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  /**
   * qca_dwmac_dp_claim - hand the data plane of a dwmac netdev to an owner
   * @dev: stmmac netdev, must be running
-@@ -2466,8 +2479,10 @@
+@@ -2466,8 +2479,10 @@ int qca_dwmac_dp_claim(struct net_device
  	 * release); the link callbacks take dp_link_lock.
  	 */
  	mutex_lock(&priv->dp_link_lock);
@@ -65,7 +65,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  	mutex_unlock(&priv->dp_link_lock);
  
  	netif_tx_wake_all_queues(dev);
-@@ -2509,8 +2524,17 @@
+@@ -2509,8 +2524,17 @@ int qca_dwmac_dp_release(struct net_devi
  	 * out; the owner bounds that wait, release cannot shorten it.
  	 */
  	mutex_lock(&priv->dp_link_lock);
@@ -83,7 +83,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  	mutex_unlock(&priv->dp_link_lock);
  
  	/*
-@@ -7521,6 +7545,7 @@
+@@ -7525,6 +7549,7 @@ int stmmac_xsk_wakeup(struct net_device
  static void stmmac_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
  {
  	struct stmmac_priv *priv = netdev_priv(dev);
@@ -91,7 +91,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  	u32 tx_cnt = priv->plat->tx_queues_to_use;
  	u32 rx_cnt = priv->plat->rx_queues_to_use;
  	unsigned int start;
-@@ -7569,6 +7594,26 @@
+@@ -7573,6 +7598,26 @@ static void stmmac_get_stats64(struct ne
  	stats->rx_crc_errors = priv->xstats.rx_crc_errors;
  	stats->rx_over_errors = priv->xstats.rx_overflow_cntr;
  	stats->rx_missed_errors = priv->xstats.rx_missed_cntr;
@@ -118,7 +118,7 @@ Signed-off-by: Vadim Deiss <letechnarb@gmail.com>
  }
  
  static const struct net_device_ops stmmac_netdev_ops = {
-@@ -7948,6 +7993,7 @@
+@@ -7952,6 +7997,7 @@ int stmmac_dvr_probe(struct device *devi
  		u64_stats_init(&priv->xstats.txq_stats[i].napi_syncp);
  	}
  	mutex_init(&priv->dp_link_lock);

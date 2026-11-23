@@ -22,7 +22,7 @@ Signed-off-by: Fanha Giang <fanha99@hotmail.com>
 ---
 --- a/net/dsa/port.c
 +++ b/net/dsa/port.c
-@@ -1870,6 +1870,41 @@
+@@ -1881,6 +1881,41 @@ static void dsa_shared_port_link_down(st
  						   PHY_INTERFACE_MODE_NA);
  }
  
@@ -64,7 +64,7 @@ Signed-off-by: Fanha Giang <fanha99@hotmail.com>
  int dsa_shared_port_link_register_of(struct dsa_port *dp)
  {
  	struct dsa_switch *ds = dp->ds;
-@@ -1891,6 +1926,8 @@
+@@ -1902,6 +1937,8 @@ int dsa_shared_port_link_register_of(str
  	} else {
  		dsa_shared_port_link_down(dp);
  

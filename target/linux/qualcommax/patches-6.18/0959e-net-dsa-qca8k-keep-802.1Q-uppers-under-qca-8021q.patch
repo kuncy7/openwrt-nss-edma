@@ -23,7 +23,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/net/dsa/qca/qca8k-8xxx.c
 +++ b/drivers/net/dsa/qca/qca8k-8xxx.c
-@@ -2122,6 +2122,7 @@ static int qca8k_change_tag_protocol(str
+@@ -2152,6 +2152,7 @@ static int qca8k_change_tag_protocol(str
  	case DSA_TAG_PROTO_QCA_ETYPE:
  		dsa_tag_8021q_unregister(ds);
  		qca8k_user_vlan_filter_feature(ds, false);
@@ -31,7 +31,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		priv->tag_proto = proto;
  
  		ret = qca8k_set_tag_8021q_vlan_mode(priv, false);
-@@ -2165,6 +2166,12 @@ static int qca8k_change_tag_protocol(str
+@@ -2195,6 +2196,12 @@ static int qca8k_change_tag_protocol(str
  		if (ret)
  			goto restore_vlan;
  		qca8k_user_vlan_filter_feature(ds, true);

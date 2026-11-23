@@ -57,7 +57,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  }
  
  static int qca8k_connect_tag_protocol(struct dsa_switch *ds,
-@@ -2052,11 +2054,11 @@ static int qca8k_change_tag_protocol(str
+@@ -2038,11 +2040,11 @@ static int qca8k_change_tag_protocol(str
  		/* Management frames need the Atheros header; from here on
  		 * every register access goes over MDIO.
  		 */

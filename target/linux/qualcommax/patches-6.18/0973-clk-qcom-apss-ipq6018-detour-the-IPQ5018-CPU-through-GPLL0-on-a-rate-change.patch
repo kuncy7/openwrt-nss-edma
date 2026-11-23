@@ -15,7 +15,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/clk/qcom/apss-ipq6018.c
 +++ b/drivers/clk/qcom/apss-ipq6018.c
-@@ -132,6 +132,18 @@
+@@ -132,6 +132,18 @@ static int apss_ipq6018_probe(struct pla
  	case QCOM_ID_IPQ5332:
  	case QCOM_ID_IPQ5322:
  	case QCOM_ID_IPQ5300:

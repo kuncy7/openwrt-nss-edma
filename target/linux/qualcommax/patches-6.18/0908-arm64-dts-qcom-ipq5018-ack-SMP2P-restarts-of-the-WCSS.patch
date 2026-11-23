@@ -21,7 +21,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 
 --- a/arch/arm64/boot/dts/qcom/ipq5018.dtsi
 +++ b/arch/arm64/boot/dts/qcom/ipq5018.dtsi
-@@ -1217,6 +1217,7 @@
+@@ -1223,6 +1223,7 @@
  
  		wcss_smp2p_out: master-kernel {
  			qcom,entry-name = "master-kernel";

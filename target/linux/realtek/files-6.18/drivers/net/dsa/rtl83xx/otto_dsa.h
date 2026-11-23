@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 
-#ifndef _RTL838X_H
-#define _RTL838X_H
+#ifndef _OTTO_DSA_H
+#define _OTTO_DSA_H
 
 #include <asm/mach-rtl-otto/mach-rtl-otto.h>
 #include <net/dsa.h>
+#include <net/pkt_cls.h>
 
 #include <linux/soc/realtek/otto_table.h>
 
 #include "l2.h"
-#include "l3_limits.h"
 #include "lag.h"
 #include "mac.h"
 #include "mirror.h"
@@ -19,6 +19,7 @@
 #include "vlan.h"
 
 #define MAX_PRIOS 8
+#define MAX_INTF_MTUS 8
 
 /* special port action controls */
 /* values:
@@ -89,6 +90,25 @@ struct rtldsa_tbf {
 	bool offloaded;
 };
 
+struct rtldsa_red {
+	u32 handle;
+	struct tc_red_qopt_offload_params params;
+	bool child;
+	bool offloaded;
+	u64 tx_bytes;
+	u64 tx_packets;
+	u64 drops;
+};
+
+struct rtldsa_ets {
+	u32 handle;
+	u16 children;
+	bool offloadable;
+	u8 weights[MAX_PRIOS];
+	struct rtldsa_tbf queue_tbf[MAX_PRIOS];
+	struct rtldsa_red queue_red[MAX_PRIOS];
+};
+
 struct rtldsa_port {
 	bool enable:1;
 	bool phy:1;
@@ -104,6 +124,14 @@ struct rtldsa_port {
 	u8 ets_weights[MAX_PRIOS];
 	struct rtldsa_tbf tbf;
 	struct rtldsa_tbf queue_tbf[MAX_PRIOS];
+	struct rtldsa_red red;
+	struct rtldsa_red red_prev;
+	struct rtldsa_red queue_red[MAX_PRIOS];
+	struct rtldsa_red queue_red_prev[MAX_PRIOS];
+	struct rtldsa_ets ets_prev;
+	u32 red_cfg[MAX_PRIOS];
+	u64 red_drops[MAX_PRIOS];
+	u16 red_drops_hw[MAX_PRIOS];
 	unsigned long cached_flags;
 	u64 pm;
 	u16 pvid;
@@ -330,8 +358,6 @@ struct pie_rule {
 	bool bypass_ibc_sc;	/* Bypass Ingress Bandwidth Control and Storm Control */
 };
 
-struct otto_dsa_priv;
-
 struct rtldsa_config {
 	const struct dsa_switch_ops *switch_ops;
 	const struct phylink_mac_ops *phylink_mac_ops;
@@ -497,6 +523,9 @@ struct rtldsa_config {
 	int (*set_egress_rate)(struct otto_dsa_priv *priv, int port, u32 rate);
 	void (*queue_sched_set)(struct otto_dsa_priv *priv, int port, int queue, u32 weight,
 				bool strict);
+	int (*red_set)(struct otto_dsa_priv *priv, int port,
+		       const struct tc_red_qopt_offload_params **p);
+	void (*red_drops_update)(struct otto_dsa_priv *priv, int port);
 	int (*egress_shaper_set)(struct otto_dsa_priv *priv, int port, int queue,
 				 u64 rate_bytes_ps, u32 burst);
 	void (*qos_init)(struct otto_dsa_priv *priv);
@@ -560,6 +589,13 @@ struct otto_dsa_priv {
 
 	/** @lagmembers: Port (bit) is part of any LAG */
 	u64 lagmembers;
+
+	/** @red_ports: Port (bit) has RED offloaded */
+	u64 red_ports;
+
+	/** @red_cfg: RED setting of each queue, shared by all ports in @red_ports */
+	u32 red_cfg[MAX_PRIOS];
+	struct delayed_work red_work;
 	struct workqueue_struct *wq;
 	bool eee_enabled;
 	unsigned long mc_group_bm[MAX_MC_GROUPS >> 5];
@@ -599,20 +635,8 @@ struct fdb_update_work {
 void rtldsa_port_fast_age(struct dsa_switch *ds, int port);
 int rtl83xx_port_is_under(const struct net_device *dev, struct otto_dsa_priv *priv);
 
-/* RTL838x-specific */
-u32 rtl838x_hash(struct otto_dsa_priv *priv, u64 seed);
-void rtldsa_838x_print_matrix(struct otto_dsa_priv *priv);
-
-/* RTL839x-specific */
-u32 rtl839x_hash(struct otto_dsa_priv *priv, u64 seed);
-void rtldsa_839x_print_matrix(struct otto_dsa_priv *priv);
-
 /* RTL930x-specific */
 u32 otto_l2_930x_hash(struct otto_dsa_priv *priv, u64 seed);
-void rtldsa_930x_print_matrix(struct otto_dsa_priv *priv);
-
-/* RTL931x-specific */
-void rtldsa_931x_print_matrix(struct otto_dsa_priv *priv);
 
 /*
  * TODO: The following functions are currently not in use. So compiler will complain if
@@ -636,4 +660,4 @@ extern struct rtl83xx_soc_info soc_info;
 void rtl838x_dbgfs_init(struct otto_dsa_priv *priv);
 void rtl930x_dbgfs_init(struct otto_dsa_priv *priv);
 
-#endif /* _RTL838X_H */
+#endif /* _OTTO_DSA_H */

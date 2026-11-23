@@ -24,7 +24,7 @@ Signed-off-by: Mykhailo Klimnyk <109966003+mykhailoklimnyk@users.noreply.github.
 ---
 --- a/net/dsa/port.c
 +++ b/net/dsa/port.c
-@@ -471,6 +471,10 @@
+@@ -471,6 +471,10 @@ static void dsa_port_bridge_destroy(stru
  	if (bridge->num)
  		dsa_bridge_num_put(br, bridge->num);
  
@@ -37,7 +37,7 @@ Signed-off-by: Mykhailo Klimnyk <109966003+mykhailoklimnyk@users.noreply.github.
  
 --- a/net/dsa/tag_qca_8021q.c
 +++ b/net/dsa/tag_qca_8021q.c
-@@ -63,24 +63,32 @@
+@@ -63,24 +63,32 @@ static struct sk_buff *qca_8021q_xmit(st
  				      struct net_device *netdev)
  {
  	struct dsa_port *dp = dsa_user_to_port(netdev);
@@ -76,7 +76,7 @@ Signed-off-by: Mykhailo Klimnyk <109966003+mykhailoklimnyk@users.noreply.github.
  		u16 pvid;
  
  		/* A unicast frame sent on a bridged port itself, not by the
-@@ -92,7 +100,7 @@
+@@ -92,7 +100,7 @@ static struct sk_buff *qca_8021q_xmit(st
  		 * (imprecise RX). Broadcast and multicast keep the port's VLAN.
  		 */
  		if (!br_vlan_enabled(br))

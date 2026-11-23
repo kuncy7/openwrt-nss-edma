@@ -22,7 +22,7 @@ Signed-off-by: Christopher Griffin <christophergriffin05@gmail.com>
 
 --- a/drivers/remoteproc/qcom_q6v5_wcss_sec.c
 +++ b/drivers/remoteproc/qcom_q6v5_wcss_sec.c
-@@ -376,7 +376,11 @@ static int wcss_sec_probe(struct platfor
+@@ -462,7 +462,11 @@ static int wcss_sec_probe(struct platfor
  	qcom_add_ssr_subdev(rproc, &wcss->ssr_subdev, desc->ss_name);
  
  	rproc->auto_boot = false;

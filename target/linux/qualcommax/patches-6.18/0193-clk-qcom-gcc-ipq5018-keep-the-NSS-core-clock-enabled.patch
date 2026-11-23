@@ -31,7 +31,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 ---
 --- a/drivers/clk/qcom/gcc-ipq5018.c
 +++ b/drivers/clk/qcom/gcc-ipq5018.c
-@@ -2890,7 +2890,7 @@ static struct clk_branch gcc_ubi0_core_c
+@@ -2900,7 +2900,7 @@ static struct clk_branch gcc_ubi0_core_c
  				&ubi0_core_clk_src.clkr.hw,
  			},
  			.num_parents = 1,

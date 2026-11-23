@@ -4,7 +4,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
 
 --- a/drivers/net/tun.c
 +++ b/drivers/net/tun.c
-@@ -932,6 +932,7 @@ static int tun_net_init(struct net_devic
+@@ -936,6 +936,7 @@ static int tun_net_init(struct net_devic
  			     ~(NETIF_F_HW_VLAN_CTAG_TX |
  			       NETIF_F_HW_VLAN_STAG_TX);
  	dev->lltx = true;
@@ -24,7 +24,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  
  #if IS_ENABLED(CONFIG_BRIDGE) && IS_ENABLED(CONFIG_BRIDGE_IGMP_SNOOPING)
  int br_multicast_list_adjacent(struct net_device *dev,
-@@ -211,4 +214,34 @@ static inline clock_t br_get_ageing_time
+@@ -224,4 +227,34 @@ static inline clock_t br_get_ageing_time
  }
  #endif
  
@@ -124,7 +124,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  #define QUEUE_STATE_DRV_XOFF	(1 << __QUEUE_STATE_DRV_XOFF)
  #define QUEUE_STATE_STACK_XOFF	(1 << __QUEUE_STATE_STACK_XOFF)
  #define QUEUE_STATE_FROZEN	(1 << __QUEUE_STATE_FROZEN)
-@@ -2464,6 +2494,7 @@ struct net_device {
+@@ -2467,6 +2497,7 @@ struct net_device {
  	unsigned long		change_proto_down:1;
  	unsigned long		netns_immutable:1;
  	unsigned long		fcoe_mtu:1;
@@ -132,7 +132,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  
  	struct list_head	net_notifier_list;
  
-@@ -3197,6 +3228,10 @@ enum netdev_cmd {
+@@ -3200,6 +3231,10 @@ enum netdev_cmd {
  	NETDEV_OFFLOAD_XSTATS_REPORT_USED,
  	NETDEV_OFFLOAD_XSTATS_REPORT_DELTA,
  	NETDEV_XDP_FEAT_CHANGE,
@@ -159,7 +159,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  	const struct dst_entry *dst = skb_dst(skb);
 --- a/include/net/neighbour.h
 +++ b/include/net/neighbour.h
-@@ -249,6 +249,13 @@ static inline int neigh_parms_family(str
+@@ -251,6 +251,13 @@ static inline int neigh_parms_family(str
  	return p->tbl->family;
  }
  
@@ -173,7 +173,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  #define NEIGH_PRIV_ALIGN	sizeof(long long)
  #define NEIGH_ENTRY_SIZE(size)	ALIGN((size), NEIGH_PRIV_ALIGN)
  
-@@ -400,6 +407,11 @@ void __neigh_for_each_release(struct nei
+@@ -409,6 +416,11 @@ void __neigh_for_each_release(struct nei
  			      int (*cb)(struct neighbour *));
  int neigh_xmit(int fam, struct net_device *, const void *, struct sk_buff *);
  
@@ -185,7 +185,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  struct neigh_seq_state {
  	struct seq_net_private p;
  	struct neigh_table *tbl;
-@@ -609,4 +621,5 @@ static inline void neigh_update_is_route
+@@ -618,4 +630,5 @@ static inline void neigh_update_is_route
  		*notify = 1;
  	}
  }
@@ -552,7 +552,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
 +/* QCA NSS ECM support - End */
 --- a/net/bridge/br_private.h
 +++ b/net/bridge/br_private.h
-@@ -2349,4 +2349,6 @@ void br_do_suppress_nd(struct sk_buff *s
+@@ -2362,4 +2362,6 @@ void br_do_suppress_nd(struct sk_buff *s
  		       u16 vid, struct net_bridge_port *p, struct nd_msg *msg);
  struct nd_msg *br_is_nd_neigh_msg(const struct sk_buff *skb, struct nd_msg *m);
  bool br_is_neigh_suppress_enabled(const struct net_bridge_port *p, u16 vid);
@@ -561,7 +561,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  #endif
 --- a/net/core/dev.c
 +++ b/net/core/dev.c
-@@ -1868,6 +1868,7 @@ const char *netdev_cmd_to_name(enum netd
+@@ -1870,6 +1870,7 @@ const char *netdev_cmd_to_name(enum netd
  	N(PRE_CHANGEADDR) N(OFFLOAD_XSTATS_ENABLE) N(OFFLOAD_XSTATS_DISABLE)
  	N(OFFLOAD_XSTATS_REPORT_USED) N(OFFLOAD_XSTATS_REPORT_DELTA)
  	N(XDP_FEAT_CHANGE)
@@ -571,7 +571,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  	return "UNKNOWN_NETDEV_EVENT";
 --- a/net/core/neighbour.c
 +++ b/net/core/neighbour.c
-@@ -1305,6 +1305,22 @@ static void neigh_update_hhs(struct neig
+@@ -1304,6 +1304,22 @@ static void neigh_update_hhs(struct neig
  	}
  }
  
@@ -594,7 +594,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  /* Generic update routine.
     -- lladdr is new lladdr or NULL, if it is not supplied.
     -- new    is new state.
-@@ -1335,6 +1351,7 @@ static int __neigh_update(struct neighbo
+@@ -1334,6 +1350,7 @@ static int __neigh_update(struct neighbo
  	struct net_device *dev;
  	int err, notify = 0;
  	u8 old;
@@ -602,7 +602,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  
  	trace_neigh_update(neigh, lladdr, new, flags, nlmsg_pid);
  
-@@ -1349,6 +1366,9 @@ static int __neigh_update(struct neighbo
+@@ -1348,6 +1365,9 @@ static int __neigh_update(struct neighbo
  		new = old;
  		goto out;
  	}
@@ -612,7 +612,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  	if (!(flags & NEIGH_UPDATE_F_ADMIN) &&
  	    (old & (NUD_NOARP | NUD_PERMANENT)))
  		goto out;
-@@ -1386,6 +1406,11 @@ static int __neigh_update(struct neighbo
+@@ -1385,6 +1405,11 @@ static int __neigh_update(struct neighbo
  		   - compare new & old
  		   - if they are different, check override flag
  		 */
@@ -624,7 +624,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  		if ((old & NUD_VALID) &&
  		    !memcmp(lladdr, neigh->ha, dev->addr_len))
  			lladdr = neigh->ha;
-@@ -1509,8 +1534,11 @@ out:
+@@ -1508,8 +1533,11 @@ out:
  		neigh_update_gc_list(neigh);
  	if (managed_update)
  		neigh_update_managed_list(neigh);
@@ -639,7 +639,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  }
 --- a/net/ipv4/fib_trie.c
 +++ b/net/ipv4/fib_trie.c
-@@ -1190,6 +1190,9 @@ static int fib_insert_alias(struct trie
+@@ -1188,6 +1188,9 @@ static int fib_insert_alias(struct trie
  static void fib_remove_alias(struct trie *t, struct key_vector *tp,
  			     struct key_vector *l, struct fib_alias *old);
  
@@ -649,7 +649,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  /* Caller must hold RTNL. */
  int fib_table_insert(struct net *net, struct fib_table *tb,
  		     struct fib_config *cfg, struct netlink_ext_ack *extack)
-@@ -1380,6 +1383,9 @@ int fib_table_insert(struct net *net, st
+@@ -1378,6 +1381,9 @@ int fib_table_insert(struct net *net, st
  	rtmsg_fib(RTM_NEWROUTE, htonl(key), new_fa, plen, new_fa->tb_id,
  		  &cfg->fc_nlinfo, nlflags);
  succeeded:
@@ -659,7 +659,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  	return 0;
  
  out_remove_new_fa:
-@@ -1748,6 +1754,9 @@ int fib_table_delete(struct net *net, st
+@@ -1746,6 +1752,9 @@ int fib_table_delete(struct net *net, st
  	if (READ_ONCE(fa_to_delete->fa_state) & FA_S_ACCESSED)
  		rt_cache_flush(cfg->fc_nlinfo.nl_net);
  
@@ -669,7 +669,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  	fib_release_info(fa_to_delete->fa_info);
  	alias_free_mem_rcu(fa_to_delete);
  	return 0;
-@@ -2385,6 +2394,20 @@ void __init fib_trie_init(void)
+@@ -2383,6 +2392,20 @@ void __init fib_trie_init(void)
  					   0, SLAB_PANIC | SLAB_ACCOUNT, NULL);
  }
  
@@ -692,7 +692,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  	struct fib_table *tb;
 --- a/net/ipv4/ip_gre.c
 +++ b/net/ipv4/ip_gre.c
-@@ -1386,6 +1386,7 @@ static void ipgre_tap_setup(struct net_d
+@@ -1391,6 +1391,7 @@ static void ipgre_tap_setup(struct net_d
  	dev->netdev_ops	= &gre_tap_netdev_ops;
  	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
  	dev->priv_flags	|= IFF_LIVE_ADDR_CHANGE;
@@ -702,7 +702,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  
 --- a/net/ipv6/ip6_gre.c
 +++ b/net/ipv6/ip6_gre.c
-@@ -1905,6 +1905,7 @@ static void ip6gre_tap_setup(struct net_
+@@ -1898,6 +1898,7 @@ static void ip6gre_tap_setup(struct net_
  	dev->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
  	dev->priv_flags &= ~IFF_TX_SKB_SHARING;
  	dev->priv_flags |= IFF_LIVE_ADDR_CHANGE;
@@ -781,7 +781,7 @@ Signed-off-by: Julius Bairaktaris <julius@bairaktaris.de>
  }
  
  /* add the overhead of this fib6_nh to nexthop_len */
-@@ -6550,6 +6569,20 @@ static int ip6_route_dev_notify(struct n
+@@ -6548,6 +6567,20 @@ static int ip6_route_dev_notify(struct n
  	return NOTIFY_OK;
  }
  

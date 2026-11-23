@@ -77,7 +77,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  }
  
  static void stmmac_mac_disable_tx_lpi(struct phylink_config *config)
-@@ -2368,6 +2375,124 @@ static void stmmac_stop_all_dma(struct s
+@@ -2370,6 +2377,124 @@ static void stmmac_stop_all_dma(struct s
  }
  
  /**
@@ -202,7 +202,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
   *  stmmac_dma_operation_mode - HW DMA operation mode
   *  @priv: driver private structure
   *  Description: it is used for configuring the DMA operation mode register in
-@@ -3596,6 +3721,11 @@ static void stmmac_free_irq(struct net_d
+@@ -3598,6 +3723,11 @@ static void stmmac_free_irq(struct net_d
  			free_irq(priv->sfty_irq, dev);
  		fallthrough;
  	case REQ_IRQ_ERR_WOL:
@@ -214,7 +214,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		free_irq(dev->irq, dev);
  		fallthrough;
  	case REQ_IRQ_ERR_MAC:
-@@ -4531,6 +4661,9 @@ static netdev_tx_t stmmac_xmit(struct sk
+@@ -4554,6 +4684,9 @@ static netdev_tx_t stmmac_xmit(struct sk
  	dma_addr_t des;
  	u32 sdu_len;
  

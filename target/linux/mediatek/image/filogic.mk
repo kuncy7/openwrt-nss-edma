@@ -1,6 +1,7 @@
 DTS_DIR := $(DTS_DIR)/mediatek
 DEVICE_VARS += SUPPORTED_TELTONIKA_DEVICES
 DEVICE_VARS += SUPPORTED_TELTONIKA_HW_MODS
+DEVICE_VARS += ZYXEL_MODEL_IDS
 
 define Image/Prepare
 	# For UBI we want only one extra block
@@ -117,9 +118,9 @@ define Build/mstc-header
   mv $@.new $@
 endef
 
-define Build/zyxel-nwa-fit-filogic
+define Build/zyxel-fit-filogic
 	$(TOPDIR)/scripts/mkits-zyxel-fit-filogic.sh \
-		$@.its $@ "80 e1 81 e1 ff ff ff ff ff ff"
+		$@.its $@ "$(ZYXEL_MODEL_IDS)"
 	PATH=$(LINUX_DIR)/scripts/dtc:$(PATH) mkimage -f $@.its $@.new
 	@mv $@.new $@
 endef
@@ -2992,6 +2993,51 @@ define Device/mediatek_mt7988a-rfb
 endef
 TARGET_DEVICES += mediatek_mt7988a-rfb
 
+define Device/mercusys_h90x-mr90x-common
+  DEVICE_VENDOR := MERCUSYS
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware
+  UBINIZE_OPTS := -E 5
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+endef
+
+define Device/mercusys_h90x-mr90x-common-ubi
+  $(call Device/mercusys_h90x-mr90x-common)
+  DEVICE_DTC_FLAGS := --pad 4096
+  DEVICE_DTS_LOADADDR := 0x43f00000
+  KERNEL_IN_UBI := 1
+  UBOOTENV_IN_UBI := 1
+  IMAGES := sysupgrade.itb
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  KERNEL := kernel-bin | libdeflate-gzip
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | \
+	pad-to 64k
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-with-rootfs | \
+	append-metadata
+  ARTIFACTS := bl31-uboot.fip preloader.bin
+  ARTIFACT/preloader.bin := mt7986-bl2 spim-nand-ubi-ddr3
+endef
+
+define Device/mercusys_h90x-v1
+  DEVICE_MODEL := Halo H90X v1
+  DEVICE_DTS := mt7986b-mercusys-h90x-v1
+  $(call Device/mercusys_h90x-mr90x-common)
+  IMAGE_SIZE := 43008k
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+endef
+TARGET_DEVICES += mercusys_h90x-v1
+
+define Device/mercusys_h90x-v1-ubi
+  DEVICE_MODEL := Halo H90X v1 (UBI)
+  DEVICE_DTS := mt7986b-mercusys-h90x-v1-ubi
+  $(call Device/mercusys_h90x-mr90x-common-ubi)
+  ARTIFACT/bl31-uboot.fip := mt7986-bl31-uboot mercusys_h90x-v1
+endef
+TARGET_DEVICES += mercusys_h90x-v1-ubi
+
 define Device/mercusys_mr80x-v3
   DEVICE_VENDOR := MERCUSYS
   DEVICE_MODEL := MR80X
@@ -3049,44 +3095,19 @@ endef
 TARGET_DEVICES += mercusys_mr85x-ubi
 
 define Device/mercusys_mr90x-v1
-  DEVICE_VENDOR := MERCUSYS
   DEVICE_MODEL := MR90X v1
   DEVICE_DTS := mt7986b-mercusys-mr90x-v1
-  DEVICE_DTS_DIR := ../dts
-  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware
-  UBINIZE_OPTS := -E 5
-  BLOCKSIZE := 128k
-  PAGESIZE := 2048
+  $(call Device/mercusys_h90x-mr90x-common)
   IMAGE_SIZE := 51200k
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
 endef
 TARGET_DEVICES += mercusys_mr90x-v1
 
 define Device/mercusys_mr90x-v1-ubi
-  DEVICE_VENDOR := MERCUSYS
   DEVICE_MODEL := MR90X v1 (UBI)
   DEVICE_DTS := mt7986b-mercusys-mr90x-v1-ubi
-  DEVICE_DTS_DIR := ../dts
-  DEVICE_DTC_FLAGS := --pad 4096
-  DEVICE_DTS_LOADADDR := 0x43f00000
-  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware
-  UBINIZE_OPTS := -E 5
-  BLOCKSIZE := 128k
-  PAGESIZE := 2048
-  KERNEL_IN_UBI := 1
-  UBOOTENV_IN_UBI := 1
-  IMAGES := sysupgrade.itb
-  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
-  KERNEL := kernel-bin | libdeflate-gzip
-  KERNEL_INITRAMFS := kernel-bin | lzma | \
-	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | \
-	pad-to 64k
-  IMAGE/sysupgrade.itb := append-kernel | \
-	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-with-rootfs | \
-	append-metadata
-  ARTIFACTS := bl31-uboot.fip preloader.bin
+  $(call Device/mercusys_h90x-mr90x-common-ubi)
   ARTIFACT/bl31-uboot.fip := mt7986-bl31-uboot mercusys_mr90x-v1
-  ARTIFACT/preloader.bin := mt7986-bl2 spim-nand-ubi-ddr3
 endef
 TARGET_DEVICES += mercusys_mr90x-v1-ubi
 
@@ -3837,6 +3858,21 @@ define Device/tplink_eap683-lr
 endef
 TARGET_DEVICES += tplink_eap683-lr
 
+define Device/tplink_ex820v
+  DEVICE_VENDOR := TP-Link
+  DEVICE_MODEL := EX820v
+  DEVICE_DTS := mt7986a-tplink-ex820v
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware \
+	kmod-usb3 kmod-usb-ledtrig-usbport
+  UBINIZE_OPTS := -E 5
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+  IMAGE_SIZE := 40960k
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata | check-size
+endef
+TARGET_DEVICES += tplink_ex820v
+
 define Device/tplink_re6000xd
   DEVICE_VENDOR := TP-Link
   DEVICE_MODEL := RE6000XD
@@ -4454,6 +4490,23 @@ define Device/zbtlink_zbt-z8106ax-t
 endef
 TARGET_DEVICES += zbtlink_zbt-z8106ax-t
 
+define Device/zbtlink_zbt-z8114ax-ds
+  DEVICE_VENDOR := Zbtlink
+  DEVICE_MODEL := ZBT-Z8114AX-DS
+  DEVICE_DTS := mt7981b-zbtlink-zbt-z8114ax-ds
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware kmod-usb-net-qmi-wwan kmod-usb-serial-option kmod-usb3 kmod-usb-storage kmod-hwmon-pwmfan
+  KERNEL_IN_UBI := 1
+  UBINIZE_OPTS := -E 5
+  BLOCKSIZE := 128k
+  PAGESIZE := 2048
+  IMAGE_SIZE := 65536k
+  IMAGES += factory.bin
+  IMAGE/factory.bin := append-ubi | check-size $$(IMAGE_SIZE)
+  IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+endef
+TARGET_DEVICES += zbtlink_zbt-z8114ax-ds
+
 define Device/zbtlink_zbt-z8803be
   DEVICE_VENDOR := Zbtlink
   DEVICE_MODEL := ZBT-Z8803BE
@@ -4540,12 +4593,8 @@ define Device/zyxel_ex5700-telenor
 endef
 TARGET_DEVICES += zyxel_ex5700-telenor
 
-define Device/zyxel_nwa50ax-pro
+define Device/zyxel_filogic_common
   DEVICE_VENDOR := Zyxel
-  DEVICE_MODEL := NWA50AX Pro
-  DEVICE_ALT0_VENDOR := Zyxel
-  DEVICE_ALT0_MODEL := NWA90AX Pro
-  DEVICE_DTS := mt7981b-zyxel-nwa50ax-pro
   DEVICE_DTS_DIR := ../dts
   DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware zyxel-bootconfig
   DEVICE_DTS_LOADADDR := 0x44000000
@@ -4555,10 +4604,36 @@ define Device/zyxel_nwa50ax-pro
   IMAGE_SIZE := 51200k
   KERNEL_IN_UBI := 1
   IMAGES += factory.bin
-  IMAGE/factory.bin := append-ubi | check-size $$$$(IMAGE_SIZE) | zyxel-nwa-fit-filogic
+  IMAGE/factory.bin := append-ubi | check-size $$$$(IMAGE_SIZE) | zyxel-fit-filogic
   IMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata
+  ZYXEL_MODEL_IDS :=
+endef
+
+define Device/zyxel_nwa50ax-pro
+  $(call Device/zyxel_filogic_common)
+  DEVICE_MODEL := NWA50AX Pro
+  DEVICE_ALT0_VENDOR := Zyxel
+  DEVICE_ALT0_MODEL := NWA90AX Pro
+  DEVICE_DTS := mt7981b-zyxel-nwa50ax-pro
+  ZYXEL_MODEL_IDS := 80e1 81e1
 endef
 TARGET_DEVICES += zyxel_nwa50ax-pro
+
+define Device/zyxel_nwa55ax-ptp
+  $(call Device/zyxel_filogic_common)
+  DEVICE_MODEL := NWA55AX PTP
+  DEVICE_DTS := mt7981b-zyxel-nwa55ax-ptp
+  ZYXEL_MODEL_IDS := a4e1
+endef
+TARGET_DEVICES += zyxel_nwa55ax-ptp
+
+define Device/zyxel_wax300h
+  $(call Device/zyxel_filogic_common)
+  DEVICE_MODEL := WAX300H
+  DEVICE_DTS := mt7981b-zyxel-wax300h
+  ZYXEL_MODEL_IDS := 84e1
+endef
+TARGET_DEVICES += zyxel_wax300h
 
 define Device/zyxel_wx5600-t0-ubootmod
   DEVICE_VENDOR := Zyxel

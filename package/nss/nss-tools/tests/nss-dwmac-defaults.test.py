@@ -271,6 +271,11 @@ json_cleanup() { :; }
     # Control: an entry without keep_bridge still puts its trunk into br-lan alone.
     r = run('yuncore,ax830', wax630e)
     check(r, {'network.@device[0].ports': 'lan'}, 'ax830 without keep_bridge')
+    # Lite-On WPX8324: the same layout (GE PHY 'lan' on GMAC0, QCA8081 'wan' on GMAC1).
+    r = run('liteon,wpx8324', wax630e)
+    check(r, {'nss.general.fw_mask': '0x3', 'nss.general.trunk': 'lan', 'nss.general.trunk_if': '0',
+              'nss.general.extra_ports': '1:wan', 'nss.general.fabric': 'none',
+              'network.@device[0].ports': 'lan'}, 'wpx8324')
 
     # TP-Link Archer AX53 v2 / AX55 v1: an RTL8367S-VB on the unbind route - fabric
     # rtl8367s with the switch device at address 29, WAN on VLAN 2 of the

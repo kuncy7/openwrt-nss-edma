@@ -266,6 +266,7 @@ nss_dwmac_board_defaults() {
 		vtu=''
 		keep_bridge=1
 		;;
+	liteon,wpx8324|\
 	yuncore,ax830|\
 	yuncore,ax850)
 		# UNTESTED. The MX6200's layout: no switch, GMAC0 = 'lan' (GE

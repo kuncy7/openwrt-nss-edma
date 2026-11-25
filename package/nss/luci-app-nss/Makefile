@@ -16,8 +16,10 @@ LUCI_TITLE:=LuCI status page for NSS offloading
 LUCI_DESCRIPTION:=Status -> NSS Offload: renders 'nss-status -j' (firmware state, \
  cores, ports, Wi-Fi radios, ECM acceleration counts, SQM and fast-lane health), and \
  adds the NSS core load and the ECM-accelerated connections to Status -> Overview.
-LUCI_DEPENDS:=+luci-base +TARGET_qualcommax_ipq50xx:nss-tools-dwmac \
-	+!TARGET_qualcommax_ipq50xx:nss-tools
+# IPQ50xx only. Selecting nss-tools on the other targets as well made
+# kconfig report a recursive dependency: nss-tools-dwmac conflicts with
+# nss-tools, and nss-tools is @BROKEN there anyway.
+LUCI_DEPENDS:=@TARGET_qualcommax_ipq50xx +luci-base +nss-tools-dwmac
 LUCI_PKGARCH:=all
 
 PKG_LICENSE:=GPL-2.0-only

@@ -210,6 +210,14 @@ define Device/cudy_p5
 endef
 TARGET_DEVICES += cudy_p5
 
+define Device/cudy_p5-ubootmod
+	$(call Device/cudy_p5)
+	DEVICE_VARIANT := U-Boot mod
+	DEVICE_DTS := ipq5018-cudy-p5-ubootmod
+	IMAGE_SIZE := 123136k
+endef
+TARGET_DEVICES += cudy_p5-ubootmod
+
 define Device/elecom_wrc-x3000gs2
 	$(call Device/FitImageLzma)
 	DEVICE_VENDOR := ELECOM

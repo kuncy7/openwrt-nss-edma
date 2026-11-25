@@ -1,0 +1,880 @@
+From: Anton <17167061+ExtremeBoy@users.noreply.github.com>
+Subject: [PATCH] net: dsa: yt921x: add the yt921x-8021q tagging mode
+
+Lets the NSS firmware's VLAN nodes carry a YT9215 board on the dsa topology: the CPU port talks plain 802.1Q (tag_8021q VIDs) instead
+of the Motorcomm CPU tag, which the firmware cannot parse.
+
+The tagger is net/dsa/tag_yt921x_8021q.c; the switch side enters and
+leaves the mode in yt921x_8021q_mode(), saving every register it changes
+and putting it back when the tagger is switched to yt921x again.
+
+Besides the tag_8021q VLANs, a YT9215S needed these things in that mode,
+all found on a Xiaomi CR8808 (M79, YT9215S on IPQ5018) with register
+experiments, none described by the driver before:
+
+ - STP instance 0 has the CPU port disabled unless the CPU tag mode set
+   it up; in 8021q mode it is put in FORWARD, or nothing reaches the CPU.
+ - EXT_CPU_PORT must be cleared: with PORT_EN set the switch keeps
+   treating port 8 as the CPU-tag port and strips the 802.1Q tag on the
+   way to it.
+ - Egress C-tag mode, bits 13:12 of 0x100080 + 4 * port: the reset value
+   0 sends a frame out as it came in, so the CPU port never adds the VID
+   and a user port never removes it. 1 follows the VLAN entry's untag
+   bitmap (tagged towards the CPU, untagged on user ports); set on every
+   port in use.
+ - The unknown unicast/multicast filters the driver sets on every port
+   (traps in CPU tag mode) are cleared, or a unicast to an address the
+   switch has not learned - the gateway behind a standalone wan port -
+   is dropped instead of flooded in its VLAN.
+ - The egress TPID table (YT921X_TPID_EGRn) comes out of reset empty and
+   every port's C-tag uses entry 0: tags went out with TPID 0x0000. The
+   tagger's VLAN pop does not look at the TPID, so the host path worked,
+   but the NSS firmware counted every frame as eth_rx_unknown_l3_protocol
+   and sent it to the host. Entry 0 is set to 0x8100.
+ - FDB learning, which the driver turns off on standalone ports. Every
+   frame to the gateway behind the standalone wan port was then unknown
+   unicast, flooded by the switch at ~100 Mbit/s at most: LAN->WAN
+   stayed at 94 Mbit/s while WAN->LAN ran at line rate. Each standalone
+   port has its own tag_8021q VID, so it learns in this mode, also
+   across the STP state changes, which otherwise go by dp->learning.
+
+Measured on the CR8808 with the NSS plane on: LAN<->WAN routing at the
+1 GbE line rate (~940 Mbit/s), host ~95 % idle, 85 % of the packets
+forwarded by the firmware.
+
+Signed-off-by: Anton <17167061+ExtremeBoy@users.noreply.github.com>
+---
+--- a/drivers/net/dsa/Kconfig
++++ b/drivers/net/dsa/Kconfig
+@@ -170,6 +170,7 @@ config NET_DSA_YT92XX
+ 	tristate "Motorcomm YT9215 and YT9224 ethernet switch chip support"
+ 	select NET_DSA_TAG_YT921X
+ 	select NET_DSA_TAG_YT922X
++	select NET_DSA_TAG_YT921X_8021Q
+ 	select NET_IEEE8021Q_HELPERS if DCB
+ 	help
+ 	  This enables support for the Motorcomm YT9215 and YT9224 ethernet switch
+--- a/drivers/net/dsa/yt921x.c
++++ b/drivers/net/dsa/yt921x.c
+@@ -3565,6 +3565,14 @@ yt921x_dsa_port_vlan_filtering(struct ds
+ 	if (dsa_is_cpu_port(ds, port))
+ 		return 0;
+ 
++	if (priv->tag_8021q) {
++		if (!vlan_filtering)
++			return 0;
++		NL_SET_ERR_MSG_MOD(extack,
++				   "yt921x-8021q: VLAN-aware bridges are not supported yet");
++		return -EOPNOTSUPP;
++	}
++
+ 	mutex_lock(&priv->reg_lock);
+ 	res = yt921x_vlan_filtering(priv, port, vlan_filtering);
+ 	mutex_unlock(&priv->reg_lock);
+@@ -3584,6 +3592,10 @@ yt921x_dsa_port_vlan_del(struct dsa_swit
+ 	if (dsa_is_cpu_port(ds, port))
+ 		return 0;
+ 
++	/* yt921x-8021q: see yt921x_dsa_port_vlan_add() */
++	if (priv->tag_8021q)
++		return 0;
++
+ 	mutex_lock(&priv->reg_lock);
+ 	do {
+ 		struct dsa_port *dp = dsa_to_port(ds, port);
+@@ -3621,6 +3633,18 @@ yt921x_dsa_port_vlan_add(struct dsa_swit
+ 	if (dsa_is_cpu_port(ds, port))
+ 		return 0;
+ 
++	/* yt921x-8021q: the tag_8021q VIDs do the forwarding; a
++	 * VLAN-unaware bridge's VLANs (VID 1, PVID, untagged) stay in
++	 * software. VLAN uppers of a port are not supported yet.
++	 */
++	if (priv->tag_8021q) {
++		if (vlan->obj.orig_dev || !vid)
++			return 0;
++		NL_SET_ERR_MSG_MOD(extack,
++				   "yt921x-8021q: VLAN uppers are not supported yet");
++		return -EOPNOTSUPP;
++	}
++
+ 	mutex_lock(&priv->reg_lock);
+ 	do {
+ 		struct dsa_port *dp = dsa_to_port(ds, port);
+@@ -3785,6 +3809,480 @@ yt921x_bridge_join(struct yt921x_priv *p
+ 	return 0;
+ }
+ 
++/* ---- yt921x-8021q: plain 802.1Q on the CPU port --------------------------
++ *
++ * The NSS firmware in front of the IPQ5018 GMAC parses 802.1Q but not the
++ * 8-byte Motorcomm CPU tag, so for NSS offload the switch talks to the CPU
++ * the tag_8021q way instead (net/dsa/tag_yt921x_8021q.c):
++ *
++ *  - no Motorcomm tag on the CPU port (EXT_CPU_PORT_TAG_EN off);
++ *  - every port VLAN-aware with ingress filtering; a user port is an
++ *    untagged member of its tag_8021q VID (3072 + port standalone, the
++ *    bridge VID in a VLAN-unaware bridge), which is also its PVID; the CPU
++ *    port is a tagged member of all of them (yt921x_vlan_add() does that);
++ *  - unknown unicast/multicast is flooded inside the VLAN instead of
++ *    trapped, since a trapped frame would need the CPU tag to say where it
++ *    came from;
++ *  - the CPU port takes tagged frames only, may reach every port (the VLAN
++ *    table limits it to the VID's members) and learns, so traffic to the
++ *    router is not flooded to every bridge port.
++ *
++ * First step: standalone ports and VLAN-unaware bridges only. VLAN-aware
++ * bridges and VLAN uppers of a port are refused with -EOPNOTSUPP.
++ * Port isolation keeps doing the bridge separation as in tag_yt921x mode.
++ */
++#include <linux/dsa/8021q.h>
++
++#define YT921X_ACT_UNK_ALL_PORTS_M	GENMASK(2 * YT921X_PORT_NUM - 1, 0)
++
++/* Per-port egress VLAN control, not described by the driver otherwise.
++ * Bits 13:12: C-tag mode. 0 (reset value) = leave as received;
++ * 1 = by the VLAN table's untag bitmap. Found on a YT9215S.
++ */
++#define YT921X_PORTn_EGR_VLAN(port)		(0x100080 + 4 * (port))
++#define  YT921X_PORT_EGR_VLAN_CTAG_MODE_M	GENMASK(13, 12)
++#define   YT921X_PORT_EGR_VLAN_CTAG_MODE_TABLE	1
++
++static int yt921x_8021q_cpu_port_mode(struct yt921x_priv *priv, int port,
++				      bool on)
++{
++	int res;
++
++	res = yt921x_reg_write(priv, YT921X_PORTn_ISOLATION(port),
++			       on ? BIT(port) : ~(u32)0);
++	if (res)
++		return res;
++
++	res = yt921x_vlan_aware_set(priv, port, on);
++	if (res)
++		return res;
++
++	res = yt921x_reg_toggle_bits(priv, YT921X_VLAN_IGR_FILTER,
++				     YT921X_VLAN_IGR_FILTER_PORTn(port), on);
++	if (res)
++		return res;
++
++	res = yt921x_reg_update_bits(priv, YT921X_PORTn_VLAN_CTRL1(port),
++				     YT921X_PORT_VLAN_CTRL1_CVLAN_DROP_TAGGED |
++				     YT921X_PORT_VLAN_CTRL1_CVLAN_DROP_UNTAGGED,
++				     on ? YT921X_PORT_VLAN_CTRL1_CVLAN_DROP_UNTAGGED : 0);
++	if (res)
++		return res;
++
++	res = yt921x_reg_toggle_bits(priv, YT921X_PORTn_LEARN(port),
++				     YT921X_PORT_LEARN_DIS, !on);
++	if (res)
++		return res;
++
++	/* Nothing sets an STP state for a CPU port, and the reset value in
++	 * instance 0 is DISABLED. Frames with the CPU tag bypass it; a plain
++	 * VLAN-aware CPU port does not, and the tag_8021q VLANs use
++	 * instance 0 (STP_ID 0): without this every frame to and from the
++	 * CPU is dropped.
++	 */
++	if (on) {
++		u32 val;
++
++		res = yt921x_reg_read(priv, YT921X_STPn(0), &val);
++		if (res)
++			return res;
++		priv->tag_8021q_cpu_stp = val & YT921X_STP_PORTn_M(port);
++	}
++
++	return yt921x_reg_update_bits(priv, YT921X_STPn(0),
++				      YT921X_STP_PORTn_M(port),
++				      on ? YT921X_STP_PORTn_FORWARD(port) :
++					   priv->tag_8021q_cpu_stp);
++}
++
++static int yt921x_8021q_user_port_mode(struct yt921x_priv *priv, int port,
++				       bool on)
++{
++	int res;
++
++	if (!on) {
++		res = yt921x_reg_clear_bits(priv, YT921X_VLAN_IGR_FILTER,
++					    YT921X_VLAN_IGR_FILTER_PORTn(port));
++		if (res)
++			return res;
++		return yt921x_userport_standalone(priv, port);
++	}
++
++	/* The PVID comes with the tag_8021q VID (BRIDGE_VLAN_INFO_PVID) */
++	res = yt921x_reg_clear_bits(priv, YT921X_PORTn_VLAN_CTRL1(port),
++				    YT921X_PORT_VLAN_CTRL1_CVLAN_DROP_TAGGED |
++				    YT921X_PORT_VLAN_CTRL1_CVLAN_DROP_UNTAGGED);
++	if (res)
++		return res;
++
++	res = yt921x_reg_set_bits(priv, YT921X_VLAN_IGR_FILTER,
++				  YT921X_VLAN_IGR_FILTER_PORTn(port));
++	if (res)
++		return res;
++
++	return yt921x_vlan_aware_set(priv, port, true);
++}
++
++/* Standalone ports learn in 8021q mode. The driver turns learning off on
++ * them, but here each has its own tag_8021q VID, so the entries stay with
++ * the port. Without it every frame to the gateway behind a standalone wan
++ * port is unknown unicast, which a YT9215S floods at ~100 Mbit/s at most.
++ */
++static int yt921x_8021q_standalone_learning(struct yt921x_priv *priv, int port)
++{
++	return yt921x_reg_clear_bits(priv, YT921X_PORTn_LEARN(port),
++				     YT921X_PORT_LEARN_DIS);
++}
++
++static int yt921x_8021q_mode(struct yt921x_priv *priv, bool on)
++{
++	struct dsa_switch *ds = &priv->ds;
++	struct dsa_port *dp;
++	u32 ctrl;
++	int err = 0;
++	int res;
++
++	/* In 8021q mode port 8 is an ordinary port: with EXT_CPU_PORT_PORT_EN
++	 * still set the switch strips the 802.1Q tag towards it (the CPU tag
++	 * would carry the VLAN), and the tagger gets untagged frames.
++	 */
++	ctrl = on ? 0 : YT921X_EXT_CPU_PORT_TAG_EN |
++		       YT921X_EXT_CPU_PORT_PORT_EN |
++		       YT921X_EXT_CPU_PORT_PORT(__ffs(priv->cpu_ports_mask));
++	res = yt921x_reg_write(priv, YT921X_EXT_CPU_PORT, ctrl);
++	if (res && on)
++		return res;
++	err = err ?: res;
++
++	if (on && !priv->tag_8021q_saved) {
++		res = yt921x_reg_read(priv, YT921X_ACT_UNK_UCAST,
++				      &priv->tag_8021q_act_unk[0]);
++		if (res)
++			return res;
++		res = yt921x_reg_read(priv, YT921X_ACT_UNK_MCAST,
++				      &priv->tag_8021q_act_unk[1]);
++		if (res)
++			return res;
++		priv->tag_8021q_saved = true;
++	}
++
++	/* Unknown unicast/multicast filters: set on every port by the driver,
++	 * as tag_yt921x mode traps such frames instead of flooding them. With
++	 * them on, the flooding below drops a unicast to an address the
++	 * switch has not learned, e.g. the gateway behind a standalone port.
++	 */
++	if (on && !priv->tag_8021q_filt_saved) {
++		res = yt921x_reg_read(priv, YT921X_FILTER_UNK_UCAST,
++				      &priv->tag_8021q_filt[0]);
++		if (res)
++			return res;
++		res = yt921x_reg_read(priv, YT921X_FILTER_UNK_MCAST,
++				      &priv->tag_8021q_filt[1]);
++		if (res)
++			return res;
++		priv->tag_8021q_filt_saved = true;
++	}
++	if (priv->tag_8021q_filt_saved) {
++		res = yt921x_reg_write(priv, YT921X_FILTER_UNK_UCAST,
++				       on ? 0 : priv->tag_8021q_filt[0]);
++		if (res && on)
++			return res;
++		err = err ?: res;
++		res = yt921x_reg_write(priv, YT921X_FILTER_UNK_MCAST,
++				       on ? 0 : priv->tag_8021q_filt[1]);
++		if (res && on)
++			return res;
++		err = err ?: res;
++		if (!on)
++			priv->tag_8021q_filt_saved = false;
++	}
++	if (priv->tag_8021q_saved) {
++		/* ACTn = 0: forward (flood within the VLAN) for every port;
++		 * the bypass bits above the port fields are kept.
++		 */
++		res = yt921x_reg_write(priv, YT921X_ACT_UNK_UCAST,
++				       on ? priv->tag_8021q_act_unk[0] &
++					    ~YT921X_ACT_UNK_ALL_PORTS_M :
++					    priv->tag_8021q_act_unk[0]);
++		if (res && on)
++			return res;
++		err = err ?: res;
++		res = yt921x_reg_write(priv, YT921X_ACT_UNK_MCAST,
++				       on ? priv->tag_8021q_act_unk[1] &
++					    ~YT921X_ACT_UNK_ALL_PORTS_M :
++					    priv->tag_8021q_act_unk[1]);
++		if (res && on)
++			return res;
++		err = err ?: res;
++		if (!on)
++			priv->tag_8021q_saved = false;
++	}
++
++	/* Egress TPID table: empty after reset, so a tag added on egress
++	 * carried TPID 0x0000 - invisible to the tagger, whose VLAN pop does
++	 * not check it, but an unknown L3 protocol to the NSS firmware.
++	 * Entry 0 is what every port's C-tag selects (PORT_EGR TPID_CTAG = 0).
++	 */
++	if (on && !priv->tag_8021q_tpid_saved) {
++		res = yt921x_reg_read(priv, YT921X_TPID_EGRn(0),
++				      &priv->tag_8021q_tpid_egr0);
++		if (res)
++			return res;
++		priv->tag_8021q_tpid_saved = true;
++	}
++	if (priv->tag_8021q_tpid_saved) {
++		res = yt921x_reg_write(priv, YT921X_TPID_EGRn(0),
++				       on ? ETH_P_8021Q : priv->tag_8021q_tpid_egr0);
++		if (res && on)
++			return res;
++		err = err ?: res;
++		if (!on)
++			priv->tag_8021q_tpid_saved = false;
++	}
++
++	/* Egress C-tag mode of every port in use. In the reset mode a frame
++	 * leaves as it came in, so the CPU port never adds the tag_8021q VID
++	 * and a user port never strips it; "by the VLAN table" makes the
++	 * untag bitmap count: tagged towards the CPU, untagged on user ports.
++	 */
++	if (on)
++		priv->tag_8021q_egr_saved = true;
++	dsa_switch_for_each_port(dp, ds) {
++		u32 reg = YT921X_PORTn_EGR_VLAN(dp->index);
++
++		if (!dsa_port_is_user(dp) && !dsa_port_is_cpu(dp))
++			continue;
++		if (on) {
++			res = yt921x_reg_read(priv, reg,
++					      &priv->tag_8021q_egr[dp->index]);
++			if (res)
++				return res;
++			res = yt921x_reg_update_bits(priv, reg,
++						     YT921X_PORT_EGR_VLAN_CTAG_MODE_M,
++						     FIELD_PREP(YT921X_PORT_EGR_VLAN_CTAG_MODE_M,
++								YT921X_PORT_EGR_VLAN_CTAG_MODE_TABLE));
++			if (res)
++				return res;
++		} else if (priv->tag_8021q_egr_saved) {
++			res = yt921x_reg_write(priv, reg,
++					       priv->tag_8021q_egr[dp->index]);
++			err = err ?: res;
++		}
++	}
++	if (!on)
++		priv->tag_8021q_egr_saved = false;
++
++	dsa_switch_for_each_cpu_port(dp, ds) {
++		res = yt921x_8021q_cpu_port_mode(priv, dp->index, on);
++		if (res && on)
++			return res;
++		err = err ?: res;
++	}
++
++	dsa_switch_for_each_user_port(dp, ds) {
++		res = yt921x_8021q_user_port_mode(priv, dp->index, on);
++		if (res && on)
++			return res;
++		err = err ?: res;
++		if (on && !dsa_port_bridge_dev_get(dp)) {
++			res = yt921x_8021q_standalone_learning(priv, dp->index);
++			if (res)
++				return res;
++		}
++	}
++
++	return err;
++}
++
++static int
++yt921x_dsa_tag_8021q_vlan_add(struct dsa_switch *ds, int port, u16 vid,
++			      u16 flags)
++{
++	struct yt921x_priv *priv = to_yt921x_priv(ds);
++	bool user = !dsa_is_cpu_port(ds, port);
++	int res;
++
++	mutex_lock(&priv->reg_lock);
++	/* yt921x_vlan_add() puts the CPU ports in as tagged members too */
++	res = yt921x_vlan_add(priv, port, vid,
++			      user && (flags & BRIDGE_VLAN_INFO_UNTAGGED));
++	if (!res && user && (flags & BRIDGE_VLAN_INFO_PVID))
++		res = yt921x_port_set_pvid(priv, port, vid);
++	mutex_unlock(&priv->reg_lock);
++
++	return res;
++}
++
++static int
++yt921x_dsa_tag_8021q_vlan_del(struct dsa_switch *ds, int port, u16 vid)
++{
++	struct yt921x_priv *priv = to_yt921x_priv(ds);
++	int res;
++
++	mutex_lock(&priv->reg_lock);
++	res = yt921x_vlan_del(priv, port, vid);
++	mutex_unlock(&priv->reg_lock);
++
++	return res;
++}
++
++/* A port out of its bridge, in 8021q mode: talks to the CPU only, does not
++ * learn, and the former bridge mates no longer reach it. Unlike
++ * yt921x_userport_standalone() it stays VLAN-aware.
++ */
++static int yt921x_8021q_userport_standalone(struct yt921x_priv *priv, int port)
++{
++	int res;
++
++	res = yt921x_reg_write(priv, YT921X_PORTn_ISOLATION(port),
++			       ~(u32)priv->cpu_ports_mask);
++	if (res)
++		return res;
++
++	res = yt921x_8021q_standalone_learning(priv, port);
++	if (res)
++		return res;
++
++	return yt921x_isolate(priv, port);
++}
++
++static int
++yt921x_8021q_bridge_join(struct dsa_switch *ds, int port,
++			 struct dsa_bridge bridge, bool *tx_fwd_offload,
++			 struct netlink_ext_ack *extack)
++{
++	struct yt921x_priv *priv = to_yt921x_priv(ds);
++	u16 vid = dsa_tag_8021q_standalone_vid(dsa_to_port(ds, port));
++	int res;
++
++	if (br_vlan_enabled(bridge.dev)) {
++		NL_SET_ERR_MSG_MOD(extack,
++				   "yt921x-8021q: VLAN-aware bridges are not supported yet");
++		res = -EOPNOTSUPP;
++		goto undo;
++	}
++
++	/* The port trades its standalone VID for the bridge's; tag_8021q
++	 * calls yt921x_dsa_tag_8021q_vlan_del/_add for the swap.
++	 */
++	res = dsa_tag_8021q_bridge_join(ds, port, bridge, tx_fwd_offload,
++					extack);
++	if (res)
++		goto undo;
++
++	/* What the host sends to this port without the bridge forwarding
++	 * it (link-local frames) still leaves in the standalone VID: keep
++	 * the port, untagged, and the CPU in it, without making it the PVID.
++	 */
++	mutex_lock(&priv->reg_lock);
++	res = yt921x_vlan_add(priv, port, vid, true);
++	mutex_unlock(&priv->reg_lock);
++	if (res) {
++		dsa_tag_8021q_bridge_leave(ds, port, bridge);
++		goto undo;
++	}
++
++	return 0;
++
++undo:
++	mutex_lock(&priv->reg_lock);
++	yt921x_8021q_userport_standalone(priv, port);
++	mutex_unlock(&priv->reg_lock);
++	return res;
++}
++
++static void
++yt921x_8021q_bridge_leave(struct dsa_switch *ds, int port,
++			  struct dsa_bridge bridge)
++{
++	struct yt921x_priv *priv = to_yt921x_priv(ds);
++	struct device *dev = to_device(priv);
++	int res;
++
++	mutex_lock(&priv->reg_lock);
++	res = yt921x_8021q_userport_standalone(priv, port);
++	mutex_unlock(&priv->reg_lock);
++	if (res)
++		dev_err(dev, "Failed to %s port %d: %i\n", "unbridge", port,
++			res);
++
++	/* Back to the standalone VID as PVID, out of the bridge's VID */
++	dsa_tag_8021q_bridge_leave(ds, port, bridge);
++}
++
++/* Called by the DSA core with the conduit down, through
++ * /sys/class/net/<conduit>/dsa/tagging (the NSS init script does this).
++ */
++static int
++yt921x_dsa_change_tag_protocol(struct dsa_switch *ds,
++			       enum dsa_tag_protocol proto)
++{
++	struct yt921x_priv *priv = to_yt921x_priv(ds);
++	struct dsa_port *dp;
++	bool on;
++	int res;
++
++	switch (proto) {
++	case DSA_TAG_PROTO_YT921X:
++		on = false;
++		break;
++	case DSA_TAG_PROTO_YT921X_8021Q:
++		on = true;
++		break;
++	default:
++		return -EPROTONOSUPPORT;
++	}
++
++	if (on == priv->tag_8021q)
++		return 0;
++
++	/* Bridge and VLAN state is not replayed across a mode change */
++	dsa_switch_for_each_user_port(dp, ds)
++		if (dsa_port_bridge_dev_get(dp) ||
++		    (dp->user && netdev_has_any_upper_dev(dp->user)))
++			return -EBUSY;
++
++	if (!on) {
++		dsa_tag_8021q_unregister(ds);
++		priv->tag_8021q = false;
++		mutex_lock(&priv->reg_lock);
++		res = yt921x_8021q_mode(priv, false);
++		mutex_unlock(&priv->reg_lock);
++		return res;
++	}
++
++	mutex_lock(&priv->reg_lock);
++	res = yt921x_8021q_mode(priv, true);
++	mutex_unlock(&priv->reg_lock);
++	if (res)
++		goto restore;
++
++	priv->tag_8021q = true;
++	res = dsa_tag_8021q_register(ds, htons(ETH_P_8021Q));
++	if (res) {
++		priv->tag_8021q = false;
++		goto restore;
++	}
++
++	return 0;
++
++restore:
++	mutex_lock(&priv->reg_lock);
++	yt921x_8021q_mode(priv, false);
++	mutex_unlock(&priv->reg_lock);
++	return res;
++}
++
++static void yt921x_dsa_teardown(struct dsa_switch *ds)
++{
++	if (!ds->tag_8021q_ctx)
++		return;
++
++	rtnl_lock();
++	dsa_tag_8021q_unregister(ds);
++	rtnl_unlock();
++}
++
+ static int
+ yt921x_bridge_flags(struct yt921x_priv *priv, int port,
+ 		    struct switchdev_brport_flags flags)
+@@ -3879,6 +4377,11 @@ yt921x_dsa_port_bridge_leave(struct dsa_
+ 	if (dsa_is_cpu_port(ds, port))
+ 		return;
+ 
++	if (priv->tag_8021q) {
++		yt921x_8021q_bridge_leave(ds, port, bridge);
++		return;
++	}
++
+ 	mutex_lock(&priv->reg_lock);
+ 	res = yt921x_bridge_leave(priv, port);
+ 	mutex_unlock(&priv->reg_lock);
+@@ -3906,8 +4409,11 @@ yt921x_dsa_port_bridge_join(struct dsa_s
+ 	mutex_lock(&priv->reg_lock);
+ 	res = yt921x_bridge_join(priv, port, ports_mask);
+ 	mutex_unlock(&priv->reg_lock);
++	if (res || !priv->tag_8021q)
++		return res;
+ 
+-	return res;
++	return yt921x_8021q_bridge_join(ds, port, bridge, tx_fwd_offload,
++					 extack);
+ }
+ 
+ static int
+@@ -3993,12 +4499,17 @@ yt921x_dsa_port_stp_state_set(struct dsa
+ 		break;
+ 	case BR_STATE_LEARNING:
+ 		ctrl = YT921X_STP_PORTn_LEARNING(port);
+-		learning = dp->learning;
++		/* standalone ports learn in 8021q mode, see
++		 * yt921x_8021q_standalone_learning()
++		 */
++		learning = dp->learning ||
++			   (priv->tag_8021q && !dsa_port_bridge_dev_get(dp));
+ 		break;
+ 	case BR_STATE_FORWARDING:
+ 	default:
+ 		ctrl = YT921X_STP_PORTn_FORWARD(port);
+-		learning = dp->learning;
++		learning = dp->learning ||
++			   (priv->tag_8021q && !dsa_port_bridge_dev_get(dp));
+ 		break;
+ 	case BR_STATE_BLOCKING:
+ 		ctrl = YT921X_STP_PORTn_BLOCKING(port);
+@@ -4498,7 +5009,8 @@ static enum dsa_tag_protocol
+ yt921x_dsa_get_tag_protocol(struct dsa_switch *ds, int port,
+ 			    enum dsa_tag_protocol m)
+ {
+-	return DSA_TAG_PROTO_YT921X;
++	return to_yt921x_priv(ds)->tag_8021q ? DSA_TAG_PROTO_YT921X_8021Q :
++						  DSA_TAG_PROTO_YT921X;
+ }
+ 
+ static int yt921x_dsa_port_setup(struct dsa_switch *ds, int port)
+@@ -4981,6 +5493,9 @@ static int yt921x_dsa_setup(struct dsa_s
+ 	if (res)
+ 		return res;
+ 
++	/* yt921x-8021q needs bridge numbers (tag_8021q bridge VIDs) */
++	ds->max_num_bridges = DSA_TAG_8021Q_MAX_NUM_BRIDGES;
++
+ 	return 0;
+ }
+ 
+@@ -5052,6 +5567,10 @@ static const struct dsa_switch_ops yt921
+ #endif
+ 	/* port */
+ 	.get_tag_protocol	= yt921x_dsa_get_tag_protocol,
++	.change_tag_protocol	= yt921x_dsa_change_tag_protocol,
++	.tag_8021q_vlan_add	= yt921x_dsa_tag_8021q_vlan_add,
++	.tag_8021q_vlan_del	= yt921x_dsa_tag_8021q_vlan_del,
++	.teardown		= yt921x_dsa_teardown,
+ 	.phylink_get_caps	= yt921x_dsa_phylink_get_caps,
+ 	.port_setup		= yt921x_dsa_port_setup,
+ #if IS_ENABLED(CONFIG_DCB)
+--- a/drivers/net/dsa/yt921x.h
++++ b/drivers/net/dsa/yt921x.h
+@@ -1107,6 +1107,20 @@ struct yt921x_priv {
+ 	struct yt922x_vlan *yt922x_vlans;
+ 	u16 yt922x_pvid[YT921X_PORT_NUM];
+ 	bool yt922x_vlan_filtering[YT921X_PORT_NUM];
++
++	/* yt921x-8021q: the CPU port speaks plain 802.1Q, not the
++	 * Motorcomm tag; registers saved to go back to tag_yt921x.
++	 */
++	bool tag_8021q;
++	bool tag_8021q_saved;
++	u32 tag_8021q_act_unk[2];
++	u32 tag_8021q_cpu_stp;
++	bool tag_8021q_egr_saved;
++	u32 tag_8021q_egr[YT921X_PORT_NUM];
++	bool tag_8021q_filt_saved;
++	u32 tag_8021q_filt[2];
++	bool tag_8021q_tpid_saved;
++	u32 tag_8021q_tpid_egr0;
+ };
+ 
+ #endif
+--- a/include/net/dsa.h
++++ b/include/net/dsa.h
+@@ -58,6 +58,7 @@ struct tc_action;
+ #define DSA_TAG_PROTO_QCA_8021Q_VALUE		36
+ #define DSA_TAG_PROTO_RTL8365MB_8021Q_VALUE	37
+ #define DSA_TAG_PROTO_AN8855_8021Q_VALUE	38
++#define DSA_TAG_PROTO_YT921X_8021Q_VALUE	39
+ #define DSA_TAG_PROTO_MXL862_VALUE		30
+ #define DSA_TAG_PROTO_MXL862_8021Q_VALUE	31
+ #define DSA_TAG_PROTO_YT921X_VALUE		32
+@@ -99,6 +100,7 @@ enum dsa_tag_protocol {
+ 	DSA_TAG_PROTO_QCA_8021Q		= DSA_TAG_PROTO_QCA_8021Q_VALUE,
+ 	DSA_TAG_PROTO_RTL8365MB_8021Q	= DSA_TAG_PROTO_RTL8365MB_8021Q_VALUE,
+ 	DSA_TAG_PROTO_AN8855_8021Q		= DSA_TAG_PROTO_AN8855_8021Q_VALUE,
++	DSA_TAG_PROTO_YT921X_8021Q	= DSA_TAG_PROTO_YT921X_8021Q_VALUE,
+ 	DSA_TAG_PROTO_MXL862		= DSA_TAG_PROTO_MXL862_VALUE,
+ 	DSA_TAG_PROTO_MXL862_8021Q	= DSA_TAG_PROTO_MXL862_8021Q_VALUE,
+ 	DSA_TAG_PROTO_YT921X		= DSA_TAG_PROTO_YT921X_VALUE,
+--- a/net/dsa/Kconfig
++++ b/net/dsa/Kconfig
+@@ -32,6 +32,14 @@ config NET_DSA_TAG_AN8855_8021Q
+ 	  MediaTek special tag. The conduit then sees plain VLAN frames,
+ 	  which anything in front of the CPU can parse.
+ 
++config NET_DSA_TAG_YT921X_8021Q
++	tristate "Tag driver for Motorcomm YT921x switches, using VLAN"
++	help
++	  Say Y or M if you want to enable support for tagging frames for
++	  Motorcomm YT921x switches using 802.1Q VLAN tags instead of the
++	  Motorcomm CPU tag. The conduit then sees plain VLAN frames, which
++	  anything in front of the CPU (e.g. the NSS firmware) can parse.
++
+ config NET_DSA_TAG_AR9331
+ 	tristate "Tag driver for Atheros AR9331 SoC with built-in switch"
+ 	help
+--- a/net/dsa/Makefile
++++ b/net/dsa/Makefile
+@@ -21,6 +21,7 @@ dsa_core-y += \
+ 
+ # tagging formats
+ obj-$(CONFIG_NET_DSA_TAG_AN8855_8021Q) += tag_an8855_8021q.o
++obj-$(CONFIG_NET_DSA_TAG_YT921X_8021Q) += tag_yt921x_8021q.o
+ obj-$(CONFIG_NET_DSA_TAG_AR9331) += tag_ar9331.o
+ obj-$(CONFIG_NET_DSA_TAG_BRCM_COMMON) += tag_brcm.o
+ obj-$(CONFIG_NET_DSA_TAG_DSA_COMMON) += tag_dsa.o
+--- /dev/null
++++ b/net/dsa/tag_yt921x_8021q.c
+@@ -0,0 +1,149 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * 802.1Q VLAN-based tag driver for the Motorcomm YT921x switches, built on
++ * the tag_8021q framework: the source port travels in a VLAN tag the switch
++ * itself inserts, instead of the 8-byte Motorcomm CPU tag that only the
++ * switch and tag_yt921x understand. That keeps the conduit's frames plain
++ * 802.1Q, which any MAC - and the Qualcomm NSS firmware in front of the
++ * IPQ5018 GMAC - parses natively.
++ *
++ * Same wire format and much the same code as tag_an8855_8021q,
++ * tag_qca_8021q and tag_rtl8365mb_8021q; only the switch side differs
++ * (yt921x_dsa_change_tag_protocol and the tag_8021q_vlan_add/del hooks in
++ * drivers/net/dsa/yt921x.c).
++ */
++#include <linux/dsa/8021q.h>
++#include <linux/if_bridge.h>
++#include <linux/if_vlan.h>
++#include <net/dsa.h>
++
++#include "tag.h"
++#include "tag_8021q.h"
++
++#define YT921X_8021Q_NAME "yt921x-8021q"
++
++/* @dev's own 802.1Q upper with this VID, if any. */
++static struct net_device *yt921x_8021q_vlan_upper_of(struct net_device *dev,
++						     __be16 proto, u16 vid)
++{
++	struct net_device *upper;
++	struct list_head *iter;
++
++	netdev_for_each_upper_dev_rcu(dev, upper, iter) {
++		if (is_vlan_dev(upper) && vlan_dev_vlan_proto(upper) == proto &&
++		    vlan_dev_vlan_id(upper) == vid)
++			return upper;
++	}
++
++	return NULL;
++}
++
++/* Did an 802.1Q upper of this port tag the frame already? */
++static bool yt921x_8021q_upper_tagged(struct sk_buff *skb,
++				      struct net_device *netdev)
++{
++	u16 tci;
++
++	if (skb_vlan_tag_present(skb))
++		return !vid_is_dsa_8021q(skb_vlan_tag_get_id(skb));
++
++	if (skb->offload_fwd_mark || skb->protocol != htons(ETH_P_8021Q) ||
++	    __vlan_get_tag(skb, &tci))
++		return false;
++
++	tci &= VLAN_VID_MASK;
++	return !vid_is_dsa_8021q(tci) &&
++	       yt921x_8021q_vlan_upper_of(netdev, htons(ETH_P_8021Q), tci);
++}
++
++static struct sk_buff *yt921x_8021q_xmit(struct sk_buff *skb,
++					 struct net_device *netdev)
++{
++	struct dsa_port *dp = dsa_user_to_port(netdev);
++	u16 queue_mapping = skb_get_queue_mapping(skb);
++	u16 tx_vid = dsa_tag_8021q_standalone_vid(dp);
++	u8 pcp;
++
++	if (skb->offload_fwd_mark) {
++		unsigned int bridge_num = dsa_port_bridge_num_get(dp);
++		struct net_device *br = dsa_port_bridge_dev_get(dp);
++
++		/* A VLAN-aware bridge carries its own VID. */
++		if (br_vlan_enabled(br))
++			return skb;
++
++		tx_vid = dsa_tag_8021q_bridge_vid(bridge_num);
++	}
++
++	if (yt921x_8021q_upper_tagged(skb, netdev))
++		return skb;
++
++	pcp = netdev_txq_to_tc(netdev, queue_mapping);
++
++	return dsa_8021q_xmit(skb, netdev, ETH_P_8021Q,
++			      ((pcp << VLAN_PRIO_SHIFT) | tx_vid));
++}
++
++/* The user port that owns an 802.1Q upper with this VID. */
++static struct net_device *yt921x_8021q_find_vlan_upper(struct net_device *conduit,
++						       __be16 proto, u16 vid)
++{
++	struct dsa_port *cpu_dp = conduit->dsa_ptr;
++	struct dsa_port *dp;
++
++	dsa_tree_for_each_user_port(dp, cpu_dp->dst) {
++		if (dp->cpu_dp != cpu_dp)
++			continue;
++		if (yt921x_8021q_vlan_upper_of(dp->user, proto, vid))
++			return dp->user;
++	}
++
++	return NULL;
++}
++
++static struct sk_buff *yt921x_8021q_rcv(struct sk_buff *skb,
++					struct net_device *netdev)
++{
++	int src_port = -1, switch_id = -1, vbid = -1, vid = -1;
++
++	/* The conduit is promiscuous for the tag_8021q VIDs and passes MAC
++	 * control frames up too; nothing above wants PAUSE.
++	 */
++	if (unlikely(eth_hdr(skb)->h_proto == htons(ETH_P_PAUSE)))
++		return NULL;
++
++	dsa_8021q_rcv(skb, &src_port, &switch_id, &vbid, &vid);
++
++	if (vid >= 0 && !vid_is_dsa_8021q(vid) && skb_vlan_tag_present(skb))
++		skb->dev = yt921x_8021q_find_vlan_upper(netdev, skb->vlan_proto,
++							vid);
++	else
++		skb->dev = dsa_tag_8021q_find_user(netdev, src_port, switch_id,
++						   vid, vbid);
++	if (!skb->dev) {
++		net_warn_ratelimited("%s: dropped frame from %pM proto 0x%04x: src_port=%d switch_id=%d vid=%d vbid=%d\n",
++				     netdev->name, eth_hdr(skb)->h_source,
++				     ntohs(eth_hdr(skb)->h_proto), src_port,
++				     switch_id, vid, vbid);
++		return NULL;
++	}
++
++	dsa_default_offload_fwd_mark(skb);
++
++	return skb;
++}
++
++static const struct dsa_device_ops yt921x_8021q_netdev_ops = {
++	.name			= YT921X_8021Q_NAME,
++	.proto			= DSA_TAG_PROTO_YT921X_8021Q,
++	.xmit			= yt921x_8021q_xmit,
++	.rcv			= yt921x_8021q_rcv,
++	.needed_headroom	= VLAN_HLEN,
++	.promisc_on_conduit	= true,
++};
++
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("DSA tag driver for Motorcomm YT921x switches, using VLAN");
++MODULE_ALIAS_DSA_TAG_DRIVER(DSA_TAG_PROTO_YT921X_8021Q, YT921X_8021Q_NAME);
++
++module_dsa_tag_driver(yt921x_8021q_netdev_ops);

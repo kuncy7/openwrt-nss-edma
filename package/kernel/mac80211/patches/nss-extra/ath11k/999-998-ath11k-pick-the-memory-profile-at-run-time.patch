@@ -10,10 +10,11 @@ Do what ath12k does: keep the three profiles as rows of a table
 (ath11k_mem_profile_params) and pick the row when the device probes,
 from the amount of RAM the kernel manages or with the new mem_profile
 module parameter (1 1G, 2 512M, 3 256M; 0, the default, chooses from the
-RAM size). From the RAM size only two rows are chosen: 256M below
-384 MB, 1G otherwise. The 512M row leaves the rx header TLV out of the
-rx descriptor, which the PCI radios in this tree have not run with, so
-no board gets it on its own. The rows hold what the three builds
+RAM size). From the RAM size: 256M below 384 MB, 512M below 768 MB, 1G
+otherwise. The 512M row leaves the rx header TLV out of the rx
+descriptor; at first no board got it on its own, since the PCI radios
+had not run with that. It has since run on the IPQ5018, QCN6122 and
+QCN9074 radios, so the 512 MB boards now get it. The rows hold what the three builds
 compiled in, including the 1G monitor destination ring of 4096 entries
 this tree has had since DP_RXDMA_MONITOR_DST_RING_SIZE was aliased to
 the buffer ring size, and the 1024-entry RXDMA buffer ring of a QCN6122
@@ -139,14 +140,14 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  #include <linux/slab.h>
  #include <linux/remoteproc.h>
  #include <linux/firmware.h>
-@@ -44,6 +46,132 @@ bool ath11k_ftm_mode;
+@@ -44,6 +46,134 @@ bool ath11k_ftm_mode;
  module_param_named(ftm_mode, ath11k_ftm_mode, bool, 0444);
  MODULE_PARM_DESC(ftm_mode, "Boots up in factory test mode");
  
 +static unsigned int ath11k_mem_profile_param;
 +module_param_named(mem_profile, ath11k_mem_profile_param, uint, 0644);
 +MODULE_PARM_DESC(mem_profile,
-+		 "host memory profile: 0 from the RAM size (default: 256M below 384 MB, else 1G), 1 1G, 2 512M, 3 256M");
++		 "host memory profile: 0 from the RAM size (default: 256M below 384 MB, 512M below 768 MB, else 1G), 1 1G, 2 512M, 3 256M");
 +
 +/* The host-side memory profile, picked at run time from the amount of RAM
 + * or with the mem_profile parameter. The rows are what the build-time
@@ -231,13 +232,15 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
 +	*total_mb = total >> 20;
 +
 +	/* What the kernel manages, after the reserved regions: a 256 MB board
-+	 * shows about 200 MB here, a 512 MB board about 420 MB. Only the
-+	 * 256 MB boards change profile on their own: the 512M row leaves the
-+	 * rx header TLV out of the rx descriptor, which not every radio has
-+	 * run with, so it is there for mem_profile=2 only.
++	 * shows about 200 MB here, a 512 MB board about 420 MB, a 1 GB board
++	 * over 900 MB. The 512M row leaves the rx header TLV out of the rx
++	 * descriptor where the hw_ops allow it; it has run on the IPQ5018,
++	 * QCN6122 and QCN9074 radios. mem_profile=1 brings the 1G row back.
 +	 */
 +	if (total < SZ_256M + SZ_128M)
 +		return ATH11K_MEM_PROFILE_256M;
++	if (total < SZ_512M + SZ_256M)
++		return ATH11K_MEM_PROFILE_512M;
 +
 +	return ATH11K_MEM_PROFILE_1G;
 +}
@@ -272,7 +275,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  static const struct ath11k_num_vdevs_peers ath11k_vdevs_peers[];
  static const struct ath11k_num_vdevs_peers ath11k_vdevs_peers_ipq5018[];
  
-@@ -183,7 +311,7 @@ static struct ath11k_hw_params ath11k_hw
+@@ -183,7 +313,7 @@ static struct ath11k_hw_params ath11k_hw
  		.coldboot_cal_mm = true,
  		.coldboot_cal_ftm = true,
  		.cbcal_restart_fw = true,
@@ -281,7 +284,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		.num_vdevs = 16 + 1,
  		.num_peers = 512,
  		.supports_suspend = false,
-@@ -271,7 +399,7 @@ static struct ath11k_hw_params ath11k_hw
+@@ -271,7 +401,7 @@ static struct ath11k_hw_params ath11k_hw
  		.coldboot_cal_mm = false,
  		.coldboot_cal_ftm = false,
  		.cbcal_restart_fw = true,
@@ -290,7 +293,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		.num_vdevs = 16 + 1,
  		.num_peers = 512,
  		.supports_suspend = false,
-@@ -362,7 +490,7 @@ static struct ath11k_hw_params ath11k_hw
+@@ -362,7 +492,7 @@ static struct ath11k_hw_params ath11k_hw
  		.coldboot_cal_mm = false,
  		.coldboot_cal_ftm = false,
  		.cbcal_restart_fw = false,
@@ -299,7 +302,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		.num_vdevs = 4,
  		.num_peers = 512,
  		.supports_suspend = true,
-@@ -636,7 +764,7 @@ static struct ath11k_hw_params ath11k_hw
+@@ -636,7 +766,7 @@ static struct ath11k_hw_params ath11k_hw
  		.coldboot_cal_mm = false,
  		.coldboot_cal_ftm = false,
  		.cbcal_restart_fw = false,
@@ -308,7 +311,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		.num_vdevs = 4,
  		.num_peers = 512,
  		.supports_suspend = true,
-@@ -725,7 +853,7 @@ static struct ath11k_hw_params ath11k_hw
+@@ -725,7 +855,7 @@ static struct ath11k_hw_params ath11k_hw
  		.coldboot_cal_mm = true,
  		.coldboot_cal_ftm = true,
  		.cbcal_restart_fw = false,
@@ -317,7 +320,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		.num_vdevs = 3,
  		.num_peers = 512,
  		.supports_suspend = false,
-@@ -809,7 +937,7 @@ static struct ath11k_hw_params ath11k_hw
+@@ -809,7 +939,7 @@ static struct ath11k_hw_params ath11k_hw
  		.supports_monitor = false,
  		.supports_sta_ps = false,
  		.supports_shadow_regs = false,
@@ -326,7 +329,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		.num_vdevs = 16 + 1,
  		.num_peers = 512,
  		.supports_regdb = false,
-@@ -993,7 +1121,7 @@ static struct ath11k_hw_params ath11k_hw
+@@ -993,7 +1123,7 @@ static struct ath11k_hw_params ath11k_hw
  		.coldboot_cal_mm = false,
  		.coldboot_cal_ftm = false,
  		.cbcal_restart_fw = false,
@@ -335,7 +338,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  		.num_vdevs = 4,
  		.num_peers = 512,
  		.supports_suspend = true,
-@@ -3066,6 +3194,10 @@ static int ath11k_init_hw_params(struct
+@@ -3066,6 +3196,10 @@ static int ath11k_init_hw_params(struct
  
  	ab->hw_params = *hw_params;
  
@@ -1002,7 +1005,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  
 --- a/drivers/net/wireless/ath/ath11k/nss.c
 +++ b/drivers/net/wireless/ath/ath11k/nss.c
-@@ -4630,7 +4630,7 @@ static int ath11k_nss_init(struct ath11k
+@@ -4636,7 +4636,7 @@ static int ath11k_nss_init(struct ath11k
  
  	/* fill rx parameters to initialize rx context */
  	wim->wrip.tlv_size = ab->hw_params.hal_desc_sz;
@@ -1011,7 +1014,7 @@ Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
  	if (of_property_present(dev->of_node, "nss-radio-priority"))
  		wim->flags |= WIFILI_MULTISOC_THREAD_MAP_ENABLE;
  
-@@ -4881,7 +4881,7 @@ static int ath11k_nss_pdev_init(struct a
+@@ -4887,7 +4887,7 @@ static int ath11k_nss_pdev_init(struct a
  	pdevmsg->radio_id = radio_id;
  	pdevmsg->lmac_id = ar->lmac_id;
  	pdevmsg->target_pdev_id = ar->pdev->pdev_id;

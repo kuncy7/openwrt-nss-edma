@@ -115,7 +115,7 @@ picks its own memory profile when a radio probes, from the RAM size (see
 
 | group | boards | memory profile |
 |---|---|---|
-| `std` | 512 MB and 1 GB boards (the release notes list them) | ath11k 1G (picked at boot), NSS medium |
+| `std` | 512 MB and 1 GB boards (the release notes list them) | ath11k 512M or 1G by the RAM size (picked at boot), NSS medium |
 | `256m` | Cudy P5, H3C Magic NX30, H3C Magic RC3000 v1, v2 and v3, Ruijie RG-MA3063, TP-Link Archer AX53 v2, TP-Link Archer AX58 v2, TP-Link EX511 v2, Xiaomi CR8806 (also CR8808, CR8809, Redmi AX3000), Xiaomi Redmi AX3000 (single rootfs layout), Xiaomi Mi Router AX3000T v2 | ath11k 256M (picked at boot), NSS low |
 
 The exact configuration of each group is in `.github/ci/ipq50xx/` (`common.config`
@@ -1013,18 +1013,22 @@ OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the bran
   a radio probes (`nss-extra/ath11k/999-998`), from the RAM the kernel
   manages: below 384 MB the 256M profile, the 512M one with smaller RXDMA
   rings (`DP_RXDMA_BUF_RING_SIZE` 512, 1024 on the QCN6122) and a smaller
-  RX descriptor pool for the NSS Wi-Fi datapath; otherwise 1G. The log
-  says which, once per radio (here a GL-B3000 with 512 MB):
+  RX descriptor pool for the NSS Wi-Fi datapath; below 768 MB the 512M
+  profile; otherwise 1G. The log says which, once per radio (here a
+  GL-B3000 with 512 MB):
 
   ```
-  ath11k c000000.wifi: memory profile 1G (from the RAM size, 413 MB), rx descriptor full
+  ath11k c000000.wifi: memory profile 512M (from the RAM size, 413 MB), rx descriptor without the rx header TLV
   ```
 
   The `mem_profile` module parameter overrides the choice (1 1G, 2 512M,
-  3 256M; 0, the default, picks from the RAM size). The 512M profile is
-  only reached that way: it leaves the rx header TLV out on every radio,
-  and the PCIe radios on the 512 MB boards have not run with that, so no
-  board gets it on its own. In uci it is `nss.general.mem_profile`
+  3 256M; 0, the default, picks from the RAM size). The 512M profile
+  leaves the rx header TLV out of the rx descriptor. Until 2026-11-24 it
+  was only reached with the parameter, because the PCIe radios had not
+  run with it; it has since run on the IPQ5018, QCN6122 and QCN9074
+  radios, and a 512 MB board now gets it on its own. `1g` brings the old
+  choice back. The Q6 image has to be the one this tree ships
+  (`ath11k-firmware-ipq5018-qcn6122`, see *Firmware* above). In uci it is `nss.general.mem_profile`
   (`auto`, `1g`, `512m`, `256m`; unset is `auto`), read at boot: ath11k
   takes the parameter when a radio probes, so the service writes it to
   `/sys/module/ath11k/parameters/mem_profile` between `modprobe ath11k`

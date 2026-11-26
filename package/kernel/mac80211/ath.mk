@@ -415,6 +415,8 @@ define KernelPackage/ath11k/config
                   Only IPQ5018 and QCN6122 with active NSS on the 256M memory
                   profile use this. The driver picks the profile at run time
                   from the RAM size, or from its mem_profile module parameter.
+                  The Cudy P5 enables these reductions by default. Set this
+                  option to enable them on other eligible boards.
                   TX and CE5 queue capacity is lower. Other hardware and the
                   host-only data path retain their existing allocations.
 

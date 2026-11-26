@@ -107,11 +107,10 @@ up to `ipq50xx-2026.10.14`, 12.5-210 in both up to `ipq50xx-2026.11.11`), VLAN a
 and `iperf3` for checking it. There is no LuCI in the images:
 `apk update && apk add luci` installs it, and `apk add luci-app-nss` then adds
 Status -> NSS Offload. Like any package added later, LuCI is gone after a
-sysupgrade and has to be installed again. Boards come in two groups, because
-the NSS firmware version and the NSS memory profile are a build-time choice for
-the whole image (both groups carry the 802.11s mesh offload). ath11k
-picks its own memory profile when a radio probes, from the RAM size (see
-*Memory profiles* under *256 MB boards*), so the same driver serves both groups:
+sysupgrade and has to be installed again. The two release groups set build
+defaults for NSS firmware and memory. Both groups carry the 802.11s mesh
+offload. The drivers select their active [memory profiles](#memory-profiles)
+at boot, so the same driver code serves both groups:
 
 | group | boards | memory profile |
 |---|---|---|
@@ -977,6 +976,88 @@ What it needed, in this branch:
   (`nss-extra/mesh/999-992`), without which the firmware's empty path table
   never gets the paths back.
 
+## Memory profiles
+
+Leave `nss.general.mem_profile` unset or set to `auto` for normal use.
+The drivers base their choices on the RAM Linux can manage after reservations,
+as reported by `MemTotal` in `/proc/meminfo`.
+
+| RAM Linux can manage | ath11k host profile | NSS driver profile |
+|---|---|---|
+| Below 384 MiB | `256M` | Low |
+| 384 MiB to below 768 MiB | `512M` | Build default |
+| 768 MiB and above | `1G` | Build default |
+
+The ath11k host profile sets Wi-Fi data path ring sizes and descriptor layout.
+The `512M` profile uses smaller rings than `1G` and omits the RX header TLV on
+radios that support the compact layout. The `256M` profile also reduces RXDMA
+rings and the NSS Wi-Fi RX descriptor pool. The RXDMA buffer ring has 512
+entries, or 1024 on QCN6122 to handle upload bursts.
+
+The NSS driver profile sets the wired offload connection limits and buffer
+pool. The `256m` release group builds with NSS low. The `std` group builds
+with NSS medium. On IPQ5018, the low profile defaults to 512 connections per
+IP family and 1024 total. Medium defaults to 2048 per family and 4096 total.
+These profiles apply independently of the [NSS firmware version](#firmware-125-210-and-122-156).
+The Wi-Fi firmware memory mode also has its own device-tree configuration.
+
+### Override the profiles
+
+Set `nss.general.mem_profile` in `/etc/config/nss`, commit it, then reboot.
+The startup service passes the setting to each driver before it uses the
+profile. The automatic setting restores the board defaults.
+
+```sh
+uci set nss.general.mem_profile='auto'
+uci commit nss
+reboot
+```
+
+| UCI value | ath11k host profile | NSS driver profile |
+|---|---|---|
+| `auto` or unset | From RAM size | Low below 384 MiB, otherwise the build default |
+| `256m` | `256M` | Low |
+| `512m` | `512M` | Medium |
+| `1g` | `1G` | Medium |
+
+The drivers also expose `mem_profile` module parameters. For ath11k,
+`0` selects automatically and `1`, `2`, `3` select `1G`, `512M`, `256M`.
+For `qca-nss-drv`, the same numbers select automatic, high, medium and low.
+Use UCI to keep the setting across reboots.
+
+### Extra ath11k NSS savings
+
+With active NSS offload and the `256M` host profile, IPQ5018 and QCN6122 can
+use extra allocation reductions. They skip unused host TX arrays, reduce
+NSS TX descriptor pools and completion rings, and reduce the CE5 buffer
+pool. They also give RX rings private fragment caches. The smaller queues
+hold fewer packets.
+
+Both Cudy P5 layouts enable these reductions by default. For other eligible
+boards, enable `CONFIG_ATH11K_NSS_MEM_PROFILE_256M=y` when building OpenWrt.
+The [original allocation changes][ath11k-memory-pr] describe the trade-offs.
+
+### Check the active profiles
+
+Run these commands after Wi-Fi starts.
+
+```sh
+dmesg | grep -E 'memory profile|NSS 256 MiB: active'
+grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo
+```
+
+ath11k logs its host profile once per radio. The NSS driver logs its profile
+when it boots the core. `NSS 256 MiB: active` confirms the extra ath11k
+reductions and reports the active sizes. On a P5 with both radios running,
+expect that line for each radio.
+
+Compare `MemAvailable` and swap use at the same uptime with the same radios
+and services running. On a 512 MB GL-B3000 with NSS medium and both radios
+active, the `512M` and `256M` host profiles left about 40 MB and 70 MB more
+free memory than `1G`, measured 180 seconds after boot.
+
+[ath11k-memory-pr]: https://github.com/kuncy7/openwrt-nss-edma/pull/21
+
 ## 256 MB boards
 
 Four IPQ5018 boards on this branch have 256 MB - the TP-Link EX511 v2
@@ -1008,59 +1089,9 @@ OOM-killed the AP daemon on a single iperf3 run. What it needed, all in the bran
 - **`coherent_pool=512K`** in the board DTS instead of the 2M every other
   board passes - only safe together with patch `0828` below. 2M costs
   three pools of 2 MiB, one of which doubles itself: 8 MiB.
-- **Memory profiles.** ath11k picks its host memory profile - the data path
-  ring sizes and whether the rx descriptor carries the rx header TLV - when
-  a radio probes (`nss-extra/ath11k/999-998`), from the RAM the kernel
-  manages: below 384 MB the 256M profile, the 512M one with smaller RXDMA
-  rings (`DP_RXDMA_BUF_RING_SIZE` 512, 1024 on the QCN6122) and a smaller
-  RX descriptor pool for the NSS Wi-Fi datapath; below 768 MB the 512M
-  profile; otherwise 1G. The log says which, once per radio (here a
-  GL-B3000 with 512 MB):
-
-  ```
-  ath11k c000000.wifi: memory profile 512M (from the RAM size, 413 MB), rx descriptor without the rx header TLV
-  ```
-
-  The `mem_profile` module parameter overrides the choice (1 1G, 2 512M,
-  3 256M; 0, the default, picks from the RAM size). The 512M profile
-  leaves the rx header TLV out of the rx descriptor. Until 2026-11-24 it
-  was only reached with the parameter, because the PCIe radios had not
-  run with it; it has since run on the IPQ5018, QCN6122 and QCN9074
-  radios, and a 512 MB board now gets it on its own. `1g` brings the old
-  choice back. The Q6 image has to be the one this tree ships
-  (`ath11k-firmware-ipq5018-qcn6122`, see *Firmware* above). In uci it is `nss.general.mem_profile`
-  (`auto`, `1g`, `512m`, `256m`; unset is `auto`), read at boot: ath11k
-  takes the parameter when a radio probes, so the service writes it to
-  `/sys/module/ath11k/parameters/mem_profile` between `modprobe ath11k`
-  and `modprobe ath11k_ahb` (`nss_ath11k_mem_profile` in
-  `/lib/nss/functions.sh`), and a change needs a reboot. Measured on a GL-B3000 (512 MB, NSS medium, both
-  radios, 180 s after boot): about 40 MB more free memory with 512M and
-  70 MB with 256M than with 1G. `ATH11K_NSS_MEM_PROFILE_256M` is still a
-  build option (off in the releases): on top of the 256M profile it
-  shrinks the host TX and CE allocations of IPQ5018 and QCN6122 radios
-  under the NSS offload.
-
-  `qca-nss-drv` picks its profile at run time as well (feed patch `0153`):
-  low when the kernel manages less than 384 MB, the build's profile
-  (`NSS_MEM_PROFILE_MEDIUM` in the release groups' `std`, `_LOW` in `256m`)
-  otherwise, or what its `mem_profile` parameter says (1 high, 2 medium,
-  3 low). Low matters on a 256 MB board: anything else hands the firmware
-  an 8192-entry empty-buffer pool, 35 MB of kmalloc-4k before the first
-  packet. The driver logs the choice when it boots the core:
-
-  ```
-  nss_driver: memory profile medium (the build's default, 413 MB): 2048 connections per IP family, 4096 in all
-  ```
-
-  `nss.general.mem_profile` covers both drivers: `256m` is low here,
-  `512m` and `1g` medium. An image built medium therefore no longer has to
-  be rebuilt for a 256 MB board, and a multi-device image that includes
-  one does not make its 512 MB members pay in connection-table size. The
-  same holds for the firmware: `nss.general.firmware=auto` boots 12.2-156
-  below 384 MB (12.5-210 keeps payload buffers with some 802.11ac clients,
-  see *Firmware*). The `256m` release group still exists for its board
-  list and for the build defaults (12.2-156, low).
-  `qcom,ath11k-fw-memory-mode = <2>` on both radios is in the DTS.
+- **Low memory profiles.** Use the automatic settings described in
+  [Memory profiles](#memory-profiles). The 256 MB boards discussed here use
+  `qcom,ath11k-fw-memory-mode = <2>` for both radios in the device tree.
 
 Result: ~850 / ~740 Mbit/s on 5 GHz with 4 streams (stock: 843 / 906),
 0 OOM, 20 MB available after the run against 3 MB before. Not done:

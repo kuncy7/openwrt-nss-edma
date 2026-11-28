@@ -370,8 +370,22 @@ linksys_mx_pre_upgrade() {
 	fi
 }
 
+cudy_p5_check_single_rootfs() {
+	local idx
+
+	idx="$(find_mtd_index rootfs)"
+	if [ -z "$idx" ] || [ "$(cat "/sys/class/mtd/mtd$idx/size")" != 126091264 ]; then
+		echo "Cudy P5 U-Boot mod requires a 120.25 MiB rootfs partition"
+		return 1
+	fi
+}
+
 platform_check_image() {
 	case "$(board_name)" in
+	cudy,p5-ubootmod)
+		cudy_p5_check_single_rootfs &&
+			nand_do_platform_check "$(board_name)" "$1"
+		;;
 	cudy,p5|\
 	xiaomi,mi-router-ax3000t-v2)
 		nand_do_platform_check "$(board_name)" "$1"
@@ -406,6 +420,14 @@ platform_do_upgrade() {
 		;;
 	cudy,p5)
 		cudy_p5_do_upgrade "$1"
+		;;
+	cudy,p5-ubootmod)
+		cudy_p5_check_single_rootfs || {
+			nand_do_upgrade_failed
+			return 1
+		}
+		CI_UBIPART="rootfs"
+		nand_do_upgrade "$1"
 		;;
 	cmcc,mr3000d-ci|\
 	cmcc,pz-l8|\

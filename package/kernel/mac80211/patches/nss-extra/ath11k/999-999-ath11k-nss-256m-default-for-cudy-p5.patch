@@ -1,0 +1,43 @@
+From: Georg Seema <georgseema@gmail.com>
+Subject: [PATCH] wifi: ath11k: default to the NSS 256 MiB profile on Cudy P5
+
+The P5 has two NSS-offloaded radios and 256 MiB of RAM. Keep the extra
+NSS allocation reductions enabled on both P5 layouts even when they
+share the ath11k module with other IPQ50xx boards.
+
+Check the board once during profile selection. Keep the existing
+build option for other boards and the runtime checks for radio type,
+the 256M profile and active NSS.
+
+Signed-off-by: Georg Seema <georgseema@gmail.com>
+---
+--- a/drivers/net/wireless/ath/ath11k/core.c
++++ b/drivers/net/wireless/ath/ath11k/core.c
+@@ -166,6 +166,8 @@
+ 	}
+ 
+ 	ab->mem_profile = &ath11k_mem_profile_params[profile];
++	ab->nss_256m = IS_ENABLED(CPTCFG_ATH11K_NSS_MEM_PROFILE_256M) ||
++		       of_machine_is_compatible("cudy,p5");
+ 	ab->compact_rx_desc = ab->mem_profile->compact_rx_desc &&
+ 			      ab->hw_params.hw_ops->rx_desc_get_offset;
+ 
+--- a/drivers/net/wireless/ath/ath11k/core.h
++++ b/drivers/net/wireless/ath/ath11k/core.h
+@@ -1128,6 +1128,7 @@
+ 
+ 	struct ath11k_hw_params hw_params;
+ 	const struct ath11k_mem_profile_params *mem_profile;
++	bool nss_256m;
+ 	/* the rx descriptor is used without its rx header TLV */
+ 	bool compact_rx_desc;
+ 
+@@ -1467,7 +1468,7 @@
+ /* Keep untested hardware and the host data path on their normal sizes. */
+ static inline bool ath11k_nss_256m_enabled(struct ath11k_base *ab)
+ {
+-	return IS_ENABLED(CPTCFG_ATH11K_NSS_MEM_PROFILE_256M) &&
++	return ab->nss_256m &&
+ 	       ab->mem_profile->id == ATH11K_MEM_PROFILE_256M &&
+ 	       ab->nss.enabled &&
+ 	       (ab->hw_rev == ATH11K_HW_IPQ5018_HW10 ||

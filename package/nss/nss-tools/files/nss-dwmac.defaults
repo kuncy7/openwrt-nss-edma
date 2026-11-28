@@ -166,7 +166,8 @@ nss_dwmac_board_defaults() {
 		switch_args='cpu_port=6 ports=0x7e wake_phys=90000.mdio-1:00,90000.mdio-1:01,90000.mdio-1:02,90000.mdio-1:03,90000.mdio-1:04'
 		vtu='1:6t,2u,3u,4u;2:5t,1u'
 		;;
-	cudy,p5)
+	cudy,p5|\
+	cudy,p5-ubootmod)
 		# P5 uses both QCA8337 CPU links. LAN rides port 6 -> GMAC1
 		# (SGMII), so eth1 = phys_if 1 carries VLAN 1 for ports 1-3.
 		# WAN rides port 5 -> switch PHY 4 -> GMAC0, so eth0 = phys_if 0

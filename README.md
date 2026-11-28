@@ -11,8 +11,9 @@ validated on the GL.iNet GL-B3000 and the TP-Link Archer AX55 v1, and users
 run it on more IPQ5018 boards.
 
 Everything else is in **[README.ipq50xx.md](README.ipq50xx.md)**: what the
-commits are, how to build, how the plane comes up, the two topologies, the
-support matrix, the boards, and how to port another IPQ5018 board.
+commits are, how to build, how the plane comes up, the two topologies,
+[memory profiles](README.ipq50xx.md#memory-profiles), the support matrix,
+the boards, and how to port another IPQ5018 board.
 
 - Prebuilt images are on the
   [Releases page](https://github.com/kuncy7/openwrt-nss-edma/releases).

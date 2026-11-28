@@ -1,0 +1,169 @@
+From: Stanislaw Pal <kuncy7@gmail.com>
+Subject: [PATCH] net: dsa: realtek: rtl8365mb: look the host's frames up in
+ EFID 0 under the 8021q tagger
+
+On the RTL8367S and its siblings (family C) the EFID of the port a frame
+came in on is part of the key its destination address is looked up
+with. rtl83xx_port_bridge_join() puts a bridge port into the EFID of its
+bridge, numbered from 1, and the CPU port stays in EFID 0. With the CPU
+tag that is fine: the host's frames name their ports and are not looked
+up. Under the rtl8365mb-8021q tagger they are looked up like any other
+frame, from the CPU port, and never find the stations the bridge ports
+learned in EFID 1. Every unicast frame from the host to a station was
+flooded to all ports of the bridge.
+
+That was seen on an Archer AX55 v1 with a 100 Mbit/s device on one LAN
+port: the copy of a download for a gigabit port filled the slow port,
+the switch held the CPU link back with pause frames, and the gigabit
+client got about 94 Mbit/s.
+
+Keep every port in EFID 0 under the 802.1Q tagger, and put the FDB and
+MDB entries there too. The bridges are still told apart by the VID: a
+VLAN-unaware bridge has its tag_8021q VLAN to itself. Two VLAN-aware
+bridges that use the same VID now share their entries; port isolation
+keeps their frames apart as before. Ports that are already in a bridge
+when the tagger changes are moved over, both ways.
+
+Family D has no EFID and is not affected.
+
+Tested on an Archer AX55 v1 (RTL8367S), VLAN-aware bridge, a gigabit
+client on lan1 and a 100 Mbit/s one on lan3: the download to the gigabit
+client goes out on lan1 only and runs at several hundred Mbit/s, frames
+between the two LAN ports and broadcasts still pass.
+
+Reported-by: faf0 (kuncy7/openwrt-nss-edma#96)
+Signed-off-by: Stanislaw Pal <kuncy7@gmail.com>
+---
+--- a/drivers/net/dsa/realtek/rtl8365mb_main.c
++++ b/drivers/net/dsa/realtek/rtl8365mb_main.c
+@@ -3421,6 +3421,19 @@ static int rtl8365mb_port_set_efid(struc
+ 	if (rtl8365mb_get_family(priv) == RTL8365MB_FAMILY_D)
+ 		return 0;
+ 
++	/* The EFID of the port a frame came in on is part of the key its DA
++	 * is looked up with. With a CPU tag the host's frames name their
++	 * ports and are not looked up; under the 802.1Q tagger they are, from
++	 * the CPU port, which is in no bridge and keeps EFID 0. A bridge port
++	 * in the EFID of its bridge would learn its stations where the host's
++	 * frames never find them, and every frame from the host to a station
++	 * would be flooded. So everything stays in EFID 0 there: the bridges
++	 * are told apart by the VID, which a VLAN-unaware bridge has to
++	 * itself (its tag_8021q VLAN).
++	 */
++	if (rtl8365mb_is_8021q(priv))
++		efid = 0;
++
+ 	return regmap_update_bits(priv->map, RTL8365MB_PORT_EFID_REG(port),
+ 				  RTL8365MB_PORT_EFID_MASK(port),
+ 				  efid << RTL8365MB_PORT_EFID_OFFSET(port));
+@@ -4304,12 +4317,26 @@ static u16 rtl8365mb_db_vid(struct realt
+ 	}
+ }
+ 
++/* rtl83xx takes the EFID of an entry from the number of the bridge. Under
++ * the 802.1Q tagger every port is in EFID 0 (rtl8365mb_port_set_efid()), and
++ * so are the entries.
++ */
++static struct dsa_db rtl8365mb_db_efid(struct realtek_priv *priv,
++				       struct dsa_db db)
++{
++	if (rtl8365mb_is_8021q(priv) && db.type == DSA_DB_BRIDGE)
++		db.bridge.num = 0;
++
++	return db;
++}
++
+ static int rtl8365mb_port_fdb_add(struct dsa_switch *ds, int port,
+ 				  const unsigned char *addr, u16 vid,
+ 				  struct dsa_db db)
+ {
+ 	return rtl83xx_port_fdb_add(ds, port, addr,
+-				    rtl8365mb_db_vid(ds->priv, db, vid), db);
++				    rtl8365mb_db_vid(ds->priv, db, vid),
++				    rtl8365mb_db_efid(ds->priv, db));
+ }
+ 
+ static int rtl8365mb_port_fdb_del(struct dsa_switch *ds, int port,
+@@ -4317,7 +4344,8 @@ static int rtl8365mb_port_fdb_del(struct
+ 				  struct dsa_db db)
+ {
+ 	return rtl83xx_port_fdb_del(ds, port, addr,
+-				    rtl8365mb_db_vid(ds->priv, db, vid), db);
++				    rtl8365mb_db_vid(ds->priv, db, vid),
++				    rtl8365mb_db_efid(ds->priv, db));
+ }
+ 
+ /* Under the 802.1Q tagger nothing in a frame from the host steers it to a
+@@ -4349,9 +4377,13 @@ static int rtl8365mb_port_mdb_host_ports
+ 			continue;
+ 
+ 		if (add)
+-			ret = rtl83xx_port_mdb_add(ds, dp->index, m, db);
++			ret = rtl83xx_port_mdb_add(ds, dp->index, m,
++						   rtl8365mb_db_efid(ds->priv,
++								     db));
+ 		else
+-			ret = rtl83xx_port_mdb_del(ds, dp->index, m, db);
++			ret = rtl83xx_port_mdb_del(ds, dp->index, m,
++						   rtl8365mb_db_efid(ds->priv,
++								     db));
+ 		if (ret)
+ 			return ret;
+ 	}
+@@ -4368,7 +4400,8 @@ static int rtl8365mb_port_mdb_add(struct
+ 
+ 	m.vid = rtl8365mb_db_vid(ds->priv, db, mdb->vid);
+ 
+-	ret = rtl83xx_port_mdb_add(ds, port, &m, db);
++	ret = rtl83xx_port_mdb_add(ds, port, &m,
++				   rtl8365mb_db_efid(ds->priv, db));
+ 	if (ret)
+ 		return ret;
+ 
+@@ -4388,7 +4421,8 @@ static int rtl8365mb_port_mdb_del(struct
+ 	if (ret)
+ 		return ret;
+ 
+-	return rtl83xx_port_mdb_del(ds, port, &m, db);
++	return rtl83xx_port_mdb_del(ds, port, &m,
++				    rtl8365mb_db_efid(ds->priv, db));
+ }
+ 
+ static int rtl8365mb_port_bridge_join(struct dsa_switch *ds, int port,
+@@ -4432,6 +4466,19 @@ static void rtl8365mb_port_bridge_leave(
+ 		dp->user->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
+ }
+ 
++/* The EFID of a bridge port follows the tagger, see
++ * rtl8365mb_port_set_efid(): bring the ports that are already in a bridge
++ * over when the tagger changes.
++ */
++static void rtl8365mb_sync_efid(struct dsa_switch *ds)
++{
++	struct dsa_port *dp;
++
++	dsa_switch_for_each_user_port(dp, ds)
++		rtl8365mb_port_set_efid(ds->priv, dp->index,
++					dp->bridge ? dp->bridge->num : 0);
++}
++
+ static int rtl8365mb_change_tag_protocol(struct dsa_switch *ds,
+ 					 enum dsa_tag_protocol proto)
+ {
+@@ -4480,6 +4527,7 @@ static int rtl8365mb_change_tag_protocol
+ 		if (ret)
+ 			goto restore_vlan;
+ 		rtl8365mb_user_vlan_filter_feature(ds, true);
++		rtl8365mb_sync_efid(ds);
+ 		return 0;
+ 	/* The switch also supports a 4-byte format, similar to rtl4a but with
+ 	 * the same 0x04 8-bit version and probably 8-bit port source/dest.
+@@ -4501,6 +4549,8 @@ static int rtl8365mb_change_tag_protocol
+ 
+ 	cpu->enable = cpu->mask > 0;
+ 	mb->tag_proto = proto;
++	if (old == DSA_TAG_PROTO_RTL8365MB_8021Q)
++		rtl8365mb_sync_efid(ds);
+ 
+ 	return rtl8365mb_cpu_config(priv);
+ 
